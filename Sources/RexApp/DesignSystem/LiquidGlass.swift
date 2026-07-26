@@ -5,6 +5,8 @@ enum RexMetrics {
     static let compactRadius: CGFloat = 11
     static let toolbarHeight: CGFloat = 44
     static let titlebarHeight: CGFloat = 50
+    static let expandedToolbarHeight: CGFloat = 72
+    static let expandedTitlebarHeight: CGFloat = 78
     static let sidebarWidth: CGFloat = 264
     static let collapsedSidebarWidth: CGFloat = 58
     static let dividerHitWidth: CGFloat = 12
@@ -32,11 +34,21 @@ enum BrowserWindowChromeLayout {
         isFullScreen: Bool,
         showsPerformanceMetrics: Bool
     ) -> CGFloat {
-        guard !isFullScreen || showsPerformanceMetrics else { return 0 }
-        let contentLeadingInset = isFullScreen ? windowEdgePadding : toolbarLeadingInset
-        return contentLeadingInset + (showsPerformanceMetrics
-            ? performanceClusterWidth + windowEdgePadding
-            : 0)
+        guard !isFullScreen else { return 0 }
+        guard showsPerformanceMetrics else { return toolbarLeadingInset }
+        return max(toolbarLeadingInset, performanceClusterWidth + (windowEdgePadding * 2))
+    }
+
+    static func titlebarHeight(isFullScreen: Bool, showsPerformanceMetrics: Bool) -> CGFloat {
+        !isFullScreen && showsPerformanceMetrics
+            ? RexMetrics.expandedTitlebarHeight
+            : RexMetrics.titlebarHeight
+    }
+
+    static func titlebarCardHeight(isFullScreen: Bool, showsPerformanceMetrics: Bool) -> CGFloat {
+        !isFullScreen && showsPerformanceMetrics
+            ? RexMetrics.expandedToolbarHeight
+            : RexMetrics.toolbarHeight
     }
 }
 

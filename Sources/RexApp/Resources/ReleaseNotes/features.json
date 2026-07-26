@@ -12,13 +12,31 @@
           "testStatus": "passed",
           "introducedIn": "0.1.0-alpha.1",
           "updatedIn": "0.8.1",
-          "description": "原生工具栏、液态玻璃侧栏和网页内容区；导航栏与 macOS 红黄绿窗口按钮同行，并在全屏时恢复普通边距",
+          "description": "原生工具栏、液态玻璃侧栏和网页内容区；普通窗口将性能监测置于 macOS 红黄绿按钮下方，导航栏位于右侧，全屏时合并为单一顶栏",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
           "requiresRestart": false,
           "settingsPath": "设置 > 外观",
           "limitations": []
+        },
+        {
+          "id": "tab-performance-monitor",
+          "name": "网页性能监测",
+          "status": "completed",
+          "testStatus": "passed",
+          "introducedIn": "0.8.1",
+          "updatedIn": "0.8.1",
+          "description": "普通窗口在红黄绿按钮下方显示 Rex 总内存与 CPU，全屏时并入导航栏；点击后按标签页展示 CEF 任务内存、CPU 与生命周期",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 外观",
+          "limitations": [
+            "网页指标是标签关联 renderer 的进程级快照，共享 renderer 的重复值不能相加",
+            "GPU、Worker、Utility 与站点隔离子框架只计入 Rex 总量，不分摊到单个网页"
+          ]
         },
         {
           "id": "chromium-rendering",

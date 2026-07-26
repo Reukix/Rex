@@ -9,6 +9,7 @@ struct BrowserRootView: View {
     let isFullScreen: Bool
     @State private var developerToolsDragWidth: CGFloat?
     @State private var certificateViewerSnapshot: CertificateViewerSnapshot?
+    @State private var isPerformanceMonitorPresented = false
 
     init(
         toolbarLeadingInset: CGFloat = BrowserWindowChromeLayout.toolbarLeadingInset(
@@ -31,7 +32,8 @@ struct BrowserRootView: View {
                         preferences: store.preferences,
                         toolbarLeadingInset: toolbarLeadingInset,
                         isFullScreen: isFullScreen,
-                        certificateViewerSnapshot: $certificateViewerSnapshot
+                        certificateViewerSnapshot: $certificateViewerSnapshot,
+                        onShowPerformanceMonitor: { isPerformanceMonitorPresented = true }
                     )
 
                     GeometryReader { proxy in
@@ -102,7 +104,7 @@ struct BrowserRootView: View {
 
                 if let prompt = store.pendingPermissionPrompts.first {
                     WebsitePermissionPromptBar(prompt: prompt)
-                        .padding(.top, 48)
+                        .padding(.top, titlebarHeight)
                         .padding(.horizontal, 24)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -134,6 +136,10 @@ struct BrowserRootView: View {
                 .environmentObject(store)
                 .frame(minWidth: 640, minHeight: 480)
         }
+        .sheet(isPresented: $isPerformanceMonitorPresented) {
+            PerformanceMonitorView()
+                .environmentObject(store)
+        }
         .sheet(item: $certificateViewerSnapshot) { snapshot in
             CertificateDetailsView(info: snapshot.info, certificate: snapshot.certificate)
         }
@@ -154,6 +160,13 @@ struct BrowserRootView: View {
         .animation(nil, value: developerToolsDragWidth)
         .animation(.snappy(duration: 0.2), value: store.pendingPermissionPrompts.first?.id)
     }
+
+    private var titlebarHeight: CGFloat {
+        BrowserWindowChromeLayout.titlebarHeight(
+            isFullScreen: isFullScreen,
+            showsPerformanceMetrics: store.preferences.showPerformanceMetrics
+        )
+    }
 }
 
 private struct BrowserTitlebar: View {
@@ -161,6 +174,7 @@ private struct BrowserTitlebar: View {
     let toolbarLeadingInset: CGFloat
     let isFullScreen: Bool
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
+    let onShowPerformanceMonitor: () -> Void
 
     private var performanceCardWidth: CGFloat {
         BrowserWindowChromeLayout.performanceCardWidth(
@@ -170,43 +184,61 @@ private struct BrowserTitlebar: View {
         )
     }
 
-    private var performanceContentLeadingInset: CGFloat {
-        isFullScreen ? BrowserWindowChromeLayout.windowEdgePadding : toolbarLeadingInset
+    private var titlebarHeight: CGFloat {
+        BrowserWindowChromeLayout.titlebarHeight(
+            isFullScreen: isFullScreen,
+            showsPerformanceMetrics: preferences.showPerformanceMetrics
+        )
+    }
+
+    private var cardHeight: CGFloat {
+        BrowserWindowChromeLayout.titlebarCardHeight(
+            isFullScreen: isFullScreen,
+            showsPerformanceMetrics: preferences.showPerformanceMetrics
+        )
     }
 
     var body: some View {
         HStack(spacing: performanceCardWidth > 0 ? BrowserWindowChromeLayout.titlebarCardSpacing : 0) {
             if performanceCardWidth > 0 {
                 BrowserPerformanceTitlebarCard(
-                    contentLeadingInset: performanceContentLeadingInset,
-                    showsPerformanceMetrics: preferences.showPerformanceMetrics
+                    showsPerformanceMetrics: preferences.showPerformanceMetrics,
+                    cardHeight: cardHeight,
+                    onShowPerformanceMonitor: onShowPerformanceMonitor
                 )
                 .frame(width: performanceCardWidth)
             }
 
-            BrowserToolbar(certificateViewerSnapshot: $certificateViewerSnapshot)
+            BrowserToolbar(
+                certificateViewerSnapshot: $certificateViewerSnapshot,
+                showsPerformanceMetrics: isFullScreen && preferences.showPerformanceMetrics,
+                cardHeight: cardHeight,
+                onShowPerformanceMonitor: onShowPerformanceMonitor
+            )
                 .frame(maxWidth: .infinity)
         }
         .padding(.leading, isFullScreen ? BrowserWindowChromeLayout.windowEdgePadding : 0)
         .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
-        .frame(height: RexMetrics.titlebarHeight)
+        .frame(height: titlebarHeight)
     }
 }
 
 private struct BrowserPerformanceTitlebarCard: View {
-    let contentLeadingInset: CGFloat
     let showsPerformanceMetrics: Bool
+    let cardHeight: CGFloat
+    let onShowPerformanceMonitor: () -> Void
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack(alignment: .bottomLeading) {
             BrowserTitlebarCardSurface()
 
             if showsPerformanceMetrics {
-                ToolbarStatusCluster()
-                    .padding(.leading, contentLeadingInset)
+                ToolbarStatusCluster(onShowDetails: onShowPerformanceMonitor)
+                    .padding(.horizontal, BrowserWindowChromeLayout.windowEdgePadding)
+                    .padding(.bottom, 5)
             }
         }
-        .frame(height: RexMetrics.toolbarHeight)
+        .frame(height: cardHeight)
     }
 }
 
@@ -329,12 +361,23 @@ private struct BrowserToolbar: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
+    let showsPerformanceMetrics: Bool
+    let cardHeight: CGFloat
+    let onShowPerformanceMonitor: () -> Void
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
     @State private var compositionName = ""
 
     var body: some View {
         HStack(spacing: 6) {
+            if showsPerformanceMetrics {
+                ToolbarStatusCluster(onShowDetails: onShowPerformanceMonitor)
+
+                Divider()
+                    .frame(height: 22)
+                    .padding(.horizontal, 2)
+            }
+
             LiquidGlassIconButton(
                 systemName: "puzzlepiece.extension",
                 label: "扩展",
@@ -583,7 +626,7 @@ private struct BrowserToolbar: View {
             .help("更多")
         }
         .padding(.horizontal, BrowserWindowChromeLayout.windowEdgePadding)
-        .frame(height: RexMetrics.toolbarHeight)
+        .frame(height: cardHeight)
         .background {
             BrowserTitlebarCardSurface()
         }
@@ -636,26 +679,33 @@ private struct BrowserToolbar: View {
 private struct ToolbarStatusCluster: View {
     @ObservedObject private var metrics = ProcessMetricsMonitor.shared
     @Environment(\.colorScheme) private var colorScheme
+    let onShowDetails: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            metricChip(
-                symbol: "memorychip",
-                title: "内存",
-                value: metrics.memoryLabel,
-                help: "Rex 当前进程内存占用",
-                minWidth: 72
-            )
-            metricChip(
-                symbol: "cpu",
-                title: "CPU",
-                value: metrics.cpuLabel,
-                help: "Rex 当前进程 CPU 占用",
-                minWidth: 54
-            )
+        Button(action: onShowDetails) {
+            HStack(spacing: 6) {
+                metricChip(
+                    symbol: "memorychip",
+                    title: "内存",
+                    value: metrics.memoryLabel,
+                    minWidth: 72
+                )
+                metricChip(
+                    symbol: "cpu",
+                    title: "CPU",
+                    value: metrics.cpuLabel,
+                    minWidth: 54
+                )
+            }
+            .frame(width: BrowserWindowChromeLayout.performanceClusterWidth, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(width: BrowserWindowChromeLayout.performanceClusterWidth, alignment: .leading)
+        .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
+        .onHover { isHovered = $0 }
+        .help("打开性能监视器")
+        .accessibilityLabel("性能监视器，内存 \(metrics.memoryLabel)，CPU \(metrics.cpuLabel)")
         .onAppear { metrics.start() }
         .onDisappear { metrics.stop() }
     }
@@ -664,7 +714,6 @@ private struct ToolbarStatusCluster: View {
         symbol: String,
         title: String,
         value: String,
-        help: String,
         minWidth: CGFloat
     ) -> some View {
         HStack(spacing: 4) {
@@ -680,8 +729,10 @@ private struct ToolbarStatusCluster: View {
         .padding(.horizontal, 7)
         .frame(minWidth: minWidth, idealWidth: minWidth, maxWidth: minWidth, alignment: .leading)
         .frame(height: 26)
-        .background(RexChromeColor.fill(colorScheme), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help("\(title)：\(value)。\(help)")
+        .background(
+            RexChromeColor.fill(colorScheme, hovered: isHovered),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title) \(value)")
     }

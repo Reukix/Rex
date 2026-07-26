@@ -3,12 +3,28 @@ import Combine
 import Darwin
 import Foundation
 
+struct PageProcessMetric: Identifiable, Equatable, Sendable {
+    let tabID: UUID
+    let browserID: Int
+    let taskID: Int64
+    let taskTitle: String
+    let url: URL?
+    let memoryBytes: UInt64?
+    let cpuPercent: Double
+
+    var id: UUID { tabID }
+}
+
 @MainActor
 final class ProcessMetricsMonitor: ObservableObject {
     static let shared = ProcessMetricsMonitor()
 
     @Published private(set) var memoryBytes: UInt64 = 0
     @Published private(set) var cpuPercent: Double = 0
+    @Published private(set) var pageMetricsByTabID: [UUID: PageProcessMetric] = [:]
+    @Published private(set) var lastUpdatedAt: Date?
+    @Published private(set) var hasSampled = false
+    @Published private(set) var hasPageMetricsSampled = false
 
     private var timer: Timer?
     private var previousCPUTimeByProcess: [ProcessIdentity: Double] = [:]
@@ -17,10 +33,12 @@ final class ProcessMetricsMonitor: ObservableObject {
     private var sampleInFlight = false
     private var samplingGeneration: UInt64 = 0
     private var activationObservers: [NSObjectProtocol] = []
+    private var pageMetricsMonitoringStartedAt: TimeInterval?
 
     /// 采样本身要遍历全部 Helper 进程；应用失焦时降低频率以减少自身开销。
     private static let activeSampleInterval: TimeInterval = 1.5
     private static let inactiveSampleInterval: TimeInterval = 6.0
+    private static let chromiumTaskMetricsWarmupInterval: TimeInterval = 2.1
 
     var memoryLabel: String {
         ByteCountFormatter.string(fromByteCount: Int64(memoryBytes), countStyle: .memory)
@@ -34,6 +52,12 @@ final class ProcessMetricsMonitor: ObservableObject {
         subscriberCount += 1
         guard subscriberCount == 1 else { return }
         samplingGeneration &+= 1
+        pageMetricsMonitoringStartedAt = ProcessInfo.processInfo.systemUptime
+        hasPageMetricsSampled = false
+        pageMetricsByTabID.removeAll()
+#if REX_CEF
+        RexChromiumRuntime.shared.beginTabTaskMetricsMonitoring()
+#endif
         requestSample()
         scheduleTimer()
         installActivationObservers()
@@ -52,6 +76,12 @@ final class ProcessMetricsMonitor: ObservableObject {
         sampleInFlight = false
         previousCPUTimeByProcess.removeAll()
         previousSampleUptime = ProcessInfo.processInfo.systemUptime
+        pageMetricsMonitoringStartedAt = nil
+        hasPageMetricsSampled = false
+        pageMetricsByTabID.removeAll()
+#if REX_CEF
+        RexChromiumRuntime.shared.endTabTaskMetricsMonitoring()
+#endif
     }
 
     private func scheduleTimer() {
@@ -88,18 +118,28 @@ final class ProcessMetricsMonitor: ObservableObject {
         guard !sampleInFlight else { return }
         sampleInFlight = true
         let generation = samplingGeneration
+        let pageMetrics = chromiumPageMetricsSnapshot()
+        let pageMetricsAreReady = chromiumPageMetricsAreReady
         Task.detached(priority: .utility) { [weak self] in
             let usage = Self.processUsage()
             await MainActor.run {
                 guard let self, self.samplingGeneration == generation else { return }
                 self.sampleInFlight = false
                 guard self.subscriberCount > 0, let usage else { return }
-                self.apply(usage)
+                self.apply(
+                    usage,
+                    pageMetrics: pageMetrics,
+                    pageMetricsAreReady: pageMetricsAreReady
+                )
             }
         }
     }
 
-    private func apply(_ usage: ProcessUsage) {
+    private func apply(
+        _ usage: ProcessUsage,
+        pageMetrics: [PageProcessMetric],
+        pageMetricsAreReady: Bool
+    ) {
         // 仅在可见变化时发布，避免每次采样都触发 SwiftUI 工具栏重绘。
         if distance(memoryBytes, usage.physicalFootprint) >= 1_048_576 {
             memoryBytes = usage.physicalFootprint
@@ -123,6 +163,55 @@ final class ProcessMetricsMonitor: ObservableObject {
         }
         previousCPUTimeByProcess = usage.cpuSecondsByProcess
         previousSampleUptime = now
+        if pageMetricsAreReady {
+            let nextPageMetrics = Dictionary(uniqueKeysWithValues: pageMetrics.map { ($0.tabID, $0) })
+            if pageMetricsByTabID != nextPageMetrics {
+                pageMetricsByTabID = nextPageMetrics
+            }
+            hasPageMetricsSampled = true
+        }
+        lastUpdatedAt = .now
+        hasSampled = true
+    }
+
+    private var chromiumPageMetricsAreReady: Bool {
+#if REX_CEF
+        guard let startedAt = pageMetricsMonitoringStartedAt else { return false }
+        return ProcessInfo.processInfo.systemUptime - startedAt
+            >= Self.chromiumTaskMetricsWarmupInterval
+#else
+        return true
+#endif
+    }
+
+    private func chromiumPageMetricsSnapshot() -> [PageProcessMetric] {
+#if REX_CEF
+        guard RexChromiumRuntime.shared.isReady else { return [] }
+        return RexChromiumRuntime.shared.tabTaskMetricsSnapshot().compactMap { payload in
+            guard let tabString = payload["tabID"] as? String,
+                  let tabID = UUID(uuidString: tabString),
+                  let browserID = (payload["browserID"] as? NSNumber)?.intValue,
+                  let taskID = (payload["taskID"] as? NSNumber)?.int64Value,
+                  let cpuPercent = (payload["cpuPercent"] as? NSNumber)?.doubleValue else {
+                return nil
+            }
+            let memoryNumber = payload["memoryBytes"] as? NSNumber
+            let rawURL = payload["url"] as? String
+            return PageProcessMetric(
+                tabID: tabID,
+                browserID: browserID,
+                taskID: taskID,
+                taskTitle: payload["taskTitle"] as? String ?? "",
+                url: rawURL.flatMap(URL.init(string:)),
+                memoryBytes: memoryNumber.flatMap { value in
+                    value.int64Value >= 0 ? UInt64(value.int64Value) : nil
+                },
+                cpuPercent: cpuPercent.isFinite ? max(0, cpuPercent) : 0
+            )
+        }
+#else
+        return []
+#endif
     }
 
     private func distance(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {

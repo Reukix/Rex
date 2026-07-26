@@ -30,6 +30,7 @@
 		AA5569E2630FC26A66FC857A /* BrowserExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */; };
 		C143AB94D376C2BBE0E8E466 /* ReleaseNotesModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */; };
 		C948AFA13B2EAE9C5C11D22A /* BrowserSessionPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E616930673BBF6FF7361F2 /* BrowserSessionPersistence.swift */; };
+		CA461C88BF372EBD08B04D25 /* PerformanceMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28D1947BF1E8D6EDF090D11A /* PerformanceMonitorView.swift */; };
 		D2C96A57D3053E40DFBF2C53 /* PrivacyShieldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F6DC07D472666EAD96CEB5 /* PrivacyShieldView.swift */; };
 		D728A97094EBD5B6AECE820A /* PermissionCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DD5C5C705944BE85DA3522A /* PermissionCenterView.swift */; };
 		E31F31608ED115F47805F22C /* BrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */; };
@@ -40,6 +41,7 @@
 		160AC1FA4E46A8FA0FC08422 /* ProcessMetricsMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMetricsMonitor.swift; sourceTree = "<group>"; };
 		1BE2ABACBE076FE65A7024A0 /* ReleaseNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesView.swift; sourceTree = "<group>"; };
 		23FBE7068E79A7526CCAED00 /* BrowserPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPreferences.swift; sourceTree = "<group>"; };
+		28D1947BF1E8D6EDF090D11A /* PerformanceMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceMonitorView.swift; sourceTree = "<group>"; };
 		2FD733807F1487E4BC02F00D /* ChromiumBrowserEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromiumBrowserEngine.swift; sourceTree = "<group>"; };
 		33630E1B8BA956063CAD60FA /* BrowserRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserRootView.swift; sourceTree = "<group>"; };
 		35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExtensionsView.swift; sourceTree = "<group>"; };
@@ -138,6 +140,7 @@
 			isa = PBXGroup;
 			children = (
 				33630E1B8BA956063CAD60FA /* BrowserRootView.swift */,
+				28D1947BF1E8D6EDF090D11A /* PerformanceMonitorView.swift */,
 				160AC1FA4E46A8FA0FC08422 /* ProcessMetricsMonitor.swift */,
 			);
 			path = AppShell;
@@ -399,6 +402,7 @@
 				A13F9576CFBE234A99BCFD49 /* ChromiumBrowserEngine.swift in Sources */,
 				308B91D1132FC63E2643AC68 /* LiquidGlass.swift in Sources */,
 				0AF632507BE80B446D06EE5F /* NewTabFavorites.swift in Sources */,
+				CA461C88BF372EBD08B04D25 /* PerformanceMonitorView.swift in Sources */,
 				D728A97094EBD5B6AECE820A /* PermissionCenterView.swift in Sources */,
 				D2C96A57D3053E40DFBF2C53 /* PrivacyShieldView.swift in Sources */,
 				222E26899C5C7D3753053013 /* ProcessMetricsMonitor.swift in Sources */,

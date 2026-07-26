@@ -1850,7 +1850,7 @@ func windowChromeToolbarInset() {
         toolbarLeadingInset: 101,
         isFullScreen: false,
         showsPerformanceMetrics: true
-    ) == 247)
+    ) == 154)
     #expect(BrowserWindowChromeLayout.performanceCardWidth(
         toolbarLeadingInset: 101,
         isFullScreen: false,
@@ -1860,12 +1860,29 @@ func windowChromeToolbarInset() {
         toolbarLeadingInset: BrowserWindowChromeLayout.windowEdgePadding,
         isFullScreen: true,
         showsPerformanceMetrics: true
-    ) == 154)
+    ) == 0)
     #expect(BrowserWindowChromeLayout.performanceCardWidth(
         toolbarLeadingInset: BrowserWindowChromeLayout.windowEdgePadding,
         isFullScreen: true,
         showsPerformanceMetrics: false
     ) == 0)
+
+    #expect(BrowserWindowChromeLayout.titlebarHeight(
+        isFullScreen: false,
+        showsPerformanceMetrics: true
+    ) == RexMetrics.expandedTitlebarHeight)
+    #expect(BrowserWindowChromeLayout.titlebarCardHeight(
+        isFullScreen: false,
+        showsPerformanceMetrics: true
+    ) == RexMetrics.expandedToolbarHeight)
+    #expect(BrowserWindowChromeLayout.titlebarHeight(
+        isFullScreen: true,
+        showsPerformanceMetrics: true
+    ) == RexMetrics.titlebarHeight)
+    #expect(BrowserWindowChromeLayout.titlebarCardHeight(
+        isFullScreen: false,
+        showsPerformanceMetrics: false
+    ) == RexMetrics.toolbarHeight)
 }
 
 @Test("Search engines build HTTPS URLs with the original query")

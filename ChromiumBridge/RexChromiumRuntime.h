@@ -43,6 +43,12 @@ typedef void (^RexChromiumEventHandler)(NSDictionary<NSString *, id> *event);
 @property(nonatomic, readonly, copy) NSString *cefVersion;
 @property(nonatomic, readonly, copy) NSString *chromiumVersion;
 
+/// Snapshot of the Chromium task associated with each live tab. Must be called
+/// on the main thread because CefTaskManager is restricted to CEF's UI thread.
+- (void)beginTabTaskMetricsMonitoring;
+- (void)endTabTaskMetricsMonitoring;
+- (NSArray<NSDictionary<NSString *, id> *> *)tabTaskMetricsSnapshot;
+
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
                     locale:(NSString *)locale
                      error:(NSError **)error;

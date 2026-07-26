@@ -37,6 +37,7 @@
 #include "include/cef_resource_request_handler.h"
 #include "include/cef_ssl_info.h"
 #include "include/cef_ssl_status.h"
+#include "include/cef_task_manager.h"
 #include "include/cef_version.h"
 #include "include/cef_x509_certificate.h"
 #include "include/wrapper/cef_helpers.h"
@@ -1044,6 +1045,7 @@ struct RexPendingPermission {
   BOOL _layoutSyncSuspended;
   std::unique_ptr<CefScopedLibraryLoader> _libraryLoader;
   CefRefPtr<RexCEFApp> _application;
+  CefRefPtr<CefTaskManager> _taskManager;
   std::shared_ptr<std::atomic_bool> _blockThirdPartyCookiesPreference;
   std::map<std::string, CefRefPtr<CefBrowser>> _browsers;
   std::map<std::string, CefRefPtr<CefBrowser>> _developerToolsBrowsers;
@@ -1106,6 +1108,57 @@ struct RexPendingPermission {
 - (NSString *)chromiumVersion {
   return [NSString stringWithFormat:@"%d.%d.%d.%d", CHROME_VERSION_MAJOR,
           CHROME_VERSION_MINOR, CHROME_VERSION_BUILD, CHROME_VERSION_PATCH];
+}
+
+- (void)beginTabTaskMetricsMonitoring {
+  NSAssert(NSThread.isMainThread,
+           @"CEF task metrics must be managed on the main thread");
+  if (_ready && !_shuttingDown && !_taskManager) {
+    _taskManager = CefTaskManager::GetTaskManager();
+  }
+}
+
+- (void)endTabTaskMetricsMonitoring {
+  NSAssert(NSThread.isMainThread,
+           @"CEF task metrics must be managed on the main thread");
+  _taskManager = nullptr;
+}
+
+- (NSArray<NSDictionary<NSString *, id> *> *)tabTaskMetricsSnapshot {
+  NSAssert(NSThread.isMainThread,
+           @"CEF task metrics must be collected on the main thread");
+  if (!_ready || _shuttingDown) return @[];
+
+  if (!_taskManager) [self beginTabTaskMetricsMonitoring];
+  if (!_taskManager) return @[];
+
+  NSMutableArray<NSDictionary<NSString *, id> *> *snapshot =
+      [NSMutableArray arrayWithCapacity:_browsers.size()];
+  for (const auto &entry : _browsers) {
+    CefRefPtr<CefBrowser> browser = entry.second;
+    if (!browser || !browser->IsValid()) continue;
+
+    const int browserID = browser->GetIdentifier();
+    const int64_t taskID = _taskManager->GetTaskIdForBrowserId(browserID);
+    if (taskID < 0) continue;
+
+    CefTaskInfo info;
+    if (!_taskManager->GetTaskInfo(taskID, info)) continue;
+
+    NSString *tabID = [[NSString alloc] initWithUTF8String:entry.first.c_str()] ?: @"";
+    CefRefPtr<CefFrame> mainFrame = browser->GetMainFrame();
+    NSMutableDictionary<NSString *, id> *metrics = [@{
+      @"tabID": tabID,
+      @"browserID": @(browserID),
+      @"taskID": @(taskID),
+      @"taskTitle": RexNSString(CefString(&info.title)),
+      @"url": mainFrame ? RexNSString(mainFrame->GetURL()) : @"",
+      @"cpuPercent": @(info.cpu_usage),
+      @"memoryBytes": info.memory > 0 ? @(info.memory) : NSNull.null
+    } mutableCopy];
+    [snapshot addObject:metrics];
+  }
+  return [snapshot copy];
 }
 
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
@@ -2402,6 +2455,7 @@ struct RexPendingPermission {
   NSAssert(NSThread.isMainThread, @"CEF must shut down on the main thread");
   if (!_ready) return;
   _application->StopMessagePump();
+  _taskManager = nullptr;
   CefShutdown();
   _application = nullptr;
   _libraryLoader.reset();

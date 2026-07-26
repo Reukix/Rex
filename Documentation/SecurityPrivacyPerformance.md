@@ -44,7 +44,11 @@
 - 内存压力按“已归档→休眠后台→冻结后台”的优先级释放资源，并保留恢复元数据。
 - favicon 与快照采用有界 LRU 缓存；侧栏使用 LazyVStack。
 - 低电量模式关闭噪点/实时高光，减少模糊层和弹性动画。
+- `ProcessMetricsMonitor` 使用 Darwin `proc_*` 接口遍历 Rex 主进程及其 Helper 子进程，按 physical footprint 汇总内存，并根据连续 CPU time 样本计算 Rex 总 CPU；该总量包含 renderer、GPU、utility 和 worker 等子进程。
+- 每个网页的指标来自 CEF `CefTaskManager`：通过 `CefBrowser::GetIdentifier` 查找浏览器主 task，再读取该 task 的内存和 CPU。页面只在本机实时展示这些快照，不把它们写入会话数据库。
+- Chromium 可能让多个任务共享 renderer 进程；`CefTaskInfo.cpu_usage` 描述 task 所在进程的 CPU，因此共享 renderer 的多个网页行不能相加。独立 GPU、utility、service worker、shared worker 和 dedicated worker 不强行分摊到网页，只计入 Darwin Rex 总量。
+- 前台每 1.5 秒采样一次，应用失焦后降为每 6 秒一次；工具栏和详情页共享同一引用计数监测器，避免重复定时器。首轮 CEF 快照预热 2.1 秒，最后一个订阅结束时释放 CefTaskManager 并停止其后台刷新。
 
 ## 可观测指标
 
-记录脱敏的启动阶段耗时、tab 创建耗时、renderer 崩溃率、每 tab 内存、分屏 resize 掉帧、规则匹配耗时和会话恢复成功率。诊断导出必须经用户主动触发并预览内容。
+当前性能页仅实时显示 Rex 进程树总量和 `CefTaskManager` 网页快照，不持久化性能历史。后续诊断计划记录脱敏的启动阶段耗时、tab 创建耗时、renderer 崩溃率、每 tab 内存、分屏 resize 掉帧、规则匹配耗时和会话恢复成功率；诊断导出必须经用户主动触发并预览内容。
