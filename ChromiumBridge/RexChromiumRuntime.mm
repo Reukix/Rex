@@ -1203,7 +1203,7 @@ struct RexPendingPermission {
   CefString(&settings.root_cache_path) = RexUTF8(rootPath);
   CefString(&settings.cache_path) = RexUTF8(profilePath);
   CefString(&settings.locale) = RexUTF8(locale.length ? locale : @"zh-CN");
-  CefString(&settings.user_agent_product) = "Rex/0.8.1";
+  CefString(&settings.user_agent_product) = "Rex/0.9.0";
 
   _application = new RexCEFApp(_blockThirdPartyCookiesPreference);
   if (!CefInitialize(mainArgs, settings, _application, nullptr)) {

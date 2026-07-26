@@ -145,7 +145,10 @@ private struct BrowserStartPageView: View {
     @Environment(\.openWindow) private var openWindow
     let tabID: UUID
     @State private var query = ""
+    @State private var isAddingFavorite = false
     @FocusState private var isSearchFocused: Bool
+
+    private static let collectionSectionHeight: CGFloat = 380
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: .now)
@@ -205,15 +208,17 @@ private struct BrowserStartPageView: View {
                 isSearchFocused = true
             }
         }
+        .sheet(isPresented: $isAddingFavorite) {
+            NewTabFavoriteForm(existingURLs: store.newTabFavorites.map(\.url)) { draft in
+                store.addNewTabFavorite(title: draft.title, url: draft.url)
+            }
+        }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
-            Text("R")
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 52, height: 52)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            SearchEngineBrandIcon(engine: store.preferences.searchEngine, size: 52)
+                .accessibilityLabel("\(store.preferences.searchEngine.displayName) 搜索引擎")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(greeting)")
@@ -242,10 +247,8 @@ private struct BrowserStartPageView: View {
 
     private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: store.preferences.searchEngine.symbolName)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 22)
+            SearchEngineBrandIcon(engine: store.preferences.searchEngine, size: 22)
+                .accessibilityHidden(true)
 
             TextField("搜索或输入网址", text: $query)
                 .textFieldStyle(.plain)
@@ -287,7 +290,11 @@ private struct BrowserStartPageView: View {
     }
 
     private var quickActions: some View {
-        HStack(spacing: 10) {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 72, maximum: 88), spacing: 10)],
+            alignment: .leading,
+            spacing: 12
+        ) {
             quickAction(symbol: "plus.rectangle.on.rectangle", title: "新标签页") {
                 store.newTab()
             }
@@ -320,31 +327,40 @@ private struct BrowserStartPageView: View {
     }
 
     private var favoriteSitesSection: some View {
-        startSection(title: "收藏网站", symbol: "square.grid.2x2.fill") {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 10)], spacing: 10) {
+        collectionSection(
+            title: "收藏网站",
+            symbol: "square.grid.2x2.fill",
+            addAction: { isAddingFavorite = true }
+        ) {
+            LazyVGrid(
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
+                spacing: 6
+            ) {
                 ForEach(store.newTabFavorites.prefix(12)) { favorite in
                     favoriteSiteCard(favorite)
                 }
-                addFavoriteCard
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: 920, alignment: .leading)
     }
 
     private var contentGrid: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if !store.profile.isPrivate || !recentHistory.isEmpty {
-                HStack(alignment: .top, spacing: 18) {
-                    if !recentHistory.isEmpty {
-                        recentHistorySection
-                            .frame(maxWidth: 320, alignment: .topLeading)
-                    }
-
-                    if !store.profile.isPrivate {
-                        favoriteSitesSection
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
+            if !recentHistory.isEmpty && !store.profile.isPrivate {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 300), spacing: 18, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 18
+                ) {
+                    recentHistorySection
+                    favoriteSitesSection
                 }
+            } else if !recentHistory.isEmpty {
+                recentHistorySection
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else if !store.profile.isPrivate {
+                favoriteSitesSection
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
             if !topBookmarks.isEmpty {
@@ -390,8 +406,8 @@ private struct BrowserStartPageView: View {
     }
 
     private var recentHistorySection: some View {
-        startSection(title: "最近访问", symbol: "clock.fill") {
-            VStack(spacing: 6) {
+        collectionSection(title: "最近访问", symbol: "clock.fill") {
+            LazyVStack(spacing: 6) {
                 ForEach(recentHistory) { entry in
                     Button {
                         open(url: entry.url)
@@ -424,6 +440,47 @@ private struct BrowserStartPageView: View {
                     .help(entry.url.absoluteString)
                 }
             }
+        }
+    }
+
+    private func collectionSection<Content: View>(
+        title: String,
+        symbol: String,
+        addAction: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Label(title, systemImage: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                if let addAction {
+                    Button(action: addAction) {
+                        Label("新增", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("新增收藏网站")
+                }
+            }
+
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(14)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: Self.collectionSectionHeight,
+            maxHeight: Self.collectionSectionHeight,
+            alignment: .topLeading
+        )
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(.white.opacity(0.1), lineWidth: 0.75)
         }
     }
 
@@ -462,7 +519,8 @@ private struct BrowserStartPageView: View {
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
             }
-            .frame(width: 76)
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .contentShape(Rectangle())
             .opacity(isDisabled ? 0.4 : 1)
         }
         .buttonStyle(.plain)
@@ -489,9 +547,11 @@ private struct BrowserStartPageView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 0)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            .padding(10)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -506,58 +566,6 @@ private struct BrowserStartPageView: View {
                 store.removeNewTabFavorite(favorite)
             }
         }
-    }
-
-    private var addFavoriteCard: some View {
-        Menu {
-            if let url = store.currentTab?.url, !BrowserStartPage.matches(url) {
-                Button("收藏当前页面") {
-                    store.addNewTabFavorite(title: store.currentTab?.title, url: url)
-                }
-            }
-            Button("从剪贴板添加网址") {
-                addFavoriteFromPasteboard()
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 24, height: 24)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("添加网站")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("仅新标签页")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .help("添加仅在新标签页显示的收藏网站，与网页收藏独立")
-    }
-
-    private func addFavoriteFromPasteboard() {
-        let raw = NSPasteboard.general.string(forType: .string)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !raw.isEmpty else {
-            store.lastError = "剪贴板中没有可用的网址"
-            return
-        }
-        let candidate = raw.contains("://") ? raw : "https://\(raw)"
-        guard let url = URL(string: candidate), url.host != nil else {
-            store.lastError = "无法识别剪贴板中的网址"
-            return
-        }
-        store.addNewTabFavorite(title: url.host, url: url)
     }
 
     private func open(url: URL) {
@@ -576,6 +584,168 @@ private struct BrowserStartPageView: View {
         }
         store.addressText = trimmed
         store.submitAddress()
+    }
+}
+
+private struct SearchEngineBrandIcon: View {
+    let engine: SearchEngine
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image = SearchEngineBrandAssets.image(for: engine) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: engine.symbolName)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(size * 0.2)
+        .frame(width: size, height: size)
+        .background(
+            Color.white,
+            in: RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.75)
+        }
+    }
+}
+
+private struct NewTabFavoriteForm: View {
+    private enum Field: Hashable {
+        case title
+        case url
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    let existingURLs: [URL]
+    let onAdd: (NewTabFavoriteDraft) -> Bool
+    @State private var title = ""
+    @State private var urlText = ""
+    @State private var didAttemptSubmit = false
+    @State private var submissionError: String?
+    @FocusState private var focusedField: Field?
+
+    private var draft: NewTabFavoriteDraft? {
+        NewTabFavoriteDraft(title: title, urlText: urlText)
+    }
+
+    private var isDuplicate: Bool {
+        guard let url = draft?.url else { return false }
+        return existingURLs.contains {
+            NewTabFavoriteDraft.normalizedURL($0) == url
+        }
+    }
+
+    private var validationMessage: String? {
+        if didAttemptSubmit && title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "请输入网站名称"
+        }
+        if didAttemptSubmit && urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "请输入网站网址"
+        }
+        if !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           NewTabFavoriteDraft.normalizedURL(from: urlText) == nil {
+            return "请输入有效的 HTTP 或 HTTPS 网址"
+        }
+        if isDuplicate {
+            return "该网站已在收藏网站中"
+        }
+        return submissionError
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "plus.square.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        Color.accentColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("新增收藏网站")
+                        .font(.headline)
+                    Text("仅显示在 Rex 新标签页")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+
+            Divider()
+
+            Form {
+                TextField("名称", text: $title)
+                    .focused($focusedField, equals: .title)
+                    .onSubmit { focusedField = .url }
+
+                TextField("网址", text: $urlText)
+                    .focused($focusedField, equals: .url)
+                    .onSubmit { submit() }
+
+                Group {
+                    if let validationMessage {
+                        Text(validationMessage)
+                            .foregroundStyle(.red)
+                            .accessibilityLabel("输入错误：\(validationMessage)")
+                    } else {
+                        Text("未填写协议时默认使用 HTTPS")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption)
+            }
+            .formStyle(.grouped)
+            .frame(height: 164)
+            .onChange(of: title) { _, _ in submissionError = nil }
+            .onChange(of: urlText) { _, _ in submissionError = nil }
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("取消", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("添加") { submit() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 440)
+        .onAppear {
+            DispatchQueue.main.async { focusedField = .title }
+        }
+    }
+
+    private func submit() {
+        didAttemptSubmit = true
+        guard let draft else {
+            focusedField = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .title
+                : .url
+            return
+        }
+        guard !isDuplicate else {
+            focusedField = .url
+            return
+        }
+        guard onAdd(draft) else {
+            submissionError = "无法添加这个网站，请检查后重试"
+            return
+        }
+        dismiss()
     }
 }
 

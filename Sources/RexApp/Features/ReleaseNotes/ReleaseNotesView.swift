@@ -12,6 +12,7 @@ struct ReleaseNotesView: View {
 
     private let features: FeatureCatalog?
     private let releases: ReleaseCatalog?
+    private let aboutInformation: RexAboutInformation?
     private let loadError: String?
 
     init() {
@@ -19,10 +20,20 @@ struct ReleaseNotesView: View {
             let loaded = try ReleaseNotesService.load()
             features = loaded.0
             releases = loaded.1
+            aboutInformation = RexAboutInformation.make(
+                version: AppVersion.releaseVersion,
+                build: AppVersion.buildNumber,
+                chromiumVersion: AppVersion.chromiumVersion,
+                cefVersion: AppVersion.cefVersion,
+                architecture: AppVersion.supportedArchitecture,
+                features: loaded.0,
+                releases: loaded.1
+            )
             loadError = nil
         } catch {
             features = nil
             releases = nil
+            aboutInformation = nil
             loadError = error.localizedDescription
         }
     }
@@ -50,7 +61,11 @@ struct ReleaseNotesView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 12)
                         ForEach(releases?.releases ?? []) { release in
-                            releaseNavButton("v\(release.version)", symbol: "clock.arrow.circlepath", id: release.version)
+                            releaseNavButton(
+                                "v\(release.version) · \(release.build)",
+                                symbol: "clock.arrow.circlepath",
+                                id: release.id
+                            )
                         }
                         Spacer()
                     }
@@ -66,7 +81,11 @@ struct ReleaseNotesView: View {
                         } else if model.selectedSection == "issues" {
                             issueList
                         } else {
-                            releaseDetail(version: model.selectedSection == "current" ? releases?.releases.first?.version : model.selectedSection)
+                            releaseDetail(
+                                release: model.selectedSection == "current"
+                                    ? currentRelease
+                                    : releases?.releases.first { $0.id == model.selectedSection }
+                            )
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -173,7 +192,7 @@ struct ReleaseNotesView: View {
     private var issueList: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("已知问题").font(.title2.bold())
-            ForEach(releases?.releases.first?.knownIssues ?? [], id: \.self) { issue in
+            ForEach(currentRelease?.knownIssues ?? [], id: \.self) { issue in
                 Label(issue, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             }
@@ -184,29 +203,48 @@ struct ReleaseNotesView: View {
     }
 
     @ViewBuilder
-    private func releaseDetail(version: String?) -> some View {
-        if let release = releases?.releases.first(where: { $0.version == version }) {
+    private func releaseDetail(release: ReleaseRecord?) -> some View {
+        if let release {
+            let isCurrent = release.version == AppVersion.releaseVersion && release.build == AppVersion.buildNumber
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Rex v\(release.version)").font(.largeTitle.bold())
-                            Text("构建 \(release.build) · \(release.channel.capitalized) · \(release.date)")
+                            Text(
+                                "构建 \(release.build) · "
+                                    + "\(RexAboutInformation.channelDisplayName(release.channel)) 通道 · "
+                                    + release.date
+                            )
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("当前版本")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Color.accentColor.opacity(0.18), in: Capsule())
+                        if isCurrent {
+                            Text("当前版本")
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                        }
                     }
                     Text(release.summary).font(.title3)
                     releaseSection("新增", symbol: "plus.circle.fill", items: release.added)
+                    releaseSection("改进", symbol: "arrow.up.circle.fill", items: release.improved)
+                    releaseSection("修复", symbol: "wrench.and.screwdriver.fill", items: release.fixed)
+                    releaseSection("变更", symbol: "arrow.triangle.2.circlepath", items: release.changed)
+                    releaseSection("移除", symbol: "minus.circle.fill", items: release.removed)
                     releaseSection("正在开发", symbol: "hammer.fill", items: release.inProgress)
                     releaseSection("已知问题", symbol: "exclamationmark.triangle.fill", items: release.knownIssues)
-                    Divider()
-                    Text("Chromium：尚未集成 · macOS 14+")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if isCurrent, let aboutInformation {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Chromium \(aboutInformation.chromiumVersion ?? "不可用")")
+                            Text("CEF \(aboutInformation.cefVersion)")
+                            Text("\(aboutInformation.architecture) · macOS 14+")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    }
                 }
                 .padding(24)
             }
@@ -237,5 +275,10 @@ struct ReleaseNotesView: View {
         case .limited: .orange
         case .removed: .red
         }
+    }
+
+    private var currentRelease: ReleaseRecord? {
+        releases?.release(version: AppVersion.releaseVersion, build: AppVersion.buildNumber)
+            ?? releases?.releases.first
     }
 }

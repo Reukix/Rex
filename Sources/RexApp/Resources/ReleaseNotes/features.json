@@ -1,5 +1,5 @@
 {
-  "lastUpdatedVersion": "0.8.1",
+  "lastUpdatedVersion": "0.9.0",
   "categories": [
     {
       "id": "app-shell",
@@ -61,8 +61,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.5.2-beta.1",
-          "description": "动态页面右键菜单、分组主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签",
+          "updatedIn": "0.9.0",
+          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -78,8 +78,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.2-beta.1",
-          "updatedIn": "0.5.2-beta.1",
-          "description": "Chrome 风格侧栏设置中心，并让地址栏使用持久化的 Google、Bing、DuckDuckGo、Brave Search 或 Ecosia 偏好",
+          "updatedIn": "0.9.0",
+          "description": "Chrome 风格侧栏设置中心；Google、Bing、DuckDuckGo、Brave Search 或 Ecosia 偏好同时驱动地址栏、新标签页搜索和品牌图标；关于 Rex 从发布数据展示完整版本与功能信息",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -87,6 +87,24 @@
           "settingsPath": "设置 > 搜索引擎",
           "limitations": [
             "不会切换固定的 CEF/Chromium 渲染内核，也不会更改 macOS 系统默认浏览器"
+          ]
+        },
+        {
+          "id": "new-tab-start-page",
+          "name": "新标签页",
+          "status": "completed",
+          "testStatus": "passed",
+          "introducedIn": "0.5.3-beta.1",
+          "updatedIn": "0.9.0",
+          "description": "显示当前搜索引擎、快捷操作、等宽等高的最近访问/收藏网站区域，并通过名称与网址表单新增收藏网站",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 搜索引擎",
+          "limitations": [
+            "新标签页收藏网站与资料库书签相互独立",
+            "隐私窗口不显示或写入最近访问和收藏网站"
           ]
         },
         {
@@ -455,17 +473,18 @@
           "id": "controlled-extensions",
           "name": "受控扩展子集",
           "status": "limited",
-          "testStatus": "pending",
+          "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.5.0-beta.1",
-          "description": "仅支持经权限审核并通过 CEF 兼容测试的扩展子集",
+          "updatedIn": "0.9.0",
+          "description": "Rex 扩展商店提供 Chrome Web Store 精选目录、搜索、分类和官方页面入口；本地管理器安全校验并复制 Manifest V2/V3 未打包扩展，支持定位和移除，不显示无效启用开关",
           "supportsPrivateWindow": false,
           "supportsSplitView": true,
           "supportsKeyboard": true,
-          "requiresRestart": true,
-          "settingsPath": "",
+          "requiresRestart": false,
+          "settingsPath": "扩展",
           "limitations": [
-            "不承诺 Chrome Web Store 完整兼容"
+            "Chrome Web Store 的官方页面在系统默认浏览器中打开，不会安装到 Rex",
+            "CEF 150 最小发行包没有公开扩展加载 API，本地扩展的脚本、service worker 和 Chrome API 不会执行"
           ]
         },
         {

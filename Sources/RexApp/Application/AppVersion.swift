@@ -5,8 +5,8 @@ import Foundation
 #endif
 
 enum AppVersion {
-    static let releaseVersion = "0.8.1"
-    static let buildNumber = 810
+    static let releaseVersion = "0.9.0"
+    static let buildNumber = 900
     static let chromiumVersion: String? = "150.0.7871.129"
     static let cefVersion = "150.0.14+g7c1aa68+chromium-150.0.7871.129"
     static let supportedArchitecture = "arm64"

@@ -2,7 +2,7 @@
 
 Rex 是一款面向 macOS 的原生桌面浏览器设计与工程原型，围绕垂直标签页、工作空间、双页面分屏和默认隐私保护展开。
 
-当前版本为 **v0.8.1**。它在原生 SwiftUI 产品外壳和 CEF/Chromium ARM64 运行时之上提供 SQLite 会话、垂直标签与工作空间、仅左右双页面分屏、精选域名目录隐私盾牌、权限、隐私窗口和下载管理。v0.8.1 为历史记录加入按过去 1 小时、24 小时、7 天或所有时间永久删除的入口，收紧收藏与下载空状态的顶部间距；标题栏恢复为红黄绿按钮右侧的紧凑单导航卡，点击导航栏首项的性能指标可查看每个网页的真实 CEF 任务内存与 CPU。Swift Package 保留 WebKit 预览构建，真实 Chromium 构建使用生成的 Xcode 工程。
+当前版本为 **v0.9.0**。它在原生 SwiftUI 产品外壳和 CEF/Chromium ARM64 运行时之上提供 SQLite 会话、垂直标签与工作空间、仅左右双页面分屏、精选域名目录隐私盾牌、权限、隐私窗口和下载管理。v0.9.0 统一新标签页站点卡片和收藏录入流程，补齐版本功能信息与中文菜单，并将扩展管理升级为 Rex 扩展商店入口与本地未打包扩展管理。Swift Package 保留 WebKit 预览构建，真实 Chromium 构建使用生成的 Xcode 工程。
 
 隐私盾牌分为三层：Swift 只在顶层导航时清理已知追踪参数并尝试把 HTTP 升级为 HTTPS；CEF 请求层使用内置的 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目取消命中的子资源请求；第三方 Cookie 则由 CEF profile 的全局 Cookie 设置限制。标准模式拦截第三方广告与追踪目录，并在默认开启的指纹保护下拦截第三方已知指纹服务；严格模式再加入社交目录；自定义模式映射为 CEF aggressive 策略，允许广告/追踪目录匹配第一方请求，并对第三方请求使用路径启发式。完整 104 条规则见[隐私盾牌内置请求目录](Documentation/PrivacyDomainCatalog.md)。开发者工具只使用 CEF 150 自带的同版本 Chromium DevTools 前端。
 
@@ -27,8 +27,8 @@ open Rex.xcodeproj
 一键构建并打包含 Chromium 的完整应用包：
 
 ```bash
-Scripts/package-chromium-app.sh 0.8.1 810 Debug
-# 产物：Dist/Rex.app 与 Dist/Rex-v0.8.1-macos-arm64-chromium.zip
+Scripts/package-chromium-app.sh 0.9.0 900 Debug
+# 产物：Dist/Rex.app 与 Dist/Rex-v0.9.0-macos-arm64-chromium.zip
 ```
 
 CEF 固定为 `150.0.14`，对应 Chromium `150.0.7871.129`。`Vendor/CEF` 和下载归档不进入版本控制，可随时根据锁文件重建。

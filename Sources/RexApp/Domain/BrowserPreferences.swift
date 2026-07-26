@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -43,6 +44,26 @@ enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable {
         }
     }
 
+    var brandAssetName: String {
+        switch self {
+        case .google: "SearchEngineGoogle"
+        case .bing: "SearchEngineBing"
+        case .duckDuckGo: "SearchEngineDuckDuckGo"
+        case .brave: "SearchEngineBrave"
+        case .ecosia: "SearchEngineEcosia"
+        }
+    }
+
+    fileprivate var brandResourceName: String {
+        switch self {
+        case .google: "google"
+        case .bing: "bing"
+        case .duckDuckGo: "duckduckgo"
+        case .brave: "brave"
+        case .ecosia: "ecosia"
+        }
+    }
+
     var homeURL: URL {
         switch self {
         case .google: URL(string: "https://www.google.com/")!
@@ -65,6 +86,30 @@ enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable {
         var components = URLComponents(string: baseURL)
         components?.queryItems = [URLQueryItem(name: "q", value: query)]
         return components?.url
+    }
+}
+
+@MainActor
+enum SearchEngineBrandAssets {
+    static func image(for engine: SearchEngine) -> NSImage? {
+        if let catalogImage = NSImage(named: NSImage.Name(engine.brandAssetName)) {
+            return catalogImage
+        }
+
+#if SWIFT_PACKAGE
+        let resourceBundle = Bundle.module
+#else
+        let resourceBundle = Bundle.main
+#endif
+        let subdirectory = "Assets.xcassets/\(engine.brandAssetName).imageset"
+        guard let resourceURL = resourceBundle.url(
+            forResource: engine.brandResourceName,
+            withExtension: "svg",
+            subdirectory: subdirectory
+        ) else {
+            return nil
+        }
+        return NSImage(contentsOf: resourceURL)
     }
 }
 

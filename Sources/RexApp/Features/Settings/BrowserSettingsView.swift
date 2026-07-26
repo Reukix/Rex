@@ -39,6 +39,18 @@ struct BrowserSettingsView: View {
     @EnvironmentObject private var preferences: BrowserPreferences
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    private let aboutInformation: RexAboutInformation?
+    private let aboutLoadError: String?
+
+    init() {
+        do {
+            aboutInformation = try ReleaseNotesService.loadAboutInformation()
+            aboutLoadError = nil
+        } catch {
+            aboutInformation = nil
+            aboutLoadError = error.localizedDescription
+        }
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -293,15 +305,101 @@ struct BrowserSettingsView: View {
         case .about:
             settingsPage(
                 title: "关于 Rex",
-                subtitle: "版本、内核与发布信息"
+                subtitle: "版本、运行环境、关键能力与当前限制"
             ) {
+                aboutContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var aboutContent: some View {
+        if let information = aboutInformation {
+            VStack(alignment: .leading, spacing: 16) {
                 settingsCard {
-                    SettingsRow(
-                        icon: "globe",
-                        title: "Rex \(AppVersion.releaseVersion)",
-                        detail: "Chromium \(AppVersion.chromiumVersion ?? "不可用") · CEF \(AppVersion.cefVersion)"
-                    )
+                    HStack(spacing: 16) {
+                        Image(nsImage: NSApplication.shared.applicationIconImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 56, height: 56)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Rex \(information.version)")
+                                .font(.title2.bold())
+                            Text("构建 \(information.build) · \(information.channelDisplayName) 通道")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+
+                aboutSectionTitle("运行环境", detail: "实际随当前应用构建发布")
+                settingsCard {
+                    aboutMetadataRow("Chromium", value: information.chromiumVersion ?? "不可用")
                     Divider()
+                    aboutMetadataRow("CEF", value: information.cefVersion)
+                    Divider()
+                    aboutMetadataRow("架构", value: information.architecture)
+                    Divider()
+                    aboutMetadataRow("功能目录", value: "v\(information.featureCatalogVersion)")
+                }
+
+                aboutSectionTitle(
+                    "关键能力",
+                    detail: "来自内置功能目录，共 \(information.capabilityGroups.count) 个分组"
+                )
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 250), spacing: 12)],
+                    alignment: .leading,
+                    spacing: 12
+                ) {
+                    ForEach(information.capabilityGroups) { group in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(group.name)
+                                .font(.headline)
+                            Text(group.statusSummary)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Color.accentColor)
+                            Text(group.featureNames.joined(separator: "、"))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+                        .padding(14)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(.white.opacity(0.1), lineWidth: 0.75)
+                        }
+                    }
+                }
+
+                aboutSectionTitle(
+                    "已知限制",
+                    detail: information.knownLimitations.isEmpty ? "当前版本没有记录限制" : "来自当前版本发布数据"
+                )
+                settingsCard {
+                    if information.knownLimitations.isEmpty {
+                        Text("当前版本没有记录已知限制")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(Array(information.knownLimitations.enumerated()), id: \.offset) { index, limitation in
+                            Label(limitation, systemImage: "exclamationmark.triangle")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 5)
+                            if index < information.knownLimitations.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+
+                settingsCard {
                     Button {
                         store.isReleaseNotesPresented = true
                         dismiss()
@@ -309,14 +407,42 @@ struct BrowserSettingsView: View {
                         SettingsRow(
                             icon: "sparkles",
                             title: "版本与功能",
-                            detail: "查看本版本已完成的功能和已知限制",
+                            detail: "查看完整发布说明、功能状态和每项能力的详细限制",
                             showsDisclosure: true
                         )
                     }
                     .buttonStyle(.plain)
                 }
             }
+        } else {
+            ContentUnavailableView(
+                "无法读取版本与功能数据",
+                systemImage: "exclamationmark.triangle",
+                description: Text(aboutLoadError ?? "内置发布数据不可用")
+            )
+            .frame(maxWidth: .infinity, minHeight: 320)
         }
+    }
+
+    private func aboutSectionTitle(_ title: String, detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.headline)
+            Spacer()
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func aboutMetadataRow(_ title: String, value: String) -> some View {
+        LabeledContent(title) {
+            Text(value)
+                .font(.system(.subheadline, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 7)
     }
 
     private var filteredSections: [BrowserSettingsSection] {

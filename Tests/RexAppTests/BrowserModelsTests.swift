@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import RexApp
@@ -1827,6 +1828,118 @@ func startPageHelpersRecognizeBlankAndNewTabURLs() {
     #expect(BrowserStartPage.title == "新标签页")
 }
 
+@Test("New-tab favorite drafts trim names and normalize website URLs")
+func newTabFavoriteDraftNormalizesInput() throws {
+    let draft = try #require(NewTabFavoriteDraft(
+        title: "  Rex 文档  ",
+        urlText: " HTTPS://Example.COM:443/docs?q=swift "
+    ))
+
+    #expect(draft.title == "Rex 文档")
+    #expect(draft.url == URL(string: "https://example.com/docs?q=swift"))
+    #expect(NewTabFavoriteDraft.normalizedURL(from: "example.com") == URL(string: "https://example.com/"))
+    #expect(NewTabFavoriteDraft.normalizedURL(from: "http://localhost:80") == URL(string: "http://localhost/"))
+}
+
+@Test("New-tab favorite drafts reject incomplete and unsafe input")
+func newTabFavoriteDraftRejectsInvalidInput() {
+    #expect(NewTabFavoriteDraft(title: "", urlText: "example.com") == nil)
+    #expect(NewTabFavoriteDraft(title: "Example", urlText: "") == nil)
+    #expect(NewTabFavoriteDraft(title: "Example", urlText: "ftp://example.com") == nil)
+    #expect(NewTabFavoriteDraft(title: "Example", urlText: "https://") == nil)
+    #expect(NewTabFavoriteDraft(title: "Example", urlText: "https://user:secret@example.com") == nil)
+}
+
+@Test("New-tab favorites stay synchronized across normal windows")
+@MainActor
+func newTabFavoritesSynchronizeAcrossWindows() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appending(path: "rex-favorites-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let catalogURL = root.appending(path: "newtab-favorites.json")
+    let favoritesStore = NewTabFavoritesStore(catalogURL: catalogURL)
+    let suiteName = "RexTests.NewTabFavorites.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+
+    let firstWindow = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: root.appending(path: "First.sqlite"),
+            legacyPersistence: nil
+        ),
+        preferences: preferences,
+        newTabFavoritesStore: favoritesStore
+    )
+    let secondWindow = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: root.appending(path: "Second.sqlite"),
+            legacyPersistence: nil
+        ),
+        preferences: preferences,
+        newTabFavoritesStore: favoritesStore
+    )
+
+    #expect(firstWindow.addNewTabFavorite(
+        title: "Example",
+        url: URL(string: "https://example.com")
+    ))
+    #expect(secondWindow.newTabFavorites.map(\.title) == ["Example"])
+    #expect(secondWindow.addNewTabFavorite(
+        title: "Rex",
+        url: URL(string: "https://rex.example")
+    ))
+    #expect(firstWindow.newTabFavorites.map(\.title) == ["Rex", "Example"])
+    #expect(secondWindow.newTabFavorites == firstWindow.newTabFavorites)
+
+    let reloaded = NewTabFavoritesStore(catalogURL: catalogURL)
+    #expect(reloaded.favorites.map(\.title) == ["Rex", "Example"])
+}
+
+@Test("New-tab favorite writes report persistence failures without publishing")
+@MainActor
+func newTabFavoriteWriteFailureIsReported() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appending(path: "rex-favorites-failure-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let catalogDirectory = root.appending(path: "catalog", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: catalogDirectory, withIntermediateDirectories: true)
+    let favoritesStore = NewTabFavoritesStore(catalogURL: catalogDirectory)
+
+    #expect(throws: (any Error).self) {
+        try favoritesStore.add(NewTabFavoriteSite(
+            url: URL(string: "https://example.com")!,
+            title: "Example"
+        ))
+    }
+    #expect(favoritesStore.favorites.isEmpty)
+}
+
+@Test("New-tab search engines map to distinct bundled brand assets")
+@MainActor
+func newTabSearchEngineBrandAssetsAreAvailable() {
+    let expectedAssets: [SearchEngine: String] = [
+        .google: "SearchEngineGoogle",
+        .bing: "SearchEngineBing",
+        .duckDuckGo: "SearchEngineDuckDuckGo",
+        .brave: "SearchEngineBrave",
+        .ecosia: "SearchEngineEcosia"
+    ]
+
+    let actualAssets = Dictionary(
+        uniqueKeysWithValues: SearchEngine.allCases.map { ($0, $0.brandAssetName) }
+    )
+    #expect(actualAssets == expectedAssets)
+    #expect(Set(expectedAssets.values).count == SearchEngine.allCases.count)
+    #expect(SearchEngine.allCases.allSatisfy {
+        SearchEngineBrandAssets.image(for: $0)?.isValid == true
+    })
+}
+
 @Test("Window chrome keeps the toolbar clear of traffic lights")
 func windowChromeToolbarInset() {
     #expect(BrowserWindowChromeLayout.toolbarLeadingInset(
@@ -1856,6 +1969,226 @@ func windowChromeToolbarInset() {
 
     #expect(RexMetrics.titlebarHeight == 50)
     #expect(RexMetrics.toolbarHeight == 44)
+}
+
+@Test("About information is derived from release and feature catalogs")
+func aboutInformationUsesReleaseCatalogs() {
+    let activeFeature = FeatureRecord(
+        id: "active",
+        name: "活动功能",
+        status: .completed,
+        testStatus: "passed",
+        introducedIn: "9.0.0",
+        updatedIn: "9.1.0",
+        description: "测试功能",
+        supportsPrivateWindow: true,
+        supportsSplitView: false,
+        supportsKeyboard: true,
+        requiresRestart: false,
+        settingsPath: "",
+        limitations: []
+    )
+    let removedFeature = FeatureRecord(
+        id: "removed",
+        name: "已移除功能",
+        status: .removed,
+        testStatus: "removed",
+        introducedIn: "8.0.0",
+        updatedIn: "9.1.0",
+        description: "不应列为当前能力",
+        supportsPrivateWindow: false,
+        supportsSplitView: false,
+        supportsKeyboard: false,
+        requiresRestart: false,
+        settingsPath: "",
+        limitations: []
+    )
+    let features = FeatureCatalog(
+        lastUpdatedVersion: "9.1.0",
+        categories: [
+            FeatureCategory(
+                id: "shell",
+                name: "应用外壳",
+                features: [activeFeature, removedFeature]
+            )
+        ]
+    )
+    let release = ReleaseRecord(
+        version: "9.1.0",
+        build: 910,
+        date: "2026-07-27",
+        channel: "beta",
+        summary: "测试版本",
+        added: [],
+        improved: [],
+        fixed: [],
+        changed: [],
+        removed: [],
+        knownIssues: ["一项已知限制"],
+        inProgress: []
+    )
+    let information = RexAboutInformation.make(
+        version: "9.1.0",
+        build: 910,
+        chromiumVersion: "151.0",
+        cefVersion: "151.0.1",
+        architecture: "arm64",
+        features: features,
+        releases: ReleaseCatalog(releases: [release])
+    )
+
+    #expect(information.version == "9.1.0")
+    #expect(information.build == 910)
+    #expect(information.channel == "beta")
+    #expect(information.channelDisplayName == "Beta")
+    #expect(information.capabilityGroups.count == 1)
+    #expect(information.capabilityGroups[0].featureNames == ["活动功能"])
+    #expect(information.capabilityGroups[0].statusSummary == "1 已完成")
+    #expect(information.knownLimitations == ["一项已知限制"])
+}
+
+@Test("Bundled about information matches the app version")
+func bundledAboutInformationMatchesAppVersion() throws {
+    let information = try ReleaseNotesService.loadAboutInformation()
+
+    #expect(information.version == AppVersion.releaseVersion)
+    #expect(information.build == AppVersion.buildNumber)
+    #expect(information.chromiumVersion == AppVersion.chromiumVersion)
+    #expect(information.cefVersion == AppVersion.cefVersion)
+    #expect(information.architecture == AppVersion.supportedArchitecture)
+    #expect(information.featureCatalogVersion == AppVersion.releaseVersion)
+    #expect(!information.channel.isEmpty)
+    #expect(!information.capabilityGroups.isEmpty)
+    #expect(!information.knownLimitations.isEmpty)
+}
+
+@Test("Release identities distinguish builds that share a version")
+func releaseIdentitiesIncludeBuildNumber() throws {
+    let data = Data(
+        """
+        {
+          "releases": [
+            { "version": "1.0.0-beta.1", "build": 102 },
+            { "version": "1.0.0-beta.1", "build": 101 }
+          ]
+        }
+        """.utf8
+    )
+    let catalog = try JSONDecoder().decode(ReleaseCatalog.self, from: data)
+
+    #expect(catalog.releases[0].id == "1.0.0-beta.1-build-102")
+    #expect(catalog.releases[1].id == "1.0.0-beta.1-build-101")
+    #expect(catalog.releases[0].id != catalog.releases[1].id)
+    #expect(catalog.release(version: "1.0.0-beta.1", build: 101)?.build == 101)
+    #expect(catalog.release(version: "1.0.0-beta.1", build: 103) == nil)
+}
+
+@Test("Menu localization preserves system command roles and shortcuts")
+@MainActor
+func menuLocalizationPreservesSystemRoles() {
+    let mainMenu = NSMenu(title: "Main")
+    let applicationName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Rex"
+    let applicationItem = NSMenuItem(title: applicationName, action: nil, keyEquivalent: "")
+    let applicationMenu = NSMenu(title: applicationName)
+    let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+    let servicesMenu = NSMenu(title: "Services")
+    let thirdPartyServiceItem = NSMenuItem(
+        title: "Search",
+        action: NSSelectorFromString("performService:"),
+        keyEquivalent: ""
+    )
+    servicesMenu.addItem(thirdPartyServiceItem)
+    applicationMenu.addItem(servicesItem)
+    applicationMenu.setSubmenu(servicesMenu, for: servicesItem)
+    mainMenu.addItem(applicationItem)
+    mainMenu.setSubmenu(applicationMenu, for: applicationItem)
+
+    let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+    let fileMenu = NSMenu(title: "File")
+    let target = NSObject()
+    let action = NSSelectorFromString("performClose:")
+    let closeItem = NSMenuItem(title: "Close Window", action: action, keyEquivalent: "w")
+    closeItem.target = target
+    closeItem.keyEquivalentModifierMask = [.command, .shift]
+    closeItem.state = .on
+    fileMenu.addItem(closeItem)
+    mainMenu.addItem(fileItem)
+    mainMenu.setSubmenu(fileMenu, for: fileItem)
+
+    let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+    let editMenu = NSMenu(title: "Edit")
+    let undoAction = NSSelectorFromString("undo:")
+    let undoItem = NSMenuItem(title: "Undo Typing", action: undoAction, keyEquivalent: "z")
+    undoItem.keyEquivalentModifierMask = .command
+    editMenu.addItem(undoItem)
+    mainMenu.addItem(editItem)
+    mainMenu.setSubmenu(editMenu, for: editItem)
+
+    let viewItem = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
+    let viewMenu = NSMenu(title: "View")
+    let exitFullScreenItem = NSMenuItem(
+        title: "Exit Full Screen",
+        action: NSSelectorFromString("toggleFullScreen:"),
+        keyEquivalent: ""
+    )
+    viewMenu.addItem(exitFullScreenItem)
+    mainMenu.addItem(viewItem)
+    mainMenu.setSubmenu(viewMenu, for: viewItem)
+
+    let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+    let windowMenu = NSMenu(title: "Window")
+    let minimizeItem = NSMenuItem(
+        title: "Minimize",
+        action: NSSelectorFromString("performMiniaturize:"),
+        keyEquivalent: "m"
+    )
+    let dynamicWindowItem = NSMenuItem(
+        title: "Search",
+        action: NSSelectorFromString("makeKeyAndOrderFront:"),
+        keyEquivalent: ""
+    )
+    windowMenu.addItem(minimizeItem)
+    windowMenu.addItem(dynamicWindowItem)
+    mainMenu.addItem(windowItem)
+    mainMenu.setSubmenu(windowMenu, for: windowItem)
+
+    let workspaceItem = NSMenuItem(title: "工作空间", action: nil, keyEquivalent: "")
+    let workspaceMenu = NSMenu(title: "工作空间")
+    let dynamicWorkspaceItem = NSMenuItem(
+        title: "View",
+        action: NSSelectorFromString("switchWorkspace:"),
+        keyEquivalent: ""
+    )
+    workspaceMenu.addItem(dynamicWorkspaceItem)
+    mainMenu.addItem(workspaceItem)
+    mainMenu.setSubmenu(workspaceMenu, for: workspaceItem)
+
+    RexMenuLocalization.apply(to: mainMenu)
+    RexMenuLocalization.apply(to: mainMenu)
+
+    #expect(applicationItem.title == applicationName)
+    #expect(servicesItem.title == "服务")
+    #expect(thirdPartyServiceItem.title == "Search")
+    #expect(fileItem.title == "文件")
+    #expect(fileMenu.title == "文件")
+    #expect(closeItem.title == "关闭窗口")
+    #expect(closeItem.action == action)
+    #expect(closeItem.target === target)
+    #expect(closeItem.keyEquivalent == "w")
+    #expect(closeItem.keyEquivalentModifierMask == [.command, .shift])
+    #expect(closeItem.state == .on)
+    #expect(editItem.title == "编辑")
+    #expect(undoItem.title == "撤销")
+    #expect(undoItem.action == undoAction)
+    #expect(undoItem.keyEquivalent == "z")
+    #expect(undoItem.keyEquivalentModifierMask == .command)
+    #expect(viewItem.title == "显示")
+    #expect(exitFullScreenItem.title == "退出全屏幕")
+    #expect(windowItem.title == "窗口")
+    #expect(minimizeItem.title == "最小化")
+    #expect(dynamicWindowItem.title == "Search")
+    #expect(workspaceItem.title == "工作空间")
+    #expect(dynamicWorkspaceItem.title == "View")
 }
 
 @Test("Search engines build HTTPS URLs with the original query")

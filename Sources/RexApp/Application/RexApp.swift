@@ -93,13 +93,18 @@ struct RexWindowScene: View {
                 RexWindowChromeConfigurator(windowChromeState: $windowChromeState)
             }
             .onAppear {
+                RexMenuLocalization.schedule()
                 if !profile.isPrivate {
                     coordinator.registerNewWindow(windowID)
                     coordinator.restoreOtherWindows(using: openWindow)
                 }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { store.flushSession() }
+                if phase == .active {
+                    RexMenuLocalization.schedule()
+                } else {
+                    store.flushSession()
+                }
             }
             .onDisappear {
                 store.flushSession()
@@ -301,6 +306,140 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
     }
 }
 
+@MainActor
+enum RexMenuLocalization {
+    private enum MenuRole {
+        case application
+        case file
+        case edit
+        case view
+        case window
+        case help
+        case other
+    }
+
+    private static let topLevelTitles: [String: String] = [
+        "File": "文件",
+        "Edit": "编辑",
+        "View": "显示",
+        "Window": "窗口",
+        "Help": "帮助"
+    ]
+
+    private static let actionTitles: [String: String] = [
+        "showPreferencesWindow:": "设置…",
+        "showSettingsWindow:": "设置…",
+        "performClose:": "关闭窗口",
+        "saveDocument:": "存储",
+        "saveDocumentAs:": "存储为…",
+        "runPageLayout:": "页面设置…",
+        "print:": "打印…",
+        "undo:": "撤销",
+        "redo:": "重做",
+        "cut:": "剪切",
+        "copy:": "复制",
+        "paste:": "粘贴",
+        "pasteAsPlainText:": "粘贴并匹配样式",
+        "delete:": "删除",
+        "selectAll:": "全选",
+        "startDictation:": "开始听写…",
+        "orderFrontCharacterPalette:": "表情与符号",
+        "runToolbarCustomizationPalette:": "自定工具栏…",
+        "performMiniaturize:": "最小化",
+        "performZoom:": "缩放",
+        "arrangeInFront:": "前置全部窗口"
+    ]
+
+    private static let editSectionTitles: [String: String] = [
+        "Find": "查找",
+        "Spelling and Grammar": "拼写和语法",
+        "Substitutions": "替换",
+        "Transformations": "转换",
+        "Speech": "语音"
+    ]
+
+    static func schedule() {
+        apply(to: NSApplication.shared.mainMenu)
+        Task { @MainActor in
+            await Task.yield()
+            apply(to: NSApplication.shared.mainMenu)
+        }
+    }
+
+    static func apply(to mainMenu: NSMenu?) {
+        guard let mainMenu else { return }
+        let applicationName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Rex"
+        for item in mainMenu.items {
+            let role = topLevelRole(for: item.title, applicationName: applicationName)
+            item.title = topLevelTitles[item.title] ?? item.title
+            guard let submenu = item.submenu else { continue }
+            submenu.title = item.title
+            localize(menu: submenu, role: role, applicationName: applicationName)
+        }
+    }
+
+    private static func localize(menu: NSMenu, role: MenuRole, applicationName: String) {
+        for item in menu.items {
+            item.title = localizedTitle(for: item, role: role, applicationName: applicationName)
+            guard let submenu = item.submenu else { continue }
+            submenu.title = item.title
+            // Descendants can still be translated by a known action, but their
+            // titles may belong to services, windows, or user-defined content.
+            localize(menu: submenu, role: .other, applicationName: applicationName)
+        }
+    }
+
+    private static func localizedTitle(
+        for item: NSMenuItem,
+        role: MenuRole,
+        applicationName: String
+    ) -> String {
+        if let action = item.action {
+            let actionName = NSStringFromSelector(action)
+            switch actionName {
+            case "orderFrontStandardAboutPanel:": return "关于 \(applicationName)"
+            case "hide:": return "隐藏 \(applicationName)"
+            case "hideOtherApplications:": return "隐藏其他应用"
+            case "unhideAllApplications:": return "全部显示"
+            case "terminate:": return "退出 \(applicationName)"
+            case "toggleToolbarShown:":
+                return ["Hide Toolbar", "隐藏工具栏"].contains(item.title) ? "隐藏工具栏" : "显示工具栏"
+            case "toggleFullScreen:":
+                return ["Exit Full Screen", "退出全屏幕"].contains(item.title) ? "退出全屏幕" : "进入全屏幕"
+            default:
+                if let localized = actionTitles[actionName] { return localized }
+            }
+        }
+
+        switch role {
+        case .application:
+            if item.title == "Services" { return "服务" }
+            if item.title == "About \(applicationName)" { return "关于 \(applicationName)" }
+            if item.title == "Hide \(applicationName)" { return "隐藏 \(applicationName)" }
+            if item.title == "Quit \(applicationName)" { return "退出 \(applicationName)" }
+        case .edit:
+            if let localized = editSectionTitles[item.title] { return localized }
+        case .help:
+            if item.title == "\(applicationName) Help" { return "\(applicationName) 帮助" }
+        case .file, .view, .window, .other:
+            break
+        }
+        return item.title
+    }
+
+    private static func topLevelRole(for title: String, applicationName: String) -> MenuRole {
+        if title == applicationName { return .application }
+        switch title {
+        case "File", "文件": return .file
+        case "Edit", "编辑": return .edit
+        case "View", "显示": return .view
+        case "Window", "窗口": return .window
+        case "Help", "帮助": return .help
+        default: return .other
+        }
+    }
+}
+
 struct BrowserCommands: Commands {
     @FocusedObject private var store: BrowserStore?
     @Environment(\.openWindow) private var openWindow
@@ -335,6 +474,10 @@ struct BrowserCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("关于 Rex") { store?.presentSettings(.about) }
+                .disabled(store == nil)
+        }
         CommandGroup(replacing: .appSettings) {
             Button("设置…") { store?.presentSettings(.general) }
                 .keyboardShortcut(",", modifiers: .command)
@@ -461,6 +604,10 @@ struct BrowserCommands: Commands {
                 .disabled(store == nil)
             Button("强制重新加载") { store?.hardReloadCurrentPage() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(store == nil)
+        }
+        CommandGroup(replacing: .help) {
+            Button("版本与功能") { store?.isReleaseNotesPresented = true }
                 .disabled(store == nil)
         }
     }

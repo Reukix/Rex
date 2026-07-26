@@ -71,6 +71,7 @@ final class BrowserStore: ObservableObject {
 
     private let engine: any BrowserEngine
     private let persistence: BrowserSQLitePersistence
+    private let newTabFavoritesStore: NewTabFavoritesStore
     private var splitSessionsBySpace: [UUID: SplitViewSession] = [:]
     private var pendingNavigationURLs: [UUID: URL] = [:]
     private var httpsUpgradeAttempts: [UUID: HTTPSUpgradeAttempt] = [:]
@@ -101,7 +102,8 @@ final class BrowserStore: ObservableObject {
         databasePersistence: BrowserSQLitePersistence = BrowserSQLitePersistence(),
         windowID: UUID = UUID(),
         profile: BrowserProfile = .standard,
-        preferences: BrowserPreferences = .shared
+        preferences: BrowserPreferences = .shared,
+        newTabFavoritesStore: NewTabFavoritesStore = .shared
     ) {
         let activeEngine = engine ?? BrowserEngineFactory.makeDefault()
         let work = BrowserSpace(
@@ -187,8 +189,10 @@ final class BrowserStore: ObservableObject {
         self.addressText = BrowserStartPage.matches(initialTabs[0].url) ? "" : (initialTabs[0].url?.absoluteString ?? "")
         self.engine = activeEngine
         self.persistence = databasePersistence
+        self.newTabFavoritesStore = newTabFavoritesStore
         self.observedHTTPSUpgradeEnabled = preferences.httpsUpgradeEnabled
         self.observedBlockThirdPartyCookies = preferences.blockThirdPartyCookies
+        self.newTabFavorites = profile.isPrivate ? [] : newTabFavoritesStore.favorites
 
         createEnginePages(for: initialTabs.map(\.id))
         Task { @MainActor [weak self, activeEngine] in
@@ -219,7 +223,6 @@ final class BrowserStore: ObservableObject {
                         })
                         self.bookmarks.sort { $0.updatedAt > $1.updatedAt }
                     }
-                    self?.loadNewTabFavorites()
                     let persistedDownloads = try await databasePersistence.downloads()
                     if let self {
                         let liveDownloadIDs = Set(self.downloads.map(\.id))
@@ -253,6 +256,14 @@ final class BrowserStore: ObservableObject {
                 self?.automaticTabSleepingDidChange(enabled)
             }
             .store(in: &preferenceCancellables)
+        if !profile.isPrivate {
+            newTabFavoritesStore.$favorites
+                .removeDuplicates()
+                .sink { [weak self] favorites in
+                    self?.newTabFavorites = favorites
+                }
+                .store(in: &preferenceCancellables)
+        }
         preferences.$httpsUpgradeEnabled
             .removeDuplicates()
             .sink { [weak self] enabled in
@@ -833,16 +844,15 @@ final class BrowserStore: ObservableObject {
         developerToolsWidth = next
     }
 
-    func addNewTabFavorite(title: String? = nil, url: URL? = nil) {
-        guard !profile.isPrivate else { return }
-        let resolvedURL = url ?? currentTab?.url
-        guard let resolvedURL, !BrowserStartPage.matches(resolvedURL) else {
+    @discardableResult
+    func addNewTabFavorite(title: String? = nil, url: URL? = nil) -> Bool {
+        guard !profile.isPrivate else { return false }
+        let candidateURL = url ?? currentTab?.url
+        guard let candidateURL,
+              let resolvedURL = NewTabFavoriteDraft.normalizedURL(candidateURL),
+              !BrowserStartPage.matches(resolvedURL) else {
             lastError = "当前页面无法加入新标签页收藏"
-            return
-        }
-        if newTabFavorites.contains(where: { $0.url == resolvedURL }) {
-            lastError = "该网站已在新标签页收藏中"
-            return
+            return false
         }
         let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackTitle = currentTab?.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -858,20 +868,34 @@ final class BrowserStore: ObservableObject {
             url: resolvedURL,
             title: displayTitle
         )
-        newTabFavorites.insert(favorite, at: 0)
-        persistNewTabFavorites()
+        do {
+            guard try newTabFavoritesStore.add(favorite) else {
+                lastError = "该网站已在新标签页收藏中"
+                return false
+            }
+            return true
+        } catch {
+            lastError = "无法保存新标签页收藏：\(error.localizedDescription)"
+            return false
+        }
     }
 
     func removeNewTabFavorite(_ favorite: NewTabFavoriteSite) {
         guard !profile.isPrivate else { return }
-        newTabFavorites.removeAll { $0.id == favorite.id }
-        persistNewTabFavorites()
+        do {
+            try newTabFavoritesStore.remove(id: favorite.id)
+        } catch {
+            lastError = "无法移除新标签页收藏：\(error.localizedDescription)"
+        }
     }
 
     func removeNewTabFavorite(url: URL) {
         guard !profile.isPrivate else { return }
-        newTabFavorites.removeAll { $0.url == url }
-        persistNewTabFavorites()
+        do {
+            try newTabFavoritesStore.remove(url: url)
+        } catch {
+            lastError = "无法移除新标签页收藏：\(error.localizedDescription)"
+        }
     }
 
     private func presentDeveloperTools(for tabID: UUID, inspectX: Int? = nil, inspectY: Int? = nil) {
@@ -2061,19 +2085,6 @@ final class BrowserStore: ObservableObject {
         addressText = addressBarText(for: currentTab?.url)
     }
 
-
-    private func loadNewTabFavorites() {
-        guard !profile.isPrivate else {
-            newTabFavorites = []
-            return
-        }
-        newTabFavorites = NewTabFavoritesStore.shared.load()
-    }
-
-    private func persistNewTabFavorites() {
-        guard !profile.isPrivate else { return }
-        NewTabFavoritesStore.shared.save(newTabFavorites)
-    }
 
     private func synchronizeBookmarkFlags() {
         let bookmarkedURLs = Set(bookmarks.map(\.url))

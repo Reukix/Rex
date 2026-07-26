@@ -4,7 +4,7 @@
 
 生产内核首选 CEF（Chromium Embedded Framework），原因是它提供可嵌入 API、多进程模型、DevTools 和相对可控的升级面。Content API 或自维护 Chromium 分支可获得最强控制，但每个 Chromium 大版本的合并、安全补丁和 macOS 签名成本显著更高，暂不作为 MVP 首选。
 
-目标基线：macOS 14+，仅支持 Apple Silicon（arm64），不生成通用二进制或 Intel 构建。v0.8.1 固定 CEF `150.0.14+g7c1aa68+chromium-150.0.7871.129`。版本策略为跟随 CEF 稳定分支，安全高危补丁目标 72 小时内完成评估和候选构建，常规大版本在上游稳定后一周内进入兼容测试。
+目标基线：macOS 14+，仅支持 Apple Silicon（arm64），不生成通用二进制或 Intel 构建。v0.9.0 固定 CEF `150.0.14+g7c1aa68+chromium-150.0.7871.129`。版本策略为跟随 CEF 稳定分支，安全高危补丁目标 72 小时内完成评估和候选构建，常规大版本在上游稳定后一周内进入兼容测试。
 
 ## 分层
 
@@ -26,7 +26,7 @@ flowchart TB
 
 SwiftUI 不拥有 Chromium 生命周期。稳定的 `NSView` 宿主由 AppKit 层创建并缓存，SwiftUI 只传递 frame、可见性和焦点。CEF 的 C++ API 由 Objective-C++ facade 包裹，再映射到 Swift `Sendable` 值和 `AsyncStream<BrowserEvent>`。
 
-v0.8.1 的窗口 chrome 由 AppKit 配置透明全尺寸标题栏，并从 `standardWindowButton` 的实际 frame 计算红黄绿按钮尾缘；SwiftUI 将 44 pt 单导航卡放在该尾缘加 8 pt 净空的右侧，性能指标是导航栏首项。全屏时不再预留窗口按钮区域，导航卡改用 8 pt 左边距。
+v0.9.0 的窗口 chrome 由 AppKit 配置透明全尺寸标题栏，并从 `standardWindowButton` 的实际 frame 计算红黄绿按钮尾缘；SwiftUI 将 44 pt 单导航卡放在该尾缘加 8 pt 净空的右侧，性能指标是导航栏首项。全屏时不再预留窗口按钮区域，导航卡改用 8 pt 左边距。
 
 ## 通信时序
 
@@ -77,13 +77,13 @@ Sources/RexApp/
 ## CEF 集成和发布限制
 
 - CEF 主 Helper、Alerts、GPU、Plugin 与 Renderer 五个进程包分别生成；本地 Debug 包不执行分发签名。当前启用 Chromium sandbox，不启用 Mac App Store App Sandbox。
-- 完整 Chrome 扩展兼容不是 CEF 的默认承诺；MVP 仅支持经权限审核的受控扩展子集。
+- CEF 150 最小发行包不包含 `CefExtension` / `LoadExtension` 类 API，因此不承诺 Chrome Web Store 直接安装、自动更新或完整 Manifest V3 运行时。
 - Mac App Store 的 App Sandbox、可执行代码和更新机制可能与 Chromium 分发方式冲突；优先规划 Developer ID 签名、公证和 Sparkle 类差分更新，App Store 作为独立可行性研究。
 - CEF 二进制体积、通用架构构建、编解码器专利和 Widevine 分发必须单独评估。
 - Swift Package 的 `PrototypeWebSurface` 仅用于无 Xcode 环境下的 UI 验证；`Rex.xcodeproj` 使用 `ChromiumBrowserSurface` 和固定 CEF runtime。
 
 
-## v0.8.1 隐私、性能与开发者工具
+## v0.9.0 隐私、性能与开发者工具
 
 Rex 在固定 CEF 预编译运行时之上叠加可审计的隐私分类与性能参数：
 

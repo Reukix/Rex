@@ -1,0 +1,11 @@
+Search engine brand icons
+
+Google, DuckDuckGo, Brave, and Ecosia vector paths are derived from Simple Icons
+at commit 25d6e5b39bc55bc446e147700294628af1734f7e. Simple Icons is released
+under CC0 1.0 Universal: https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md
+
+The Bing Fluent Logo is based on the public-domain logo published at:
+https://commons.wikimedia.org/wiki/File:Bing_Fluent_Logo.svg
+
+All product names and logos are trademarks of their respective owners. They are used
+only to identify the search provider selected by the user; no affiliation is implied.

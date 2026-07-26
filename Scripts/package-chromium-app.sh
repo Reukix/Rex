@@ -4,20 +4,62 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="${1:-0.8.1}"
-BUILD_NUMBER="${2:-810}"
+VERSION="${1:-0.9.0}"
+BUILD_NUMBER="${2:-900}"
 CONFIGURATION="${3:-Debug}"
+
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+  echo "Version must be a SemVer value without a leading v." >&2
+  exit 8
+fi
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "Build number must contain decimal digits only." >&2
+  exit 8
+fi
+if [[ "$CONFIGURATION" != "Debug" && "$CONFIGURATION" != "Release" ]]; then
+  echo "Configuration must be Debug or Release." >&2
+  exit 8
+fi
+
 DERIVED_DATA="$PROJECT_ROOT/.build/xcode-package"
 PRODUCTS_DIR="$DERIVED_DATA/Build/Products/$CONFIGURATION"
 APP_PATH="$PRODUCTS_DIR/Rex.app"
 DIST_DIR="$PROJECT_ROOT/Dist"
 ARCHIVE_NAME="Rex-v${VERSION}-macos-arm64-chromium.zip"
-STAGING_DIR="$DIST_DIR/staging-$$"
+PUBLISH_DIR="$PROJECT_ROOT/.Dist.next-$$"
+BACKUP_DIST="$PROJECT_ROOT/.Dist.previous-$$"
+VALIDATION_DIR="$PROJECT_ROOT/.build/package-release-validation"
+PUBLISH_COMMITTED=false
+
+cleanup() {
+  if [[ -e "$BACKUP_DIST" ]]; then
+    if [[ "$PUBLISH_COMMITTED" == true ]]; then
+      /bin/rm -rf "$BACKUP_DIST"
+    else
+      /bin/rm -rf "$DIST_DIR"
+      /bin/mv "$BACKUP_DIST" "$DIST_DIR"
+    fi
+  fi
+  /bin/rm -rf "$PUBLISH_DIR"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "==> Rex Chromium package builder"
 echo "    version: $VERSION"
 echo "    build:   $BUILD_NUMBER"
 echo "    config:  $CONFIGURATION"
+
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+
+echo "==> Validating release metadata"
+swift run RexReleaseValidator \
+  "$PROJECT_ROOT" \
+  "$VALIDATION_DIR" \
+  "$VERSION" \
+  "$BUILD_NUMBER"
 
 "$PROJECT_ROOT/Scripts/verify-apple-silicon.sh"
 "$PROJECT_ROOT/Scripts/build-cef-runtime.sh"
@@ -27,8 +69,6 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 7
 fi
 xcodegen generate --spec "$PROJECT_ROOT/project.yml"
-
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
 echo "==> Building Rex.app with embedded CEF/Chromium"
 xcodebuild \
@@ -64,26 +104,25 @@ if [[ "$ARCH_CHECK" != *"arm64"* ]]; then
   exit 6
 fi
 
-mkdir -p "$DIST_DIR"
-rm -rf "$STAGING_DIR"
-mkdir -p "$STAGING_DIR"
-/usr/bin/ditto "$APP_PATH" "$STAGING_DIR/Rex.app"
+/bin/rm -rf "$PUBLISH_DIR" "$BACKUP_DIST"
+mkdir -p "$PUBLISH_DIR"
 
-# Keep a local unzipped copy for quick launch.
-rm -rf "$DIST_DIR/Rex.app"
-/usr/bin/ditto "$APP_PATH" "$DIST_DIR/Rex.app"
+# Assemble the entire handoff directory away from Dist so a failed copy,
+# archive, checksum, or inventory write cannot mix two releases.
+/usr/bin/ditto "$APP_PATH" "$PUBLISH_DIR/Rex.app"
 
 echo "==> Creating zip archive"
 (
-  cd "$STAGING_DIR"
-  /usr/bin/ditto -c -k --sequesterRsrc --keepParent Rex.app "$DIST_DIR/$ARCHIVE_NAME"
+  cd "$PUBLISH_DIR"
+  /usr/bin/ditto -c -k --sequesterRsrc --keepParent Rex.app "$ARCHIVE_NAME"
 )
-rm -rf "$STAGING_DIR"
+/usr/bin/unzip -tq "$PUBLISH_DIR/$ARCHIVE_NAME"
 
-SHA="$(/usr/bin/shasum -a 256 "$DIST_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{print $1}')"
+SHA="$(/usr/bin/shasum -a 256 "$PUBLISH_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{print $1}')"
+
 {
   echo "$SHA  $ARCHIVE_NAME"
-} > "$DIST_DIR/SHA256SUMS"
+} > "$PUBLISH_DIR/SHA256SUMS"
 
 # Bundle inventory for release verification.
 {
@@ -100,11 +139,25 @@ SHA="$(/usr/bin/shasum -a 256 "$DIST_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{print $
   echo "archive=$ARCHIVE_NAME"
   echo "sha256=$SHA"
   echo "app_path=$DIST_DIR/Rex.app"
-  du -sh "$DIST_DIR/Rex.app" | awk '{print "app_size="$1}'
-  du -sh "$DIST_DIR/$ARCHIVE_NAME" | awk '{print "zip_size="$1}'
+  du -sh "$PUBLISH_DIR/Rex.app" | awk '{print "app_size="$1}'
+  du -sh "$PUBLISH_DIR/$ARCHIVE_NAME" | awk '{print "zip_size="$1}'
   echo "frameworks:"
-  /bin/ls -1 "$DIST_DIR/Rex.app/Contents/Frameworks"
-} > "$DIST_DIR/PACKAGE-INFO.txt"
+  /bin/ls -1 "$PUBLISH_DIR/Rex.app/Contents/Frameworks"
+} > "$PUBLISH_DIR/PACKAGE-INFO.txt"
+
+(
+  cd "$PUBLISH_DIR"
+  /usr/bin/shasum -a 256 -c SHA256SUMS
+)
+
+# Publish the verified directory as one release set. If the second rename
+# fails or a handled signal arrives between renames, cleanup restores Dist.
+if [[ -e "$DIST_DIR" ]]; then
+  /bin/mv "$DIST_DIR" "$BACKUP_DIST"
+fi
+/bin/mv "$PUBLISH_DIR" "$DIST_DIR"
+PUBLISH_COMMITTED=true
+/bin/rm -rf "$BACKUP_DIST"
 
 echo "==> Package ready"
 echo "    app:  $DIST_DIR/Rex.app"
