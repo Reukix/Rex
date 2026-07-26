@@ -1848,11 +1848,11 @@ func windowChromeToolbarInset() {
     #expect(BrowserWindowChromeLayout.trafficLightAdjustedY(
         baselineY: 12,
         superviewIsFlipped: false
-    ) == 8)
+    ) == 4)
     #expect(BrowserWindowChromeLayout.trafficLightAdjustedY(
         baselineY: 12,
         superviewIsFlipped: true
-    ) == 16)
+    ) == 20)
 
     #expect(RexMetrics.titlebarHeight == 50)
     #expect(RexMetrics.toolbarHeight == 44)

@@ -14,7 +14,7 @@ enum RexMetrics {
 enum BrowserWindowChromeLayout {
     static let windowEdgePadding: CGFloat = 8
     static let trafficLightClearance: CGFloat = 8
-    static let trafficLightVerticalOffset: CGFloat = 4
+    static let trafficLightVerticalOffset: CGFloat = 8
     static let fallbackTrafficLightTrailingEdge: CGFloat = 80
     static let performanceClusterWidth: CGFloat = 138
 

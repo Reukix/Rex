@@ -12,7 +12,7 @@
           "testStatus": "passed",
           "introducedIn": "0.1.0-alpha.1",
           "updatedIn": "0.8.1",
-          "description": "原生工具栏、液态玻璃侧栏和网页内容区；50 pt 标题栏槽内使用 44 pt 单导航卡，普通窗口下移 macOS 红黄绿按钮并从其右侧开始",
+          "description": "原生工具栏、液态玻璃侧栏和网页内容区；50 pt 标题栏槽内使用 44 pt 单导航卡，普通窗口下移 macOS 红黄绿按钮并与导航卡垂直居中",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
