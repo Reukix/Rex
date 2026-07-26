@@ -1846,43 +1846,8 @@ func windowChromeToolbarInset() {
         isFullScreen: true
     ) == BrowserWindowChromeLayout.windowEdgePadding)
 
-    #expect(BrowserWindowChromeLayout.performanceCardWidth(
-        toolbarLeadingInset: 101,
-        isFullScreen: false,
-        showsPerformanceMetrics: true
-    ) == 154)
-    #expect(BrowserWindowChromeLayout.performanceCardWidth(
-        toolbarLeadingInset: 101,
-        isFullScreen: false,
-        showsPerformanceMetrics: false
-    ) == 101)
-    #expect(BrowserWindowChromeLayout.performanceCardWidth(
-        toolbarLeadingInset: BrowserWindowChromeLayout.windowEdgePadding,
-        isFullScreen: true,
-        showsPerformanceMetrics: true
-    ) == 0)
-    #expect(BrowserWindowChromeLayout.performanceCardWidth(
-        toolbarLeadingInset: BrowserWindowChromeLayout.windowEdgePadding,
-        isFullScreen: true,
-        showsPerformanceMetrics: false
-    ) == 0)
-
-    #expect(BrowserWindowChromeLayout.titlebarHeight(
-        isFullScreen: false,
-        showsPerformanceMetrics: true
-    ) == RexMetrics.expandedTitlebarHeight)
-    #expect(BrowserWindowChromeLayout.titlebarCardHeight(
-        isFullScreen: false,
-        showsPerformanceMetrics: true
-    ) == RexMetrics.expandedToolbarHeight)
-    #expect(BrowserWindowChromeLayout.titlebarHeight(
-        isFullScreen: true,
-        showsPerformanceMetrics: true
-    ) == RexMetrics.titlebarHeight)
-    #expect(BrowserWindowChromeLayout.titlebarCardHeight(
-        isFullScreen: false,
-        showsPerformanceMetrics: false
-    ) == RexMetrics.toolbarHeight)
+    #expect(RexMetrics.titlebarHeight == 50)
+    #expect(RexMetrics.toolbarHeight == 44)
 }
 
 @Test("Search engines build HTTPS URLs with the original query")

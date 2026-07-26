@@ -5,8 +5,6 @@ enum RexMetrics {
     static let compactRadius: CGFloat = 11
     static let toolbarHeight: CGFloat = 44
     static let titlebarHeight: CGFloat = 50
-    static let expandedToolbarHeight: CGFloat = 72
-    static let expandedTitlebarHeight: CGFloat = 78
     static let sidebarWidth: CGFloat = 264
     static let collapsedSidebarWidth: CGFloat = 58
     static let dividerHitWidth: CGFloat = 12
@@ -17,7 +15,6 @@ enum BrowserWindowChromeLayout {
     static let windowEdgePadding: CGFloat = 8
     static let trafficLightClearance: CGFloat = 8
     static let fallbackTrafficLightTrailingEdge: CGFloat = 80
-    static let titlebarCardSpacing: CGFloat = 6
     static let performanceClusterWidth: CGFloat = 138
 
     static func toolbarLeadingInset(
@@ -29,27 +26,6 @@ enum BrowserWindowChromeLayout {
         return ceil(trailingEdge + trafficLightClearance)
     }
 
-    static func performanceCardWidth(
-        toolbarLeadingInset: CGFloat,
-        isFullScreen: Bool,
-        showsPerformanceMetrics: Bool
-    ) -> CGFloat {
-        guard !isFullScreen else { return 0 }
-        guard showsPerformanceMetrics else { return toolbarLeadingInset }
-        return max(toolbarLeadingInset, performanceClusterWidth + (windowEdgePadding * 2))
-    }
-
-    static func titlebarHeight(isFullScreen: Bool, showsPerformanceMetrics: Bool) -> CGFloat {
-        !isFullScreen && showsPerformanceMetrics
-            ? RexMetrics.expandedTitlebarHeight
-            : RexMetrics.titlebarHeight
-    }
-
-    static func titlebarCardHeight(isFullScreen: Bool, showsPerformanceMetrics: Bool) -> CGFloat {
-        !isFullScreen && showsPerformanceMetrics
-            ? RexMetrics.expandedToolbarHeight
-            : RexMetrics.toolbarHeight
-    }
 }
 
 struct BrowserWindowChromeState: Equatable {

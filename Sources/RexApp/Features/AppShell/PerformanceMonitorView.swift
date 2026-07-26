@@ -4,19 +4,15 @@ struct PerformanceMonitorView: View {
     @EnvironmentObject private var store: BrowserStore
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var metrics = ProcessMetricsMonitor.shared
-    @State private var sortMode: PerformanceSortMode = .cpu
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            Divider()
-
             summary
                 .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-
-            Divider()
+                .padding(.top, 6)
+                .padding(.bottom, 16)
 
             pagesSection
         }
@@ -99,21 +95,9 @@ struct PerformanceMonitorView: View {
                     .accessibilityLabel("网页指标说明：共享 renderer 的重复值不能相加")
 
                 Spacer()
-
-                Picker("排序", selection: $sortMode) {
-                    ForEach(PerformanceSortMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 150)
-                .accessibilityLabel("网页性能排序")
             }
             .padding(.horizontal, 18)
-            .frame(height: 48)
-
-            Divider()
+            .frame(height: 42)
 
             if !metrics.hasSampled || !metrics.hasPageMetricsSampled {
                 VStack(spacing: 10) {
@@ -140,9 +124,7 @@ struct PerformanceMonitorView: View {
     }
 
     private var pageList: some View {
-        let tabs = sortedTabs
-
-        return VStack(spacing: 0) {
+        VStack(spacing: 6) {
             HStack(spacing: 12) {
                 Text("网页")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,78 +135,28 @@ struct PerformanceMonitorView: View {
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
-            .frame(height: 30)
-
-            Divider()
+            .padding(.horizontal, 30)
+            .frame(height: 24)
 
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                LazyVStack(spacing: 8) {
+                    ForEach(store.tabs) { tab in
                         PerformancePageRow(
                             tab: tab,
                             metric: metrics.pageMetricsByTabID[tab.id]
                         )
-                        .padding(.horizontal, 18)
-
-                        if index < tabs.count - 1 {
-                            Divider()
-                                .padding(.leading, 55)
-                        }
+                        .padding(.horizontal, 12)
+                        .background(
+                            Color.primary.opacity(0.055),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
                     }
                 }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
             }
         }
     }
-
-    private var sortedTabs: [BrowserTab] {
-        store.tabs.sorted { lhs, rhs in
-            let leftMetric = metrics.pageMetricsByTabID[lhs.id]
-            let rightMetric = metrics.pageMetricsByTabID[rhs.id]
-
-            switch sortMode {
-            case .cpu:
-                if let result = descendingComparison(
-                    leftMetric?.cpuPercent,
-                    rightMetric?.cpuPercent
-                ) {
-                    return result
-                }
-            case .memory:
-                if let result = descendingComparison(
-                    leftMetric?.memoryBytes,
-                    rightMetric?.memoryBytes
-                ) {
-                    return result
-                }
-            }
-
-            let titleOrder = lhs.title.localizedStandardCompare(rhs.title)
-            if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
-            return lhs.id.uuidString < rhs.id.uuidString
-        }
-    }
-
-    private func descendingComparison<T: Comparable>(_ lhs: T?, _ rhs: T?) -> Bool? {
-        switch (lhs, rhs) {
-        case let (left?, right?) where left != right:
-            return left > right
-        case (_?, nil):
-            return true
-        case (nil, _?):
-            return false
-        default:
-            return nil
-        }
-    }
-
-}
-
-private enum PerformanceSortMode: String, CaseIterable, Identifiable {
-    case cpu = "CPU"
-    case memory = "内存"
-
-    var id: Self { self }
 }
 
 private struct PerformanceSummaryItem: View {

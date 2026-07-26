@@ -27,14 +27,18 @@ struct BrowserRootView: View {
             ZStack(alignment: .top) {
                 RexWindowBackground()
 
-                VStack(spacing: 0) {
-                    BrowserTitlebar(
+                VStack(spacing: 4) {
+                    BrowserToolbar(
                         preferences: store.preferences,
-                        toolbarLeadingInset: toolbarLeadingInset,
-                        isFullScreen: isFullScreen,
                         certificateViewerSnapshot: $certificateViewerSnapshot,
                         onShowPerformanceMonitor: { isPerformanceMonitorPresented = true }
                     )
+                    .padding(
+                        .leading,
+                        isFullScreen ? BrowserWindowChromeLayout.windowEdgePadding : toolbarLeadingInset
+                    )
+                    .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
+                    .padding(.top, 2)
 
                     GeometryReader { proxy in
                         let sidebarWidth = store.isSidebarCollapsed
@@ -104,7 +108,7 @@ struct BrowserRootView: View {
 
                 if let prompt = store.pendingPermissionPrompts.first {
                     WebsitePermissionPromptBar(prompt: prompt)
-                        .padding(.top, titlebarHeight)
+                        .padding(.top, 48)
                         .padding(.horizontal, 24)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -159,86 +163,6 @@ struct BrowserRootView: View {
         .animation(nil, value: store.developerToolsWidth)
         .animation(nil, value: developerToolsDragWidth)
         .animation(.snappy(duration: 0.2), value: store.pendingPermissionPrompts.first?.id)
-    }
-
-    private var titlebarHeight: CGFloat {
-        BrowserWindowChromeLayout.titlebarHeight(
-            isFullScreen: isFullScreen,
-            showsPerformanceMetrics: store.preferences.showPerformanceMetrics
-        )
-    }
-}
-
-private struct BrowserTitlebar: View {
-    @ObservedObject var preferences: BrowserPreferences
-    let toolbarLeadingInset: CGFloat
-    let isFullScreen: Bool
-    @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
-    let onShowPerformanceMonitor: () -> Void
-
-    private var performanceCardWidth: CGFloat {
-        BrowserWindowChromeLayout.performanceCardWidth(
-            toolbarLeadingInset: toolbarLeadingInset,
-            isFullScreen: isFullScreen,
-            showsPerformanceMetrics: preferences.showPerformanceMetrics
-        )
-    }
-
-    private var titlebarHeight: CGFloat {
-        BrowserWindowChromeLayout.titlebarHeight(
-            isFullScreen: isFullScreen,
-            showsPerformanceMetrics: preferences.showPerformanceMetrics
-        )
-    }
-
-    private var cardHeight: CGFloat {
-        BrowserWindowChromeLayout.titlebarCardHeight(
-            isFullScreen: isFullScreen,
-            showsPerformanceMetrics: preferences.showPerformanceMetrics
-        )
-    }
-
-    var body: some View {
-        HStack(spacing: performanceCardWidth > 0 ? BrowserWindowChromeLayout.titlebarCardSpacing : 0) {
-            if performanceCardWidth > 0 {
-                BrowserPerformanceTitlebarCard(
-                    showsPerformanceMetrics: preferences.showPerformanceMetrics,
-                    cardHeight: cardHeight,
-                    onShowPerformanceMonitor: onShowPerformanceMonitor
-                )
-                .frame(width: performanceCardWidth)
-            }
-
-            BrowserToolbar(
-                certificateViewerSnapshot: $certificateViewerSnapshot,
-                showsPerformanceMetrics: isFullScreen && preferences.showPerformanceMetrics,
-                cardHeight: cardHeight,
-                onShowPerformanceMonitor: onShowPerformanceMonitor
-            )
-                .frame(maxWidth: .infinity)
-        }
-        .padding(.leading, isFullScreen ? BrowserWindowChromeLayout.windowEdgePadding : 0)
-        .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
-        .frame(height: titlebarHeight)
-    }
-}
-
-private struct BrowserPerformanceTitlebarCard: View {
-    let showsPerformanceMetrics: Bool
-    let cardHeight: CGFloat
-    let onShowPerformanceMonitor: () -> Void
-
-    var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            BrowserTitlebarCardSurface()
-
-            if showsPerformanceMetrics {
-                ToolbarStatusCluster(onShowDetails: onShowPerformanceMonitor)
-                    .padding(.horizontal, BrowserWindowChromeLayout.windowEdgePadding)
-                    .padding(.bottom, 5)
-            }
-        }
-        .frame(height: cardHeight)
     }
 }
 
@@ -360,9 +284,8 @@ private struct BrowserToolbar: View {
     @EnvironmentObject private var store: BrowserStore
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject var preferences: BrowserPreferences
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
-    let showsPerformanceMetrics: Bool
-    let cardHeight: CGFloat
     let onShowPerformanceMonitor: () -> Void
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
@@ -370,12 +293,8 @@ private struct BrowserToolbar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if showsPerformanceMetrics {
+            if preferences.showPerformanceMetrics {
                 ToolbarStatusCluster(onShowDetails: onShowPerformanceMonitor)
-
-                Divider()
-                    .frame(height: 22)
-                    .padding(.horizontal, 2)
             }
 
             LiquidGlassIconButton(
@@ -626,7 +545,7 @@ private struct BrowserToolbar: View {
             .help("更多")
         }
         .padding(.horizontal, BrowserWindowChromeLayout.windowEdgePadding)
-        .frame(height: cardHeight)
+        .frame(height: RexMetrics.toolbarHeight)
         .background {
             BrowserTitlebarCardSurface()
         }

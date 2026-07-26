@@ -26,7 +26,7 @@ flowchart TB
 
 SwiftUI 不拥有 Chromium 生命周期。稳定的 `NSView` 宿主由 AppKit 层创建并缓存，SwiftUI 只传递 frame、可见性和焦点。CEF 的 C++ API 由 Objective-C++ facade 包裹，再映射到 Swift `Sendable` 值和 `AsyncStream<BrowserEvent>`。
 
-v0.8.1 的窗口 chrome 由 AppKit 配置透明全尺寸标题栏，并从 `standardWindowButton` 的实际 frame 计算红黄绿按钮区域；SwiftUI 据此将性能监测放在按钮下方的左侧卡片中，并将导航控件排列在右侧。全屏时不再预留窗口按钮区域，性能监测与导航控件合并为使用 8 pt 左边距的单一顶栏。
+v0.8.1 的窗口 chrome 由 AppKit 配置透明全尺寸标题栏，并从 `standardWindowButton` 的实际 frame 计算红黄绿按钮尾缘；SwiftUI 将 44 pt 单导航卡放在该尾缘加 8 pt 净空的右侧，性能指标是导航栏首项。全屏时不再预留窗口按钮区域，导航卡改用 8 pt 左边距。
 
 ## 通信时序
 
