@@ -1,0 +1,99 @@
+name: Rex
+
+options:
+  minimumXcodeGenVersion: 2.46.0
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    ARCHS: arm64
+    VALID_ARCHS: arm64
+    EXCLUDED_ARCHS: x86_64
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CLANG_CXX_LANGUAGE_STANDARD: c++20
+
+targets:
+  Rex:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/RexApp
+        excludes:
+          - Resources
+      - path: Sources/RexApp/Resources
+        buildPhase: resources
+    info:
+      path: Configuration/Rex-Info.plist
+      properties:
+        CFBundleDevelopmentRegion: "$(DEVELOPMENT_LANGUAGE)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSHighResolutionCapable: true
+        NSCameraUsageDescription: "Rex 仅在您允许的网站请求时使用摄像头。"
+        NSMicrophoneUsageDescription: "Rex 仅在您允许的网站请求时使用麦克风。"
+        NSLocationUsageDescription: "Rex 仅在您允许的网站请求时提供位置信息。"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rex.browser
+        PRODUCT_NAME: Rex
+        MARKETING_VERSION: 0.8.1
+        CURRENT_PROJECT_VERSION: 810
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "6.0"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) REX_CEF"
+        SWIFT_OBJC_BRIDGING_HEADER: ChromiumBridge/Rex-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/ChromiumBridge"
+          - "$(PROJECT_DIR)/Vendor/CEF/current"
+        LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/.build/rex-chromium"
+          - "$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-ObjC"
+          - "-lc++"
+          - "-lRexChromiumBridge"
+          - "-lcef_dll_wrapper"
+          - "-framework AppKit"
+          - "-framework Cocoa"
+          - "-framework IOSurface"
+          - "-framework Security"
+          - "-framework CoreFoundation"
+          - "-lsqlite3"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        ONLY_ACTIVE_ARCH: YES
+    preBuildScripts:
+      - name: Build arm64 CEF bridge
+        script: |
+          "$PROJECT_DIR/Scripts/build-cef-runtime.sh"
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Embed and sign CEF runtime
+        script: |
+          "$PROJECT_DIR/Scripts/embed-cef-runtime.sh"
+        basedOnDependencyAnalysis: false
+
+schemes:
+  Rex:
+    build:
+      targets:
+        Rex: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    archive:
+      config: Release

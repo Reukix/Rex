@@ -1,0 +1,493 @@
+{
+  "releases": [
+    {
+      "version": "0.8.1",
+      "build": 810,
+      "date": "2026-07-27",
+      "channel": "beta",
+      "summary": "历史记录新增四档时间范围删除，资料库空状态收紧顶部间距，导航栏移入 macOS 红黄绿窗口按钮右侧，并同步澄清当前隐私盾牌的真实实现边界。",
+      "added": [
+        "历史记录页新增删除浏览数据菜单：过去 1 小时、过去 24 小时、过去 7 天和所有时间",
+        "历史批量删除前显示永久删除确认，并明确收藏和下载不受影响"
+      ],
+      "improved": [
+        "收藏与下载空状态填满资料库标题栏下方区域，修复顶部间距过大",
+        "导航栏使用真实标准窗口按钮 frame 计算左侧净空，进入全屏后恢复普通边距",
+        "隐私盾牌说明按 Swift 顶层 URL 策略、CEF 子资源目录拦截和 profile 级 Cookie 设置分层描述"
+      ],
+      "changed": [
+        "主窗口使用透明全尺寸内容标题栏，导航栏与红黄绿窗口按钮同行",
+        "应用版本 v0.8.1 build 810，User-Agent 产品串更新为 Rex/0.8.1"
+      ],
+      "fixed": [
+        "收藏库和下载空状态导致资料库标题栏被垂直居中、上方留白过大的问题",
+        "窗口按钮右侧存在未利用空白、导航栏与标题栏分离的问题"
+      ],
+      "removed": [
+        "标签页右键菜单中的关闭其他标签页和关闭右侧标签页"
+      ],
+      "knownIssues": [
+        "域名目录为内置快照，在线更新、自定义规则和通用指纹随机化尚未实现",
+        "第三方 Cookie 限制是 profile 级全局设置，不随单标签盾牌开关切换",
+        "盾牌统计按标签累计并持久化，不会在每次导航后自动清零",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "inProgress": [
+        "拦截域名目录的在线更新机制"
+      ]
+    },
+    {
+      "version": "0.8.0-beta.1",
+      "build": 801,
+      "date": "2026-07-26",
+      "channel": "beta",
+      "summary": "移除 EasyList 引擎，隐私盾牌改用精选域名目录只拦截第三方已知服务；分屏仅保留左右方向，并改为通过标签页右键菜单选择左右位置。",
+      "added": [
+        "标签页右键菜单新增分屏子菜单：支持创建、左右放置、替换页面、换侧和退出分屏",
+        "内容拦截全局开关「拦截广告与追踪器」（替代 EasyList 开关），运行时即时生效"
+      ],
+      "improved": [
+        "隐私盾牌拦截改用内置精选域名目录：标准级别仅拦截第三方已知广告/追踪域名，不使用路径启发式，不影响网站自身资源",
+        "严格级别追加指纹与社交组件目录；激进级别才启用路径启发式与第一方匹配",
+        "分屏标签菜单根据未分屏、分屏成员和外部标签显示对应操作"
+      ],
+      "changed": [
+        "分屏仅保留左右方向；旧的上下分屏会话与组合恢复时自动转为左右",
+        "移除工具栏与菜单中的「切换分屏方向」（⌘⌥O 快捷键释放）",
+        "应用版本 v0.8.0-beta.1 build 801，User-Agent 产品串更新为 Rex/0.8.0"
+      ],
+      "fixed": [
+        "EasyList 快照引擎拦截效果不佳的问题（整体移除，改用可预期的域名目录方案）",
+        "分屏网页画布出现蓝色选择框的问题"
+      ],
+      "removed": [
+        "RexEasyListEngine 及内置 EasyList / EasyPrivacy / EasyList China 规则文件（约 4.2 MB）",
+        "上下分屏布局与方向切换命令",
+        "标签拖放分屏协议与网页半区投放预览"
+      ],
+      "knownIssues": [
+        "域名目录为内置快照，在线更新仍待接入",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "inProgress": [
+        "拦截域名目录的在线更新机制",
+        "完整 brave-core + Thorium 源码融合"
+      ]
+    },
+    {
+      "version": "0.7.0-beta.1",
+      "build": 701,
+      "date": "2026-07-26",
+      "channel": "beta",
+      "summary": "重新引入基于 EasyList 语义的广告与追踪拦截并提供设置开关，性能层升级到 v1.3，站点信息弹窗支持证书与权限钻取详情页。",
+      "added": [
+        "EasyList 网络规则引擎：内置 EasyList、EasyPrivacy 与 EasyList China 快照，完整支持例外规则（@@）、$domain / 资源类型 / third-party 约束与 $document 整页豁免",
+        "设置 › 隐私与安全新增「启用 EasyList 规则」开关，运行时即时生效，无需重启",
+        "站点信息弹窗内证书钻取页：证书链切换、有效期、SHA-256 指纹、复制 PEM 与完整查看器入口",
+        "站点信息弹窗内网站权限钻取页：查看、修改与删除当前站点的权限决定，并可跳转权限中心"
+      ],
+      "improved": [
+        "性能层升级至 rex-thorium-hybrid-v1.3：raster 线程随 CPU 核数自适应（4/6/8），显式固定 Metal ANGLE 后端，低内存机型跳过备用渲染进程",
+        "性能指标监视器在应用失焦时自动降频采样（1.5s → 6s），并仅在数值可见变化时刷新工具栏",
+        "液态玻璃按钮新增悬停高亮，浅色模式下工具栏、面板与地址栏描边改用自适应颜色",
+        "标签 favicon 后备色改用稳定哈希，多次启动间保持一致",
+        "隐私盾牌说明文字与 EasyList 开关状态联动"
+      ],
+      "changed": [
+        "应用版本 v0.7.0-beta.1 build 701，User-Agent 产品串更新为 Rex/0.7.0",
+        "证书与网站权限行现在在弹窗内钻取，完整证书查看器改为钻取页内的次级入口",
+        "隐私盾牌与站点信息弹窗统一为 350pt 宽度"
+      ],
+      "fixed": [
+        "浅色模式下白色描边与填充几乎不可见的问题",
+        "标签后备 favicon 颜色随每次启动变化的问题"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "EasyList 规则为打包快照，在线增量更新仍待接入",
+        "cosmetic（元素隐藏）规则与正则规则暂不生效",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "inProgress": [
+        "EasyList 在线更新与自定义规则订阅",
+        "完整 brave-core + Thorium 源码融合"
+      ]
+    },
+    {
+      "version": "0.6.0-beta.1",
+      "build": 612,
+      "date": "2026-07-26",
+      "channel": "beta",
+      "summary": "修复 CEF 网页圆角在深浅色模式下的方形色差，加入正式 macOS App 图标，并继续使用 CEF 150 同版本 Chromium DevTools。",
+      "added": [
+        "Chrome 风格 DevTools 快捷键：⌘⌥J 控制台、⌘⇧C 检查、⌘⇧R 硬刷新",
+        "Chromium 原生 Elements、Console、Sources、Network、Performance、Memory、Application、Security 与 Settings",
+        "包含 16–1024 px 全部规格与透明外角的 macOS AppIcon 资产"
+      ],
+      "improved": [
+        "DevTools 改用受支持的 Alloy 子视图宿主，并保留 Swift 液态玻璃圆角与拖拽尺寸",
+        "DevTools 与页面使用同版本 Chromium，界面、协议和功能保持一致",
+        "删除旧 Swift 自制面板和专用 CDP 会话桥，避免旧实现再次进入构建",
+        "CEF 视口补角层与窗口背景共享坐标，保持 Chromium 非 layer-backed 合成路径"
+      ],
+      "changed": [
+        "应用构建号升级到 612",
+        "启动阶段主动加载 AppIcon.icns，避免 Dock 沿用通用占位图标缓存",
+        "功能层残留源码与 FilterLists 已从仓库删除"
+      ],
+      "fixed": [
+        "广告拦截过宽导致站点资源空白的问题（通过彻底移除拦截路径）",
+        "CEF 网页方形视口越过液态玻璃圆角的问题",
+        "深色模式安全区坐标偏移及浅色模式面板阴影导致的圆角方形色差",
+        "Dock 在替换应用包后仍显示系统通用占位图标的问题"
+      ],
+      "removed": [
+        "Vendor/FeatureLayer、adblock-rust FFI、FilterLists 与 cosmetic 注入",
+        "Swift 自制 DevTools UI、状态模型、控制器、通知与 C++ CDP 会话桥"
+      ],
+      "knownIssues": [
+        "当前 DevTools 仅提供右侧停靠",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ]
+    },
+    {
+      "version": "0.6.0-beta.1",
+      "build": 601,
+      "date": "2026-07-25",
+      "channel": "beta",
+      "summary": "引入 Brave 风格隐私功能层与 Thorium 风格性能参数，并用 Swift 原生 UI + C++ CDP 重做开发者工具。",
+      "added": [
+        "Brave 风格请求拦截引擎 v1.2：保护级别、广告/追踪/指纹/社交组件与可疑脚本拦截",
+        "Thorium 风格运行时性能参数 v1.2：GPU raster、Canvas OOP、QUIC、raster threads、进程策略（默认关闭 zero-copy/RawDraw）",
+        "Swift 原生 DevTools 面板：Elements、Console、Network、Sources、Performance、Memory、Application、Security",
+        "C++/ObjC CDP 协议会话，覆盖 Runtime/Network/DOM/CSS/Debugger 等核心域"
+      ],
+      "improved": [
+        "隐私盾牌可统计更广的拦截域名与资源类型",
+        "开发者工具改为原生液态玻璃侧栏，不再依赖嵌入式 Chrome DevTools 前端页面",
+        "性能参数收敛为更稳妥的 Thorium-ish 子集，优先保证页面绘制完整性"
+      ],
+      "changed": [
+        "应用版本升级到 v0.6.0-beta.1 build 601",
+        "仅保留 Thorium 性能层；功能层已移除"
+      ],
+      "fixed": [
+        "默认关闭 zero-copy / RawDraw / native GPU memory buffers，缓解 CEF reparent 宿主路径下多站点大面积白块"
+      ],
+      "removed": [
+        "默认不再把 CEF 自带 DevTools 前端页面作为主开发者工具 UI"
+      ],
+      "knownIssues": [
+        "完整 brave-core + Thorium 源码融合构建仍在规划，本 beta 为混合功能层",
+        "原生 DevTools 的 Sources/Memory 深度可视化仍在完善",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "package": {
+        "archive": "Rex-v0.6.0-beta.1-macos-arm64-chromium.zip",
+        "sha256": "8ef55b743df88ae81cfcd2b4dd51bd2a6f645aca87504a3be75e12166101727f",
+        "build": 601,
+        "configuration": "Debug",
+        "arch": "arm64"
+      },
+      "inProgress": [
+        "完整 brave-core + Thorium 源码融合与自建 CEF 发行包",
+        "原生 DevTools Sources/Memory 深度可视化与完整协议覆盖"
+      ]
+    },
+    {
+      "version": "0.5.3-beta.2",
+      "build": 525,
+      "date": "2026-07-24",
+      "channel": "beta",
+      "summary": "调整新标签页信息布局，并修复嵌入式 DevTools 的鼠标命中坐标偏移。",
+      "improved": [
+        "新标签页将收藏网站放在最近访问右侧，书签移动到下一行"
+      ],
+      "fixed": [
+        "DevTools 的 Console 等顶部标签必须点击下方偏移区域才会响应"
+      ],
+      "changed": [
+        "DevTools 重挂载前移除临时 popup 的 32pt 标题栏坐标偏移，挂载完成后恢复并隐藏临时窗口"
+      ],
+      "knownIssues": [
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "added": [],
+      "removed": [],
+      "inProgress": []
+    },
+    {
+      "version": "0.5.3-beta.1",
+      "date": "2026-07-24",
+      "title": "性能监测精简、DevTools 平滑拖拽与 NTP 收藏网站",
+      "highlights": [
+        "性能监测仅保留内存与 CPU",
+        "开发者工具拖拽期间挂起 CEF 重绘，松手后 flush",
+        "新标签页独立「收藏网站」卡片栏",
+        "菜单栏标签页/工作空间按实际数量显示",
+        "右键菜单移除显示网页源代码"
+      ],
+      "notes": [
+        "应用版本升级到 v0.5.3-beta.1 build 524"
+      ],
+      "added": [],
+      "improved": [],
+      "fixed": [],
+      "changed": [],
+      "removed": [],
+      "knownIssues": [],
+      "inProgress": [],
+      "channel": "beta",
+      "summary": "Rex 0.5.3-beta.1",
+      "build": 0
+    },
+    {
+      "version": "0.5.2-beta.1",
+      "build": 521,
+      "date": "2026-07-23",
+      "channel": "beta",
+      "summary": "完成 Chrome 风格动态右键菜单、分组主菜单、设置中心和可持久化的默认搜索引擎。",
+      "added": [
+        "页面、链接、媒体、选中文本和可编辑区域的动态 CEF 原生右键菜单",
+        "覆盖窗口、资料库、缩放、打印、查找、工具和设置的右上角分组主菜单",
+        "Chrome 风格侧栏设置中心和设置搜索",
+        "Google、Bing、DuckDuckGo、Brave Search 和 Ecosia 默认搜索引擎",
+        "标签页重载、关闭其他标签页和关闭右侧标签页"
+      ],
+      "improved": [
+        "地址栏关键词与右键搜索所选文本统一使用持久化搜索偏好",
+        "资料库菜单可直接定位历史、下载或书签",
+        "页面菜单按上下文只显示适用操作"
+      ],
+      "fixed": [
+        "右上角菜单仅能查看版本、无法执行浏览器常用操作",
+        "页面右键菜单缺少重载、保存、复制地址和检查等高频命令",
+        "标签页菜单无法批量关闭右侧或其他标签页"
+      ],
+      "changed": [
+        "应用版本升级到 v0.5.2-beta.1",
+        "默认搜索服务由硬编码 DuckDuckGo 改为用户可选偏好"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "保存页面是下载当前页面 URL 的回退，不是包含资源目录的完整网页存档",
+        "完整 Chrome Web Store 兼容与 Google 账号同步不在 MVP 范围",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "inProgress": [
+        "原生文件选择、JavaScript 对话框和全屏窗口体验",
+        "页面安全详情、Renderer 崩溃恢复界面和危险下载提示"
+      ]
+    },
+    {
+      "version": "0.5.1-beta.1",
+      "build": 511,
+      "date": "2026-07-23",
+      "channel": "beta",
+      "summary": "完成下载管理闭环，并修复启动阶段实时资料与权限状态被 SQLite 加载覆盖的问题。",
+      "added": [
+        "下载任务取消，以及失败或取消任务沿用原记录 ID 重试",
+        "下载完成后打开文件、在 Finder 中显示和删除记录",
+        "按工作空间保存安全作用域下载目录，未配置时继续使用系统保存对话框",
+        "CEF 本地目标路径、中断原因和未知总大小进度状态"
+      ],
+      "improved": [
+        "隐私窗口可在内存中显示本次下载状态，但不写入普通资料数据库",
+        "下载资料库展示目标目录、失败原因和与任务状态对应的操作",
+        "同名文件自动追加序号，避免覆盖已有文件"
+      ],
+      "fixed": [
+        "应用启动时实时历史、收藏、下载和权限状态可能被稍后完成的 SQLite 加载覆盖",
+        "失败或取消下载重试后产生重复记录",
+        "旧下载记录缺少新增路径字段时无法解码"
+      ],
+      "changed": [
+        "应用版本升级到 v0.5.1-beta.1",
+        "下载目录从全局隐含行为改为工作空间级显式设置"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "v0.5.0 及更早的下载记录没有本地路径，无法直接打开或在 Finder 中显示",
+        "完整 Chrome Web Store 兼容与 Google 账号同步不在 MVP 范围",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "inProgress": [
+        "原生文件选择、JavaScript 对话框和全屏窗口体验",
+        "页面安全详情、崩溃恢复界面、设置中心和危险下载提示"
+      ]
+    },
+    {
+      "version": "0.5.0-beta.1",
+      "build": 501,
+      "date": "2026-07-23",
+      "channel": "beta",
+      "summary": "完成隐私网络层、站点权限、隔离隐私窗口和高频 Chrome 浏览能力。",
+      "added": [
+        "HTTPS 升级、追踪参数清理、基础广告与追踪资源拦截和第三方 Cookie 阻止",
+        "按 profile、顶层来源、请求来源和权限类型保存决定的权限中心",
+        "独立内存 RequestContext 隐私窗口，不写入普通会话资料",
+        "恢复关闭标签、复制标签、静音、favicon、音频状态、打印和弹窗转标签",
+        "Chrome 标签数字快捷键、Rex 工作空间直达和分屏键盘操作"
+      ],
+      "improved": [
+        "Chromium 原生右键菜单由 CEF 管理完整生命周期",
+        "网页新窗口请求继承 Rex profile、工作空间和隐私 URL 策略",
+        "favicon 由 CEF 当前 profile 下载，Swift 仅保留有界内存 PNG 缓存"
+      ],
+      "fixed": [
+        "右键菜单重复触发时的 Cocoa 事件作用域崩溃",
+        "网页顶部 Chromium/CEF 调试状态条遮挡页面内容",
+        "权限请求无法按来源记住决定或在标签关闭时撤销"
+      ],
+      "changed": [
+        "应用版本进入 v0.5 Beta 通道",
+        "SQLite 权限 schema 升级到 v3"
+      ],
+      "removed": [
+        "网页画布顶部 Chromium/CEF 版本状态条"
+      ],
+      "knownIssues": [
+        "下载取消、重试、打开文件和目标目录设置尚未完成",
+        "完整 Chrome Web Store 兼容与 Google 账号同步不在 MVP 范围",
+        "Developer ID 签名、公证与自动更新尚未完成"
+      ],
+      "inProgress": [
+        "设置中心、页面安全详情和崩溃恢复界面",
+        "原生文件选择、JavaScript 对话框和全屏窗口体验"
+      ]
+    },
+    {
+      "version": "0.4.0-alpha.1",
+      "build": 401,
+      "date": "2026-07-23",
+      "channel": "alpha",
+      "summary": "完成生产级双页面分屏、四向拖放创建和可恢复的分屏组合工作流。",
+      "added": [
+        "左右与上下生产分屏布局和 25%–75% 比例调整",
+        "标签列表与收藏 favicon 的四向拖放热区预览",
+        "跨空间拖放创建分屏和分屏页面保护",
+        "分屏页面交换、焦点管理、地址栏同步和页面优先级切换",
+        "分屏组合保存、恢复、删除以及空间级分屏会话恢复",
+        "分屏 pane 导航、缩放和静音状态的快照持久化"
+      ],
+      "improved": [
+        "分屏比例调整和方向切换复用已有页面实例",
+        "分屏页面不会自动休眠，音频页面继续受到保护",
+        "旧 v2 会话快照自动兼容 v3 分屏字段"
+      ],
+      "fixed": [
+        "交换分屏页面后焦点、选中标签和地址栏不同步",
+        "切换工作空间后活动分屏状态残留",
+        "跨空间拖放或关闭分屏页面时遗留 splitSessionID"
+      ],
+      "changed": [
+        "会话 schema 升级到 v3，保存空间级分屏状态与命名组合"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "Developer ID 签名、公证与自动更新尚未完成",
+        "一次只支持双页面分屏；内容拦截、Cookie 策略、权限中心和隔离隐私窗口仍属于 v0.5"
+      ],
+      "inProgress": [
+        "窗口几何尺寸和显示器位置持久化",
+        "下载项管理、清理和打开文件动作"
+      ]
+    },
+    {
+      "version": "0.3.0-alpha.1",
+      "build": 301,
+      "date": "2026-07-23",
+      "channel": "alpha",
+      "summary": "加入 SQLite 标签与空间持久化、标签组织、浏览资料库和多窗口会话恢复。",
+      "added": [
+        "SQLite 窗口会话、空间、标签、分组和分屏状态",
+        "旧 JSON 会话的一次性迁移和快照校验",
+        "标签分组、固定、搜索、跨空间移动、休眠和归档恢复",
+        "历史、收藏和下载资料库",
+        "CEF 下载进度、文件名和完成状态事件",
+        "多窗口 UUID 会话恢复"
+      ],
+      "improved": [
+        "资料库和标签搜索支持标题与 URL",
+        "收藏状态会在持久化加载后同步到标签"
+      ],
+      "fixed": [
+        "避免旧版 JSON 会话在多个新窗口中重复迁移",
+        "拒绝不支持版本或选择无效的 SQLite 会话快照"
+      ],
+      "changed": [
+        "会话主存储从单文件 JSON 切换为 SQLite"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "Developer ID 签名、公证与自动更新尚未完成",
+        "生产级四向拖放分屏和隐私网络拦截仍属于后续里程碑"
+      ],
+      "inProgress": [
+        "窗口几何尺寸和显示器位置持久化",
+        "下载项管理、清理和打开文件动作"
+      ]
+    },
+    {
+      "version": "0.2.0-alpha.1",
+      "build": 201,
+      "date": "2026-07-23",
+      "channel": "alpha",
+      "summary": "加入 Apple Silicon 专用 CEF/Chromium、沙箱 Helper、真实导航事件与会话恢复。",
+      "added": [
+        "CEF 150 / Chromium 150 ARM64 固定供应链",
+        "Objective-C++ CEF 生命周期与 Swift BrowserEngine 适配",
+        "五类 Chromium sandbox Helper",
+        "真实导航、标题、进度与 renderer 崩溃事件",
+        "标签、空间和分屏会话持久化",
+        "XcodeGen 工程与 CEF 嵌入签名流程"
+      ],
+      "improved": [
+        "后台标签复用稳定 Chromium NSView 实例",
+        "工具栏前进、后退、停止和刷新状态接入真实页面"
+      ],
+      "fixed": [],
+      "changed": [
+        "从本版本开始仅支持 Apple Silicon arm64",
+        "Xcode 构建使用 Chromium，Swift Package 保留 WebKit UI 预览"
+      ],
+      "removed": [
+        "Intel Mac 构建计划"
+      ],
+      "knownIssues": [
+        "Developer ID 签名、公证与自动更新尚未完成",
+        "favicon、下载、权限和内容拦截回调尚未接入"
+      ],
+      "inProgress": [
+        "Developer ID 发布与公证流程",
+        "标签分组与 SQLite 持久化"
+      ]
+    },
+    {
+      "version": "0.1.0-alpha.1",
+      "build": 101,
+      "date": "2026-07-23",
+      "channel": "alpha",
+      "summary": "建立 Rex 产品与技术基线，并交付首个可运行 SwiftUI 浏览器外壳。",
+      "added": [
+        "液态玻璃主窗口与垂直标签侧栏",
+        "工作空间切换与分屏交互原型",
+        "隐私盾牌报告原型",
+        "类型安全 BrowserEngine 接口",
+        "版本功能日志与构建校验"
+      ],
+      "improved": [],
+      "fixed": [],
+      "changed": [],
+      "removed": [],
+      "knownIssues": [
+        "网页画布暂时使用 WebKit 设计预览面，尚未接入 CEF/Chromium",
+        "真实持久化、内容拦截和权限服务尚未实现"
+      ],
+      "inProgress": [
+        "CEF 多进程与沙箱集成",
+        "标签和分屏会话持久化"
+      ]
+    }
+  ]
+}

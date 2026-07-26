@@ -1,0 +1,473 @@
+{
+  "lastUpdatedVersion": "0.8.1",
+  "categories": [
+    {
+      "id": "app-shell",
+      "name": "应用外壳与设计系统",
+      "features": [
+        {
+          "id": "native-window-shell",
+          "name": "SwiftUI 主窗口",
+          "status": "completed",
+          "testStatus": "passed",
+          "introducedIn": "0.1.0-alpha.1",
+          "updatedIn": "0.8.1",
+          "description": "原生工具栏、液态玻璃侧栏和网页内容区；导航栏与 macOS 红黄绿窗口按钮同行，并在全屏时恢复普通边距",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 外观",
+          "limitations": []
+        },
+        {
+          "id": "chromium-rendering",
+          "name": "Chromium 网页渲染",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.2.0-alpha.1",
+          "updatedIn": "0.6.0-beta.1",
+          "description": "通过 CEF 提供多进程 Chromium 渲染，并叠加 Rex 隐私功能层与 Thorium 风格性能参数",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "",
+          "limitations": [
+            "Developer ID 签名与公证尚未完成"
+          ]
+        },
+        {
+          "id": "chrome-navigation-and-shortcuts",
+          "name": "Chrome 基础导航与快捷键",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.5.0-beta.1",
+          "updatedIn": "0.5.2-beta.1",
+          "description": "动态页面右键菜单、分组主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "浏览",
+          "limitations": [
+            "原生文件选择、JavaScript 对话框和全屏仍在 v0.5.x 完善"
+          ]
+        },
+        {
+          "id": "settings-and-search-engine",
+          "name": "设置中心与默认搜索引擎",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.5.2-beta.1",
+          "updatedIn": "0.5.2-beta.1",
+          "description": "Chrome 风格侧栏设置中心，并让地址栏使用持久化的 Google、Bing、DuckDuckGo、Brave Search 或 Ecosia 偏好",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 搜索引擎",
+          "limitations": [
+            "不会切换固定的 CEF/Chromium 渲染内核，也不会更改 macOS 系统默认浏览器"
+          ]
+        },
+        {
+          "id": "cef-arm64-supply-chain",
+          "name": "CEF Apple Silicon 供应链",
+          "status": "completed",
+          "testStatus": "passed",
+          "introducedIn": "0.2.0-alpha.1",
+          "updatedIn": "0.2.0-alpha.1",
+          "description": "固定并校验 CEF 150 ARM64 下载、哈希和架构",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": true,
+          "settingsPath": "关于 > 版本与功能",
+          "limitations": [
+            "仅支持 Apple Silicon arm64"
+          ]
+        },
+        {
+          "id": "chromium-sandbox-helpers",
+          "name": "Chromium 沙箱 Helper",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.2.0-alpha.1",
+          "updatedIn": "0.2.0-alpha.1",
+          "description": "主、Alerts、GPU、Plugin 和 Renderer 五类辅助进程",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": true,
+          "settingsPath": "",
+          "limitations": [
+            "正式分发仍需 Developer ID 签名与公证"
+          ]
+        },
+        {
+          "id": "thorium-performance-flags",
+          "name": "Thorium 风格性能参数",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.6.0-beta.1",
+          "updatedIn": "0.7.0-beta.1",
+          "description": "v1.3：GPU raster、Canvas OOP、QUIC、Metal ANGLE，raster 线程随 CPU 核数自适应，低内存机型跳过备用渲染进程（默认关闭 zero-copy/RawDraw）",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": false,
+          "requiresRestart": true,
+          "settingsPath": "",
+          "limitations": [
+            "完整 Thorium 编译工具链与补丁集仍在后续源码构建阶段"
+          ]
+        },
+        {
+          "id": "chromium-devtools",
+          "name": "Chromium 开发者工具",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.6.0-beta.1",
+          "updatedIn": "0.6.0-beta.1",
+          "description": "仅嵌入 CEF 150 同版本 Chromium DevTools 完整前端；SwiftUI 只提供液态玻璃停靠与尺寸宿主",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "开发者工具",
+          "limitations": [
+            "当前仅提供右侧停靠模式"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "organization",
+      "name": "垂直标签与工作空间",
+      "features": [
+        {
+          "id": "vertical-tabs",
+          "name": "垂直标签列表",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.1.0-alpha.1",
+          "updatedIn": "0.8.1",
+          "description": "以收藏、固定和临时区域组织长标题标签，并支持重载、复制、静音、恢复关闭和数字直达",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 标签与空间",
+          "limitations": []
+        },
+        {
+          "id": "spaces",
+          "name": "工作空间切换",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.1.0-alpha.1",
+          "updatedIn": "0.5.0-beta.1",
+          "description": "在独立标签集合之间切换，支持 Control+1…9 直达",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 标签与空间",
+          "limitations": [
+            "Cookie 容器尚未隔离"
+          ]
+        },
+        {
+          "id": "session-persistence",
+          "name": "标签与分屏会话恢复",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.2.0-alpha.1",
+          "updatedIn": "0.4.0-alpha.1",
+          "description": "原子保存并恢复工作空间、标签、选择、双页导航状态、分屏比例和空间级分屏组合",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 常规 > 启动时",
+          "limitations": [
+            "完整 Xcode/CEF 多窗口启动验证仍依赖 Apple Silicon macOS 环境"
+          ]
+        },
+        {
+          "id": "tab-groups-and-organization",
+          "name": "标签分组与组织",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.3.0-alpha.1",
+          "updatedIn": "0.4.0-alpha.1",
+          "description": "支持分组、固定、搜索、跨空间移动、自动休眠和归档恢复",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 标签与空间",
+          "limitations": [
+            "分屏中的标签不能直接移动、归档或休眠，需先结束分屏"
+          ]
+        },
+        {
+          "id": "multi-window-session-recovery",
+          "name": "多窗口会话恢复",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.3.0-alpha.1",
+          "updatedIn": "0.3.0-alpha.1",
+          "description": "为每个窗口保存独立标签、空间和分屏会话，并在启动时恢复",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 常规 > 启动时",
+          "limitations": [
+            "窗口几何尺寸和显示器位置尚未持久化"
+          ]
+        },
+        {
+          "id": "browser-library",
+          "name": "历史、收藏与下载资料库",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.3.0-alpha.1",
+          "updatedIn": "0.8.1",
+          "description": "SQLite 支持历史、收藏和下载记录；历史可按过去 1 小时、24 小时、7 天或所有时间永久删除，收藏与下载空状态从标题栏下方开始布局",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": false,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "资料库",
+          "limitations": [
+            "v0.5.0 及更早的下载记录没有本地路径；危险文件提示与批量清理尚未完成"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "split-view",
+      "name": "分屏浏览",
+      "features": [
+        {
+          "id": "split-layout",
+          "name": "左右分屏",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.1.0-alpha.1",
+          "updatedIn": "0.8.0-beta.1",
+          "description": "同一窗口并排显示两个独立页面；v0.8.0 起仅保留左右方向，旧的上下分屏会话恢复时自动转为左右",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "",
+          "limitations": [
+            "一次只显示两个页面"
+          ]
+        },
+        {
+          "id": "split-resize-swap",
+          "name": "分屏比例调整与页面交换",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.1.0-alpha.1",
+          "updatedIn": "0.4.0-alpha.1",
+          "description": "拖动分隔条并交换主次页面",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "",
+          "limitations": []
+        },
+        {
+          "id": "split-menu-actions",
+          "name": "标签菜单选择分屏",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.3.0-alpha.1",
+          "updatedIn": "0.8.0-beta.1",
+          "description": "标签页右键菜单支持创建分屏、选择左右位置、替换页面、换侧或退出分屏；不支持标签拖放分屏",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": false,
+          "requiresRestart": false,
+          "settingsPath": "",
+          "limitations": []
+        },
+        {
+          "id": "split-compositions",
+          "name": "分屏组合保存与恢复",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.4.0-alpha.1",
+          "updatedIn": "0.8.0-beta.1",
+          "description": "保存并恢复空间级左右双页面组合、比例、焦点和导航状态",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": true,
+          "supportsKeyboard": false,
+          "requiresRestart": false,
+          "settingsPath": "",
+          "limitations": [
+            "已关闭、已归档或已移动页面的组合无法恢复"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "name": "隐私保护",
+      "features": [
+        {
+          "id": "privacy-shield-report",
+          "name": "站点隐私盾牌报告",
+          "status": "testing",
+          "testStatus": "pending",
+          "introducedIn": "0.1.0-alpha.1",
+          "updatedIn": "0.8.1",
+          "description": "展示按标签累计的保护状态、拦截分类、HTTPS 升级、参数清理和网站权限",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 隐私与权限",
+          "limitations": [
+            "统计随标签会话累计，不会在每次主导航后自动清零",
+            "当前目录为内置集合，签名更新服务仍待接入"
+          ]
+        },
+        {
+          "id": "content-blocking-and-cookie-policy",
+          "name": "内容拦截与第三方 Cookie 限制",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.5.0-beta.1",
+          "updatedIn": "0.8.1",
+          "description": "CEF 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目：标准拦截第三方广告/追踪，默认指纹保护也匹配第三方已知指纹服务；严格追加社交；自定义扩大第一方目录匹配并对第三方使用路径启发式。第三方 Cookie 由 profile 级全局设置限制",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": false,
+          "requiresRestart": false,
+          "settingsPath": "设置 > 隐私与安全 > 拦截广告与追踪器",
+          "limitations": [
+            "域名目录为内置快照，在线更新仍待接入",
+            "不执行 EasyList、自定义规则、恶意网站检测或通用指纹随机化",
+            "第三方 Cookie 限制不会随单个标签页盾牌开关切换"
+          ]
+        },
+        {
+          "id": "website-permission-center",
+          "name": "站点权限中心",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.5.0-beta.1",
+          "updatedIn": "0.5.0-beta.1",
+          "description": "按 profile、顶层来源、请求来源和权限类型保存可撤销决定",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "隐私盾牌 > 管理全部权限",
+          "limitations": [
+            "蓝牙、USB 等系统权限仍需对应 macOS 授权"
+          ]
+        },
+        {
+          "id": "isolated-private-window",
+          "name": "隔离隐私窗口",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.5.0-beta.1",
+          "updatedIn": "0.5.0-beta.1",
+          "description": "使用独立内存 RequestContext，不恢复或写入普通会话资料",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "文件 > 新建隐私窗口",
+          "limitations": [
+            "隐私窗口不能向 ISP、组织网络或访问的网站隐藏网络活动"
+          ]
+        },
+        {
+          "id": "brave-style-privacy-layer",
+          "name": "Brave 风格隐私功能层",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.6.0-beta.1",
+          "updatedIn": "0.8.1",
+          "description": "Swift 顶层导航执行追踪参数清理和 HTTPS 尝试；CEF 子资源按标签页目录策略分类并取消命中请求；第三方 Cookie 使用 profile 级全局设置",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": false,
+          "requiresRestart": false,
+          "settingsPath": "隐私盾牌",
+          "limitations": [
+            "完整 brave-core 组件源码融合仍在后续版本",
+            "第一方判断不是完整 PSL/eTLD+1 实现"
+          ]
+        },
+        {
+          "id": "site-info-drilldown",
+          "name": "站点信息钻取详情页",
+          "status": "testing",
+          "testStatus": "passed",
+          "introducedIn": "0.7.0-beta.1",
+          "updatedIn": "0.7.0-beta.1",
+          "description": "地址栏锁形弹窗内点击证书或网站权限行的三角，直接推入证书详情页与站点权限页，支持返回、证书链切换、复制 PEM 与快速修改权限",
+          "supportsPrivateWindow": true,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": false,
+          "settingsPath": "地址栏 > 网站信息",
+          "limitations": [
+            "完整证书字段仍需在证书查看器窗口中查看"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "chrome-compatibility",
+      "name": "Chrome 兼容边界",
+      "features": [
+        {
+          "id": "controlled-extensions",
+          "name": "受控扩展子集",
+          "status": "limited",
+          "testStatus": "pending",
+          "introducedIn": "0.5.0-beta.1",
+          "updatedIn": "0.5.0-beta.1",
+          "description": "仅支持经权限审核并通过 CEF 兼容测试的扩展子集",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": true,
+          "supportsKeyboard": true,
+          "requiresRestart": true,
+          "settingsPath": "",
+          "limitations": [
+            "不承诺 Chrome Web Store 完整兼容"
+          ]
+        },
+        {
+          "id": "google-account-sync",
+          "name": "Google 账号同步",
+          "status": "paused",
+          "testStatus": "notApplicable",
+          "introducedIn": "0.5.0-beta.1",
+          "updatedIn": "0.5.0-beta.1",
+          "description": "不保存或同步 Google 账号、令牌和浏览资料",
+          "supportsPrivateWindow": false,
+          "supportsSplitView": false,
+          "supportsKeyboard": false,
+          "requiresRestart": false,
+          "settingsPath": "",
+          "limitations": [
+            "Rex 首发非目标"
+          ]
+        }
+      ]
+    }
+  ]
+}

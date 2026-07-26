@@ -1,0 +1,656 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0084B2A48B00B0E4C52DB36B /* BrowserPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23FBE7068E79A7526CCAED00 /* BrowserPreferences.swift */; };
+		043872E67F00B2F23415D9A7 /* features.json in Resources */ = {isa = PBXBuildFile; fileRef = DBCF09462E6A7F0422B8603F /* features.json */; };
+		0AF632507BE80B446D06EE5F /* NewTabFavorites.swift in Sources */ = {isa = PBXBuildFile; fileRef = 836F21B4FF1171FA09A5D56F /* NewTabFavorites.swift */; };
+		161D70C4E2715D2B958387EE /* SiteSecurityModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCF6C19E2C63D18F4DCC2A2F /* SiteSecurityModels.swift */; };
+		1B11BA202DE0B4FE4852A8F6 /* BrowserSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786D15CF71E9959216719BE8 /* BrowserSidebar.swift */; };
+		1E56805C5440CA42A101C2C2 /* BrowserStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF1D969540ACBDB45304BF99 /* BrowserStore.swift */; };
+		222E26899C5C7D3753053013 /* ProcessMetricsMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 160AC1FA4E46A8FA0FC08422 /* ProcessMetricsMonitor.swift */; };
+		308B91D1132FC63E2643AC68 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9099605FB0BCB5705F056B01 /* LiquidGlass.swift */; };
+		30C85F4D9833AF2B656CAF5C /* BrowserLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE91874D049A762CE9F17D3 /* BrowserLibraryView.swift */; };
+		320A3046317E8740D6BCCBD9 /* BrowserSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB07F70356B03CF1E5E2A9E /* BrowserSettingsView.swift */; };
+		3A8023610192349C3CE54CF1 /* BrowserEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F334CF97FFAF17870DEEA15 /* BrowserEngine.swift */; };
+		44A0F4A1FE7CCA54F062D269 /* RexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 927E3936775E7B5569F83267 /* RexApp.swift */; };
+		5A4F9E16B2007806F548C38A /* BrowserRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33630E1B8BA956063CAD60FA /* BrowserRootView.swift */; };
+		6DFC9AFF0BFB074A64D3ACE4 /* AppVersion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 921A3C669389C82AD6621E75 /* AppVersion.swift */; };
+		875F329E0E79B4AC2EF280F7 /* BrowserSQLitePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA89EAF683D419D7D907A5DF /* BrowserSQLitePersistence.swift */; };
+		8B2E6D4CDC6A5775D5F43097 /* BrowserExtensionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */; };
+		97287CCA06D3A100ADB6A4C6 /* releases.json in Resources */ = {isa = PBXBuildFile; fileRef = C4299FF5C50A93B3ED6D35ED /* releases.json */; };
+		A13F9576CFBE234A99BCFD49 /* ChromiumBrowserEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FD733807F1487E4BC02F00D /* ChromiumBrowserEngine.swift */; };
+		A281DECC5A3F6852988D4C43 /* ReleaseNotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE2ABACBE076FE65A7024A0 /* ReleaseNotesView.swift */; };
+		A397DDAC631DEDCA9F01D34E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F612CB12FCF1169F05E6ADB8 /* Assets.xcassets */; };
+		AA5569E2630FC26A66FC857A /* BrowserExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */; };
+		C143AB94D376C2BBE0E8E466 /* ReleaseNotesModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */; };
+		C948AFA13B2EAE9C5C11D22A /* BrowserSessionPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E616930673BBF6FF7361F2 /* BrowserSessionPersistence.swift */; };
+		D2C96A57D3053E40DFBF2C53 /* PrivacyShieldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F6DC07D472666EAD96CEB5 /* PrivacyShieldView.swift */; };
+		D728A97094EBD5B6AECE820A /* PermissionCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DD5C5C705944BE85DA3522A /* PermissionCenterView.swift */; };
+		E31F31608ED115F47805F22C /* BrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */; };
+		F1351477AC92CF0AF0D9AF2D /* BrowserContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD530993E63422B6A33B0018 /* BrowserContentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		160AC1FA4E46A8FA0FC08422 /* ProcessMetricsMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMetricsMonitor.swift; sourceTree = "<group>"; };
+		1BE2ABACBE076FE65A7024A0 /* ReleaseNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesView.swift; sourceTree = "<group>"; };
+		23FBE7068E79A7526CCAED00 /* BrowserPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPreferences.swift; sourceTree = "<group>"; };
+		2FD733807F1487E4BC02F00D /* ChromiumBrowserEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromiumBrowserEngine.swift; sourceTree = "<group>"; };
+		33630E1B8BA956063CAD60FA /* BrowserRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserRootView.swift; sourceTree = "<group>"; };
+		35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExtensionsView.swift; sourceTree = "<group>"; };
+		3DD5C5C705944BE85DA3522A /* PermissionCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionCenterView.swift; sourceTree = "<group>"; };
+		3F334CF97FFAF17870DEEA15 /* BrowserEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserEngine.swift; sourceTree = "<group>"; };
+		467CC0BCC8C69EA68F9C17CB /* Rex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rex.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4EB07F70356B03CF1E5E2A9E /* BrowserSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSettingsView.swift; sourceTree = "<group>"; };
+		5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserModels.swift; sourceTree = "<group>"; };
+		786D15CF71E9959216719BE8 /* BrowserSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSidebar.swift; sourceTree = "<group>"; };
+		836F21B4FF1171FA09A5D56F /* NewTabFavorites.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTabFavorites.swift; sourceTree = "<group>"; };
+		9099605FB0BCB5705F056B01 /* LiquidGlass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlass.swift; sourceTree = "<group>"; };
+		921A3C669389C82AD6621E75 /* AppVersion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVersion.swift; sourceTree = "<group>"; };
+		927E3936775E7B5569F83267 /* RexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexApp.swift; sourceTree = "<group>"; };
+		A4E616930673BBF6FF7361F2 /* BrowserSessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSessionPersistence.swift; sourceTree = "<group>"; };
+		A6F6DC07D472666EAD96CEB5 /* PrivacyShieldView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyShieldView.swift; sourceTree = "<group>"; };
+		AA89EAF683D419D7D907A5DF /* BrowserSQLitePersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSQLitePersistence.swift; sourceTree = "<group>"; };
+		ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExtensionModels.swift; sourceTree = "<group>"; };
+		BCF6C19E2C63D18F4DCC2A2F /* SiteSecurityModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteSecurityModels.swift; sourceTree = "<group>"; };
+		BD530993E63422B6A33B0018 /* BrowserContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserContentView.swift; sourceTree = "<group>"; };
+		C4299FF5C50A93B3ED6D35ED /* releases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = releases.json; sourceTree = "<group>"; };
+		CFE91874D049A762CE9F17D3 /* BrowserLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLibraryView.swift; sourceTree = "<group>"; };
+		DBCF09462E6A7F0422B8603F /* features.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = features.json; sourceTree = "<group>"; };
+		EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesModels.swift; sourceTree = "<group>"; };
+		EF1D969540ACBDB45304BF99 /* BrowserStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserStore.swift; sourceTree = "<group>"; };
+		F612CB12FCF1169F05E6ADB8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0159CEE0C9EFF086F0738673 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				921A3C669389C82AD6621E75 /* AppVersion.swift */,
+				927E3936775E7B5569F83267 /* RexApp.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		11A45A705D6774880B61A045 /* ReleaseNotes */ = {
+			isa = PBXGroup;
+			children = (
+				EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */,
+				1BE2ABACBE076FE65A7024A0 /* ReleaseNotesView.swift */,
+			);
+			path = ReleaseNotes;
+			sourceTree = "<group>";
+		};
+		1C039890ECC92693E0707850 /* SplitView */ = {
+			isa = PBXGroup;
+			children = (
+				BD530993E63422B6A33B0018 /* BrowserContentView.swift */,
+			);
+			path = SplitView;
+			sourceTree = "<group>";
+		};
+		1C4F75E8823A99209D0A58BF /* BrowserCore */ = {
+			isa = PBXGroup;
+			children = (
+				3F334CF97FFAF17870DEEA15 /* BrowserEngine.swift */,
+			);
+			path = BrowserCore;
+			sourceTree = "<group>";
+		};
+		1FCDDC82C07B958C2F0061B0 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				368CB4B2951F966949976B7C /* AppShell */,
+				A4CD4FF343EDE9306C9E8F36 /* Extensions */,
+				D1BDFB188742CD1B004F3A16 /* Library */,
+				2E4C83EF5A04F449BA405D4A /* Privacy */,
+				11A45A705D6774880B61A045 /* ReleaseNotes */,
+				FC81E36E9EE57E7D0ED92A17 /* Settings */,
+				1C039890ECC92693E0707850 /* SplitView */,
+				4B38B804F596A6771F35EAA2 /* Tabs */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		2E4C83EF5A04F449BA405D4A /* Privacy */ = {
+			isa = PBXGroup;
+			children = (
+				3DD5C5C705944BE85DA3522A /* PermissionCenterView.swift */,
+				A6F6DC07D472666EAD96CEB5 /* PrivacyShieldView.swift */,
+			);
+			path = Privacy;
+			sourceTree = "<group>";
+		};
+		2ED7436DAA99870F3C93B031 /* State */ = {
+			isa = PBXGroup;
+			children = (
+				EF1D969540ACBDB45304BF99 /* BrowserStore.swift */,
+			);
+			path = State;
+			sourceTree = "<group>";
+		};
+		368CB4B2951F966949976B7C /* AppShell */ = {
+			isa = PBXGroup;
+			children = (
+				33630E1B8BA956063CAD60FA /* BrowserRootView.swift */,
+				160AC1FA4E46A8FA0FC08422 /* ProcessMetricsMonitor.swift */,
+			);
+			path = AppShell;
+			sourceTree = "<group>";
+		};
+		40A036C5D36A25B715E9D63C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F612CB12FCF1169F05E6ADB8 /* Assets.xcassets */,
+				FF90185AA8D5FB162866071B /* ReleaseNotes */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		43C411F5A56DB80A739A8CA2 /* RexApp */ = {
+			isa = PBXGroup;
+			children = (
+				0159CEE0C9EFF086F0738673 /* Application */,
+				1C4F75E8823A99209D0A58BF /* BrowserCore */,
+				DBF2B26306D296F2202242A3 /* ChromiumIntegration */,
+				BD3F620A48E2229F50C1CF5D /* DesignSystem */,
+				7B436D12790E28E3E9287D04 /* Domain */,
+				1FCDDC82C07B958C2F0061B0 /* Features */,
+				5B91EC122E0C1B5D9BD918F1 /* Persistence */,
+				40A036C5D36A25B715E9D63C /* Resources */,
+				2ED7436DAA99870F3C93B031 /* State */,
+			);
+			path = RexApp;
+			sourceTree = "<group>";
+		};
+		4B38B804F596A6771F35EAA2 /* Tabs */ = {
+			isa = PBXGroup;
+			children = (
+				786D15CF71E9959216719BE8 /* BrowserSidebar.swift */,
+			);
+			path = Tabs;
+			sourceTree = "<group>";
+		};
+		5B91EC122E0C1B5D9BD918F1 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				A4E616930673BBF6FF7361F2 /* BrowserSessionPersistence.swift */,
+				AA89EAF683D419D7D907A5DF /* BrowserSQLitePersistence.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		60FDCF6564CDB04FFEB478C3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				467CC0BCC8C69EA68F9C17CB /* Rex.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7B436D12790E28E3E9287D04 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */,
+				5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */,
+				23FBE7068E79A7526CCAED00 /* BrowserPreferences.swift */,
+				836F21B4FF1171FA09A5D56F /* NewTabFavorites.swift */,
+				BCF6C19E2C63D18F4DCC2A2F /* SiteSecurityModels.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		8CD3430C385350CD40705BAE = {
+			isa = PBXGroup;
+			children = (
+				DE1AB811444DA9FC35F0DB4A /* Sources */,
+				60FDCF6564CDB04FFEB478C3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A4CD4FF343EDE9306C9E8F36 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		BD3F620A48E2229F50C1CF5D /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				9099605FB0BCB5705F056B01 /* LiquidGlass.swift */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		D1BDFB188742CD1B004F3A16 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				CFE91874D049A762CE9F17D3 /* BrowserLibraryView.swift */,
+			);
+			path = Library;
+			sourceTree = "<group>";
+		};
+		DBF2B26306D296F2202242A3 /* ChromiumIntegration */ = {
+			isa = PBXGroup;
+			children = (
+				2FD733807F1487E4BC02F00D /* ChromiumBrowserEngine.swift */,
+			);
+			path = ChromiumIntegration;
+			sourceTree = "<group>";
+		};
+		DE1AB811444DA9FC35F0DB4A /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				43C411F5A56DB80A739A8CA2 /* RexApp */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		FC81E36E9EE57E7D0ED92A17 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				4EB07F70356B03CF1E5E2A9E /* BrowserSettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		FF90185AA8D5FB162866071B /* ReleaseNotes */ = {
+			isa = PBXGroup;
+			children = (
+				DBCF09462E6A7F0422B8603F /* features.json */,
+				C4299FF5C50A93B3ED6D35ED /* releases.json */,
+			);
+			path = ReleaseNotes;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3F291F33BED538C8606D9262 /* Rex */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 64CAF39FC416E3A9B06F28DE /* Build configuration list for PBXNativeTarget "Rex" */;
+			buildPhases = (
+				C97C16493CFF0BB726D9D8D1 /* Build arm64 CEF bridge */,
+				CB9A0212F68669D92DAC7C7B /* Sources */,
+				9AE4936CBEB069B986570894 /* Resources */,
+				28118F73CB77F86074D56AF2 /* Embed and sign CEF runtime */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Rex;
+			packageProductDependencies = (
+			);
+			productName = Rex;
+			productReference = 467CC0BCC8C69EA68F9C17CB /* Rex.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3F56F64D5FCA3810837B7806 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 4AE634A38FF301F3976092B4 /* Build configuration list for PBXProject "Rex" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 8CD3430C385350CD40705BAE;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 60FDCF6564CDB04FFEB478C3 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3F291F33BED538C8606D9262 /* Rex */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9AE4936CBEB069B986570894 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A397DDAC631DEDCA9F01D34E /* Assets.xcassets in Resources */,
+				043872E67F00B2F23415D9A7 /* features.json in Resources */,
+				97287CCA06D3A100ADB6A4C6 /* releases.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		28118F73CB77F86074D56AF2 /* Embed and sign CEF runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed and sign CEF runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/Scripts/embed-cef-runtime.sh\"\n";
+		};
+		C97C16493CFF0BB726D9D8D1 /* Build arm64 CEF bridge */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build arm64 CEF bridge";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/Scripts/build-cef-runtime.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CB9A0212F68669D92DAC7C7B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6DFC9AFF0BFB074A64D3ACE4 /* AppVersion.swift in Sources */,
+				F1351477AC92CF0AF0D9AF2D /* BrowserContentView.swift in Sources */,
+				3A8023610192349C3CE54CF1 /* BrowserEngine.swift in Sources */,
+				AA5569E2630FC26A66FC857A /* BrowserExtensionModels.swift in Sources */,
+				8B2E6D4CDC6A5775D5F43097 /* BrowserExtensionsView.swift in Sources */,
+				30C85F4D9833AF2B656CAF5C /* BrowserLibraryView.swift in Sources */,
+				E31F31608ED115F47805F22C /* BrowserModels.swift in Sources */,
+				0084B2A48B00B0E4C52DB36B /* BrowserPreferences.swift in Sources */,
+				5A4F9E16B2007806F548C38A /* BrowserRootView.swift in Sources */,
+				875F329E0E79B4AC2EF280F7 /* BrowserSQLitePersistence.swift in Sources */,
+				C948AFA13B2EAE9C5C11D22A /* BrowserSessionPersistence.swift in Sources */,
+				320A3046317E8740D6BCCBD9 /* BrowserSettingsView.swift in Sources */,
+				1B11BA202DE0B4FE4852A8F6 /* BrowserSidebar.swift in Sources */,
+				1E56805C5440CA42A101C2C2 /* BrowserStore.swift in Sources */,
+				A13F9576CFBE234A99BCFD49 /* ChromiumBrowserEngine.swift in Sources */,
+				308B91D1132FC63E2643AC68 /* LiquidGlass.swift in Sources */,
+				0AF632507BE80B446D06EE5F /* NewTabFavorites.swift in Sources */,
+				D728A97094EBD5B6AECE820A /* PermissionCenterView.swift in Sources */,
+				D2C96A57D3053E40DFBF2C53 /* PrivacyShieldView.swift in Sources */,
+				222E26899C5C7D3753053013 /* ProcessMetricsMonitor.swift in Sources */,
+				C143AB94D376C2BBE0E8E466 /* ReleaseNotesModels.swift in Sources */,
+				A281DECC5A3F6852988D4C43 /* ReleaseNotesView.swift in Sources */,
+				44A0F4A1FE7CCA54F062D269 /* RexApp.swift in Sources */,
+				161D70C4E2715D2B958387EE /* SiteSecurityModels.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		26D48C87FE2022AB5E0A4AAF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 810;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/ChromiumBridge",
+					"$(PROJECT_DIR)/Vendor/CEF/current",
+				);
+				INFOPLIST_FILE = "Configuration/Rex-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/.build/rex-chromium",
+					"$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper",
+				);
+				MARKETING_VERSION = 0.8.1;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+					"-lc++",
+					"-lRexChromiumBridge",
+					"-lcef_dll_wrapper",
+					"-framework AppKit",
+					"-framework Cocoa",
+					"-framework IOSurface",
+					"-framework Security",
+					"-framework CoreFoundation",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.rex.browser;
+				PRODUCT_NAME = Rex;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) REX_CEF";
+				SWIFT_OBJC_BRIDGING_HEADER = "ChromiumBridge/Rex-Bridging-Header.h";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		91AECADD5696DE1B6CBE54C2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				EXCLUDED_ARCHS = x86_64;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				VALID_ARCHS = arm64;
+			};
+			name = Debug;
+		};
+		948BF4A908ED7F8016AB6F9A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 810;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/ChromiumBridge",
+					"$(PROJECT_DIR)/Vendor/CEF/current",
+				);
+				INFOPLIST_FILE = "Configuration/Rex-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/.build/rex-chromium",
+					"$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper",
+				);
+				MARKETING_VERSION = 0.8.1;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+					"-lc++",
+					"-lRexChromiumBridge",
+					"-lcef_dll_wrapper",
+					"-framework AppKit",
+					"-framework Cocoa",
+					"-framework IOSurface",
+					"-framework Security",
+					"-framework CoreFoundation",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.rex.browser;
+				PRODUCT_NAME = Rex;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) REX_CEF";
+				SWIFT_OBJC_BRIDGING_HEADER = "ChromiumBridge/Rex-Bridging-Header.h";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		995543404A7956C2285C1308 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				EXCLUDED_ARCHS = x86_64;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALID_ARCHS = arm64;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4AE634A38FF301F3976092B4 /* Build configuration list for PBXProject "Rex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				91AECADD5696DE1B6CBE54C2 /* Debug */,
+				995543404A7956C2285C1308 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		64CAF39FC416E3A9B06F28DE /* Build configuration list for PBXNativeTarget "Rex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				948BF4A908ED7F8016AB6F9A /* Debug */,
+				26D48C87FE2022AB5E0A4AAF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3F56F64D5FCA3810837B7806 /* Project object */;
+}

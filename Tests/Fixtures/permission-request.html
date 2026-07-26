@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rex Permission Test</title>
+  <style>
+    body { margin: 48px; font: 16px -apple-system, sans-serif; color: #202124; }
+    button { margin: 8px 8px 8px 0; padding: 8px 12px; }
+    #status { margin-top: 20px; color: #5f6368; }
+  </style>
+</head>
+<body>
+  <h1>Rex Permission Test</h1>
+  <p>Use the controls to exercise the browser permission bridge.</p>
+  <button onclick="requestLocation()">Request location</button>
+  <button onclick="requestNotification()">Request notification</button>
+  <p id="status">Waiting for a request.</p>
+  <script>
+    const status = document.querySelector('#status');
+    function requestLocation() {
+      if (!navigator.geolocation) { status.textContent = 'Geolocation is unavailable.'; return; }
+      navigator.geolocation.getCurrentPosition(
+        position => { status.textContent = `Location granted: ${position.coords.latitude.toFixed(2)}`; },
+        error => { status.textContent = `Location result: ${error.message}`; }
+      );
+    }
+    function requestNotification() {
+      if (!window.Notification) { status.textContent = 'Notifications are unavailable.'; return; }
+      Notification.requestPermission().then(result => { status.textContent = `Notification result: ${result}`; });
+    }
+  </script>
+</body>
+</html>
