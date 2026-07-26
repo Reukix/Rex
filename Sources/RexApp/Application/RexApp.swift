@@ -61,10 +61,7 @@ struct RexWindowScene: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store: BrowserStore
-    @State private var toolbarLeadingInset = BrowserWindowChromeLayout.toolbarLeadingInset(
-        trafficLightTrailingEdge: nil,
-        isFullScreen: false
-    )
+    @State private var windowChromeState = BrowserWindowChromeState.initial
 
     init(
         windowID: UUID,
@@ -84,13 +81,16 @@ struct RexWindowScene: View {
     }
 
     var body: some View {
-        BrowserRootView(toolbarLeadingInset: toolbarLeadingInset)
+        BrowserRootView(
+            toolbarLeadingInset: windowChromeState.toolbarLeadingInset,
+            isFullScreen: windowChromeState.isFullScreen
+        )
             .environmentObject(store)
             .environmentObject(preferences)
             .focusedObject(store)
             .frame(minWidth: 980, minHeight: 640)
             .background {
-                RexWindowChromeConfigurator(toolbarLeadingInset: $toolbarLeadingInset)
+                RexWindowChromeConfigurator(windowChromeState: $windowChromeState)
             }
             .onAppear {
                 if !profile.isPrivate {
@@ -108,10 +108,10 @@ struct RexWindowScene: View {
 }
 
 private struct RexWindowChromeConfigurator: NSViewRepresentable {
-    @Binding var toolbarLeadingInset: CGFloat
+    @Binding var windowChromeState: BrowserWindowChromeState
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(toolbarLeadingInset: $toolbarLeadingInset)
+        Coordinator(windowChromeState: $windowChromeState)
     }
 
     func makeNSView(context: Context) -> WindowProbeView {
@@ -123,7 +123,7 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: WindowProbeView, context: Context) {
-        context.coordinator.toolbarLeadingInset = $toolbarLeadingInset
+        context.coordinator.windowChromeState = $windowChromeState
         context.coordinator.scheduleRefresh()
     }
 
@@ -134,12 +134,12 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
-        var toolbarLeadingInset: Binding<CGFloat>
+        var windowChromeState: Binding<BrowserWindowChromeState>
         private weak var window: NSWindow?
         private var notificationTokens: [NSObjectProtocol] = []
 
-        init(toolbarLeadingInset: Binding<CGFloat>) {
-            self.toolbarLeadingInset = toolbarLeadingInset
+        init(windowChromeState: Binding<BrowserWindowChromeState>) {
+            self.windowChromeState = windowChromeState
         }
 
         func attach(to window: NSWindow?) {
@@ -208,12 +208,17 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
                 .filter { !$0.isHidden }
                 .map { $0.convert($0.bounds, to: nil).maxX }
                 .max()
-            let nextInset = BrowserWindowChromeLayout.toolbarLeadingInset(
-                trafficLightTrailingEdge: trafficLightTrailingEdge,
+            let nextState = BrowserWindowChromeState(
+                toolbarLeadingInset: BrowserWindowChromeLayout.toolbarLeadingInset(
+                    trafficLightTrailingEdge: trafficLightTrailingEdge,
+                    isFullScreen: isFullScreen
+                ),
                 isFullScreen: isFullScreen
             )
-            if abs(toolbarLeadingInset.wrappedValue - nextInset) >= 0.5 {
-                toolbarLeadingInset.wrappedValue = nextInset
+            let currentState = windowChromeState.wrappedValue
+            if currentState.isFullScreen != nextState.isFullScreen ||
+                abs(currentState.toolbarLeadingInset - nextState.toolbarLeadingInset) >= 0.5 {
+                windowChromeState.wrappedValue = nextState
             }
         }
     }

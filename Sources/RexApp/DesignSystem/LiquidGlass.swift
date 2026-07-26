@@ -15,6 +15,8 @@ enum BrowserWindowChromeLayout {
     static let windowEdgePadding: CGFloat = 8
     static let trafficLightClearance: CGFloat = 8
     static let fallbackTrafficLightTrailingEdge: CGFloat = 80
+    static let titlebarCardSpacing: CGFloat = 6
+    static let performanceClusterWidth: CGFloat = 138
 
     static func toolbarLeadingInset(
         trafficLightTrailingEdge: CGFloat?,
@@ -24,6 +26,31 @@ enum BrowserWindowChromeLayout {
         let trailingEdge = trafficLightTrailingEdge ?? fallbackTrafficLightTrailingEdge
         return ceil(trailingEdge + trafficLightClearance)
     }
+
+    static func performanceCardWidth(
+        toolbarLeadingInset: CGFloat,
+        isFullScreen: Bool,
+        showsPerformanceMetrics: Bool
+    ) -> CGFloat {
+        guard !isFullScreen || showsPerformanceMetrics else { return 0 }
+        let contentLeadingInset = isFullScreen ? windowEdgePadding : toolbarLeadingInset
+        return contentLeadingInset + (showsPerformanceMetrics
+            ? performanceClusterWidth + windowEdgePadding
+            : 0)
+    }
+}
+
+struct BrowserWindowChromeState: Equatable {
+    var toolbarLeadingInset: CGFloat
+    var isFullScreen: Bool
+
+    static let initial = BrowserWindowChromeState(
+        toolbarLeadingInset: BrowserWindowChromeLayout.toolbarLeadingInset(
+            trafficLightTrailingEdge: nil,
+            isFullScreen: false
+        ),
+        isFullScreen: false
+    )
 }
 
 /// Chrome fills and strokes that stay visible in both appearances. The former

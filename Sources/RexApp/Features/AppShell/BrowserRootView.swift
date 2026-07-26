@@ -6,14 +6,19 @@ import SwiftUI
 struct BrowserRootView: View {
     @EnvironmentObject private var store: BrowserStore
     let toolbarLeadingInset: CGFloat
+    let isFullScreen: Bool
     @State private var developerToolsDragWidth: CGFloat?
     @State private var certificateViewerSnapshot: CertificateViewerSnapshot?
 
-    init(toolbarLeadingInset: CGFloat = BrowserWindowChromeLayout.toolbarLeadingInset(
-        trafficLightTrailingEdge: nil,
-        isFullScreen: false
-    )) {
+    init(
+        toolbarLeadingInset: CGFloat = BrowserWindowChromeLayout.toolbarLeadingInset(
+            trafficLightTrailingEdge: nil,
+            isFullScreen: false
+        ),
+        isFullScreen: Bool = false
+    ) {
         self.toolbarLeadingInset = toolbarLeadingInset
+        self.isFullScreen = isFullScreen
     }
 
     var body: some View {
@@ -22,15 +27,12 @@ struct BrowserRootView: View {
                 RexWindowBackground()
 
                 VStack(spacing: 0) {
-                    ZStack {
-                        BrowserTitlebarSurface()
-
-                        BrowserToolbar(
-                            contentLeadingInset: toolbarLeadingInset,
-                            certificateViewerSnapshot: $certificateViewerSnapshot
-                        )
-                    }
-                    .frame(height: RexMetrics.titlebarHeight)
+                    BrowserTitlebar(
+                        preferences: store.preferences,
+                        toolbarLeadingInset: toolbarLeadingInset,
+                        isFullScreen: isFullScreen,
+                        certificateViewerSnapshot: $certificateViewerSnapshot
+                    )
 
                     GeometryReader { proxy in
                         let sidebarWidth = store.isSidebarCollapsed
@@ -154,21 +156,77 @@ struct BrowserRootView: View {
     }
 }
 
-private struct BrowserTitlebarSurface: View {
+private struct BrowserTitlebar: View {
+    @ObservedObject var preferences: BrowserPreferences
+    let toolbarLeadingInset: CGFloat
+    let isFullScreen: Bool
+    @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
+
+    private var performanceCardWidth: CGFloat {
+        BrowserWindowChromeLayout.performanceCardWidth(
+            toolbarLeadingInset: toolbarLeadingInset,
+            isFullScreen: isFullScreen,
+            showsPerformanceMetrics: preferences.showPerformanceMetrics
+        )
+    }
+
+    private var performanceContentLeadingInset: CGFloat {
+        isFullScreen ? BrowserWindowChromeLayout.windowEdgePadding : toolbarLeadingInset
+    }
+
+    var body: some View {
+        HStack(spacing: performanceCardWidth > 0 ? BrowserWindowChromeLayout.titlebarCardSpacing : 0) {
+            if performanceCardWidth > 0 {
+                BrowserPerformanceTitlebarCard(
+                    contentLeadingInset: performanceContentLeadingInset,
+                    showsPerformanceMetrics: preferences.showPerformanceMetrics
+                )
+                .frame(width: performanceCardWidth)
+            }
+
+            BrowserToolbar(certificateViewerSnapshot: $certificateViewerSnapshot)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.leading, isFullScreen ? BrowserWindowChromeLayout.windowEdgePadding : 0)
+        .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
+        .frame(height: RexMetrics.titlebarHeight)
+    }
+}
+
+private struct BrowserPerformanceTitlebarCard: View {
+    let contentLeadingInset: CGFloat
+    let showsPerformanceMetrics: Bool
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            BrowserTitlebarCardSurface()
+
+            if showsPerformanceMetrics {
+                ToolbarStatusCluster()
+                    .padding(.leading, contentLeadingInset)
+            }
+        }
+        .frame(height: RexMetrics.toolbarHeight)
+    }
+}
+
+private struct BrowserTitlebarCardSurface: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Rectangle()
+        RoundedRectangle(cornerRadius: 17, style: .continuous)
             .fill(
                 reduceTransparency
                     ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
                     : AnyShapeStyle(.ultraThinMaterial)
             )
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(RexChromeColor.stroke(colorScheme, emphasized: true))
-                    .frame(height: 0.75)
+            .overlay {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .strokeBorder(
+                        RexChromeColor.stroke(colorScheme, emphasized: true),
+                        lineWidth: 0.75
+                    )
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -270,7 +328,6 @@ private struct BrowserToolbar: View {
     @EnvironmentObject private var store: BrowserStore
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
-    let contentLeadingInset: CGFloat
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
@@ -278,8 +335,6 @@ private struct BrowserToolbar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            ToolbarStatusPreference(preferences: store.preferences)
-
             LiquidGlassIconButton(
                 systemName: "puzzlepiece.extension",
                 label: "扩展",
@@ -528,9 +583,10 @@ private struct BrowserToolbar: View {
             .help("更多")
         }
         .padding(.horizontal, BrowserWindowChromeLayout.windowEdgePadding)
-        .padding(.leading, contentLeadingInset)
-        .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
         .frame(height: RexMetrics.toolbarHeight)
+        .background {
+            BrowserTitlebarCardSurface()
+        }
         .onChange(of: store.addressFocusRequest) { _, _ in addressFocused = true }
         .alert("保存分屏组合", isPresented: $isSavingComposition) {
             TextField("组合名称", text: $compositionName)
@@ -577,16 +633,6 @@ private struct BrowserToolbar: View {
     }
 }
 
-private struct ToolbarStatusPreference: View {
-    @ObservedObject var preferences: BrowserPreferences
-
-    var body: some View {
-        if preferences.showPerformanceMetrics {
-            ToolbarStatusCluster()
-        }
-    }
-}
-
 private struct ToolbarStatusCluster: View {
     @ObservedObject private var metrics = ProcessMetricsMonitor.shared
     @Environment(\.colorScheme) private var colorScheme
@@ -608,7 +654,7 @@ private struct ToolbarStatusCluster: View {
                 minWidth: 54
             )
         }
-        .frame(width: 138, alignment: .leading)
+        .frame(width: BrowserWindowChromeLayout.performanceClusterWidth, alignment: .leading)
         .fixedSize(horizontal: true, vertical: false)
         .onAppear { metrics.start() }
         .onDisappear { metrics.stop() }
