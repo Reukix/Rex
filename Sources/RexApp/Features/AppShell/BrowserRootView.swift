@@ -21,11 +21,16 @@ struct BrowserRootView: View {
             ZStack(alignment: .top) {
                 RexWindowBackground()
 
-                VStack(spacing: 4) {
-                    BrowserToolbar(certificateViewerSnapshot: $certificateViewerSnapshot)
-                        .padding(.leading, toolbarLeadingInset)
-                        .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
-                        .padding(.top, 2)
+                VStack(spacing: 0) {
+                    ZStack {
+                        BrowserTitlebarSurface()
+
+                        BrowserToolbar(
+                            contentLeadingInset: toolbarLeadingInset,
+                            certificateViewerSnapshot: $certificateViewerSnapshot
+                        )
+                    }
+                    .frame(height: RexMetrics.titlebarHeight)
 
                     GeometryReader { proxy in
                         let sidebarWidth = store.isSidebarCollapsed
@@ -149,6 +154,27 @@ struct BrowserRootView: View {
     }
 }
 
+private struct BrowserTitlebarSurface: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Rectangle()
+            .fill(
+                reduceTransparency
+                    ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
+                    : AnyShapeStyle(.ultraThinMaterial)
+            )
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(RexChromeColor.stroke(colorScheme, emphasized: true))
+                    .frame(height: 0.75)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 private enum ChromiumDeveloperToolsHostTheme {
     static let background = Color(red: 0.12, green: 0.12, blue: 0.13)
     static let border = Color.white.opacity(0.08)
@@ -244,6 +270,7 @@ private struct BrowserToolbar: View {
     @EnvironmentObject private var store: BrowserStore
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
+    let contentLeadingInset: CGFloat
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
@@ -500,13 +527,10 @@ private struct BrowserToolbar: View {
             .menuIndicator(.hidden)
             .help("更多")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, BrowserWindowChromeLayout.windowEdgePadding)
+        .padding(.leading, contentLeadingInset)
+        .padding(.trailing, BrowserWindowChromeLayout.windowEdgePadding)
         .frame(height: RexMetrics.toolbarHeight)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 17, style: .continuous)
-                .strokeBorder(RexChromeColor.stroke(colorScheme, emphasized: true), lineWidth: 0.75)
-        }
         .onChange(of: store.addressFocusRequest) { _, _ in addressFocused = true }
         .alert("保存分屏组合", isPresented: $isSavingComposition) {
             TextField("组合名称", text: $compositionName)

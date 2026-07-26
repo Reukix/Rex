@@ -4,6 +4,7 @@ enum RexMetrics {
     static let cornerRadius: CGFloat = 16
     static let compactRadius: CGFloat = 11
     static let toolbarHeight: CGFloat = 44
+    static let titlebarHeight: CGFloat = 50
     static let sidebarWidth: CGFloat = 264
     static let collapsedSidebarWidth: CGFloat = 58
     static let dividerHitWidth: CGFloat = 12
