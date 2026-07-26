@@ -84,21 +84,6 @@ struct PerformanceMonitorView: View {
 
     private var pagesSection: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("网页")
-                    .font(.headline)
-
-                Image(systemName: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("网页行来自 Chromium 主任务快照；共享 renderer 的重复值不能相加")
-                    .accessibilityLabel("网页指标说明：共享 renderer 的重复值不能相加")
-
-                Spacer()
-            }
-            .padding(.horizontal, 18)
-            .frame(height: 42)
-
             if !metrics.hasSampled || !metrics.hasPageMetricsSampled {
                 VStack(spacing: 10) {
                     ProgressView()
@@ -124,19 +109,21 @@ struct PerformanceMonitorView: View {
     }
 
     private var pageList: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Text("网页")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .help("网页行来自 Chromium 主任务快照；共享 renderer 的重复值不能相加")
+                    .accessibilityHint("指标来自 Chromium 主任务快照；共享 renderer 的重复值不能相加")
                 Text("内存")
                     .frame(width: 92, alignment: .trailing)
                 Text("CPU")
                     .frame(width: 72, alignment: .trailing)
             }
-            .font(.caption.weight(.semibold))
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 30)
-            .frame(height: 24)
+            .frame(height: 32)
 
             ScrollView {
                 LazyVStack(spacing: 8) {
