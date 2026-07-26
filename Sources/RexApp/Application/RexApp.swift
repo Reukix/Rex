@@ -134,9 +134,15 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
+        private struct TrafficLightPosition {
+            let baselineY: CGFloat
+            let adjustedY: CGFloat
+        }
+
         var windowChromeState: Binding<BrowserWindowChromeState>
         private weak var window: NSWindow?
         private var notificationTokens: [NSObjectProtocol] = []
+        private var trafficLightPositions: [ObjectIdentifier: TrafficLightPosition] = [:]
 
         init(windowChromeState: Binding<BrowserWindowChromeState>) {
             self.windowChromeState = windowChromeState
@@ -173,6 +179,10 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
         }
 
         func detach() {
+            if let window {
+                restoreTrafficLights(in: window)
+            }
+            trafficLightPositions.removeAll()
             for token in notificationTokens {
                 NotificationCenter.default.removeObserver(token)
             }
@@ -199,6 +209,7 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
             guard let window else { return }
             configure(window)
             let isFullScreen = window.styleMask.contains(.fullScreen)
+            positionTrafficLights(in: window, isFullScreen: isFullScreen)
             let trafficLightTrailingEdge = [
                 NSWindow.ButtonType.closeButton,
                 .miniaturizeButton,
@@ -220,6 +231,58 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
                 abs(currentState.toolbarLeadingInset - nextState.toolbarLeadingInset) >= 0.5 {
                 windowChromeState.wrappedValue = nextState
             }
+        }
+
+        private func positionTrafficLights(in window: NSWindow, isFullScreen: Bool) {
+            guard !isFullScreen else {
+                restoreTrafficLights(in: window)
+                return
+            }
+
+            for buttonType in trafficLightButtonTypes {
+                guard let button = window.standardWindowButton(buttonType), !button.isHidden else {
+                    continue
+                }
+
+                let identifier = ObjectIdentifier(button)
+                let currentY = button.frame.origin.y
+                let baselineY: CGFloat
+                if let position = trafficLightPositions[identifier],
+                   abs(currentY - position.adjustedY) < 0.5 {
+                    baselineY = position.baselineY
+                } else {
+                    baselineY = currentY
+                }
+
+                let adjustedY = BrowserWindowChromeLayout.trafficLightAdjustedY(
+                    baselineY: baselineY,
+                    superviewIsFlipped: button.superview?.isFlipped == true
+                )
+                trafficLightPositions[identifier] = TrafficLightPosition(
+                    baselineY: baselineY,
+                    adjustedY: adjustedY
+                )
+
+                if abs(currentY - adjustedY) >= 0.5 {
+                    button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: adjustedY))
+                }
+            }
+        }
+
+        private func restoreTrafficLights(in window: NSWindow) {
+            for buttonType in trafficLightButtonTypes {
+                guard let button = window.standardWindowButton(buttonType),
+                      let position = trafficLightPositions[ObjectIdentifier(button)],
+                      abs(button.frame.origin.y - position.adjustedY) < 0.5 else {
+                    continue
+                }
+                button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: position.baselineY))
+            }
+            trafficLightPositions.removeAll()
+        }
+
+        private var trafficLightButtonTypes: [NSWindow.ButtonType] {
+            [.closeButton, .miniaturizeButton, .zoomButton]
         }
     }
 

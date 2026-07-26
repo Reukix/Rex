@@ -14,6 +14,7 @@ enum RexMetrics {
 enum BrowserWindowChromeLayout {
     static let windowEdgePadding: CGFloat = 8
     static let trafficLightClearance: CGFloat = 8
+    static let trafficLightVerticalOffset: CGFloat = 4
     static let fallbackTrafficLightTrailingEdge: CGFloat = 80
     static let performanceClusterWidth: CGFloat = 138
 
@@ -26,6 +27,12 @@ enum BrowserWindowChromeLayout {
         return ceil(trailingEdge + trafficLightClearance)
     }
 
+    static func trafficLightAdjustedY(
+        baselineY: CGFloat,
+        superviewIsFlipped: Bool
+    ) -> CGFloat {
+        baselineY + (superviewIsFlipped ? trafficLightVerticalOffset : -trafficLightVerticalOffset)
+    }
 }
 
 struct BrowserWindowChromeState: Equatable {

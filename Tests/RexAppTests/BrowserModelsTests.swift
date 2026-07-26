@@ -1845,6 +1845,14 @@ func windowChromeToolbarInset() {
         trafficLightTrailingEdge: 92.2,
         isFullScreen: true
     ) == BrowserWindowChromeLayout.windowEdgePadding)
+    #expect(BrowserWindowChromeLayout.trafficLightAdjustedY(
+        baselineY: 12,
+        superviewIsFlipped: false
+    ) == 8)
+    #expect(BrowserWindowChromeLayout.trafficLightAdjustedY(
+        baselineY: 12,
+        superviewIsFlipped: true
+    ) == 16)
 
     #expect(RexMetrics.titlebarHeight == 50)
     #expect(RexMetrics.toolbarHeight == 44)
