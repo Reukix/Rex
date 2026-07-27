@@ -81,6 +81,103 @@ private final class CorruptingMoveFileManager: FileManager, @unchecked Sendable 
     }
 }
 
+private actor ExtensionRuntimeTestEngine: BrowserEngine {
+    enum Failure: LocalizedError {
+        case synchronization
+
+        var errorDescription: String? { "Simulated extension runtime failure" }
+    }
+
+    private let observedPackagePath: String
+    private var failNextSync = false
+    private var synchronizedPathSets: [[String]] = []
+    private var forcedReloadPathSets: [[String]] = []
+    private var synchronizedVersions: [String?] = []
+    private var packageExistedDuringEmptySync = false
+    private var blockNextSync = false
+    private var blockedSyncContinuation: CheckedContinuation<Void, Never>?
+
+    init(observedPackagePath: String) {
+        self.observedPackagePath = observedPackagePath
+    }
+
+    func execute(_ command: BrowserCommand) async throws {
+        guard case let .reloadExtensionRules(paths, forceReloadPaths) = command else { return }
+        synchronizedPathSets.append(paths)
+        forcedReloadPathSets.append(forceReloadPaths)
+        synchronizedVersions.append(
+            paths.first.flatMap { path in
+                let manifestURL = URL(fileURLWithPath: path)
+                    .appendingPathComponent("manifest.json")
+                guard let data = try? Data(contentsOf: manifestURL),
+                      let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return nil
+                }
+                return manifest["version"] as? String
+            }
+        )
+        if paths.isEmpty {
+            packageExistedDuringEmptySync =
+                FileManager.default.fileExists(atPath: observedPackagePath)
+        }
+        if blockNextSync {
+            blockNextSync = false
+            await withCheckedContinuation { continuation in
+                blockedSyncContinuation = continuation
+            }
+        }
+        if failNextSync {
+            failNextSync = false
+            throw Failure.synchronization
+        }
+    }
+
+    func eventStream() -> AsyncStream<BrowserEvent> {
+        AsyncStream { $0.finish() }
+    }
+
+    func failNextExtensionSync() {
+        failNextSync = true
+    }
+
+    func blockNextExtensionSync() {
+        blockNextSync = true
+    }
+
+    func waitForBlockedExtensionSync() async {
+        while blockedSyncContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func resumeBlockedExtensionSync() {
+        blockedSyncContinuation?.resume()
+        blockedSyncContinuation = nil
+    }
+
+    func syncPathSets() -> [[String]] {
+        synchronizedPathSets
+    }
+
+    func syncVersions() -> [String?] {
+        synchronizedVersions
+    }
+
+    func latestForcedReloadPaths() -> [String] {
+        forcedReloadPathSets.last ?? []
+    }
+
+    func sawPackageDuringEmptySync() -> Bool {
+        packageExistedDuringEmptySync
+    }
+
+    func waitForSyncCount(_ count: Int) async {
+        while synchronizedPathSets.count < count {
+            await Task.yield()
+        }
+    }
+}
+
 private func writeLegacyCatalog(
     _ packages: [LegacyExtensionPackage],
     to storeRoot: URL
@@ -94,14 +191,20 @@ private func writeLegacyCatalog(
     )
 }
 
-@Test("Extension runtime capabilities do not promise unsupported CEF features")
+@Test("Extension execution capabilities and hot runtime boundary are explicit")
 func extensionRuntimeCapabilitiesAreExplicit() {
     let capabilities = BrowserExtensionRuntimeCapabilities.current
-    #expect(!capabilities.supportsChromeWebStoreInstall)
-    #expect(!capabilities.supportsCRXInstall)
-    #expect(!capabilities.supportsUnpackedExecution)
-    #expect(!capabilities.supportsManifestV3Execution)
-    #expect(capabilities.limitationText.contains("不会执行"))
+    #expect(capabilities.supportsChromeWebStoreInstall)
+    #expect(capabilities.supportsCRXInstall)
+    #expect(capabilities.supportsUnpackedExecution)
+    #expect(capabilities.supportsManifestV3Execution)
+    #expect(capabilities.supportsExtensionOwnedPages)
+    #expect(!capabilities.supportsNativeExtensionSurfaces)
+    #expect(!capabilities.supportsChromeTabContext)
+    #expect(!capabilities.supportsExactDomainDNR)
+    #expect(capabilities.limitationText.contains("Chromium"))
+    #expect(capabilities.limitationText.contains("活动标签"))
+    #expect(capabilities.limitationText.contains("立即同步"))
 }
 
 @Test("Curated extension catalog uses validated official URLs and local filters")
@@ -126,18 +229,35 @@ func extensionCatalogUsesOfficialURLs() throws {
     #expect(searchURL.absoluteString.contains("dark%20reader%2F"))
     #expect(BrowserExtensionCatalog.chromeWebStoreSearchURL(query: "  ")?.absoluteString
         == "https://\(BrowserExtensionCatalog.sourceHost)/")
+
+    let extensionID = "ddkjiahejlhfcafbddmgiahcphecmpfh"
+    #expect(BrowserExtensionCatalog.extensionID(fromWebStoreInput: extensionID) == extensionID)
+    #expect(BrowserExtensionCatalog.extensionID(
+        fromWebStoreInput: "https://chromewebstore.google.com/detail/u-block-origin-lite/\(extensionID)?hl=zh-CN"
+    ) == extensionID)
+    #expect(BrowserExtensionCatalog.extensionID(
+        fromWebStoreInput: "https://example.com/detail/\(extensionID)"
+    ) == nil)
 }
 
-@Test("Manifest V3 import is copied, parsed, and persisted without execution claims")
+@Test("Manifest V3 import becomes ready after a simulated runtime restart")
 @MainActor
 func manifestV3ImportPersistsManagedPackage() throws {
     let paths = try ExtensionTestPaths()
     defer { try? FileManager.default.removeItem(at: paths.sandbox) }
     var manifest = validManifest()
     manifest["icons"] = ["16": "icons/icon.bin", "128": "icons/icon-128.bin"]
+    manifest["action"] = ["default_popup": "popup.html"]
+    manifest["options_ui"] = ["page": "options.html", "open_in_tab": true]
     try writeManifest(manifest, to: paths.source)
     try writeFile(Data([0x01]), relativePath: "icons/icon.bin", in: paths.source)
     try writeFile(Data([0x02]), relativePath: "icons/icon-128.bin", in: paths.source)
+    try writeFile(Data("<!doctype html><title>Popup</title>".utf8), relativePath: "popup.html", in: paths.source)
+    try writeFile(
+        Data("<!doctype html><title>Options</title>".utf8),
+        relativePath: "options.html",
+        in: paths.source
+    )
 
     let store = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
     let imported = try store.installUnpacked(from: paths.source)
@@ -148,16 +268,33 @@ func manifestV3ImportPersistsManagedPackage() throws {
     #expect(FileManager.default.fileExists(atPath: imported.path.path))
     #expect(imported.manifestVersion == 3)
     #expect(imported.runtimeStatus == .pendingRuntime)
-    #expect(imported.statusDetail?.contains("不会执行") == true)
+    #expect(imported.statusDetail?.contains("正在") == true)
     #expect(imported.permissions == ["https://example.com/*", "optional:bookmarks", "storage", "tabs"])
     #expect(imported.iconRelativePath == "icons/icon-128.bin")
+    #expect(imported.actionPopupRelativePath == "popup.html")
+    #expect(imported.optionsRelativePath == "options.html")
+    #expect(imported.actionPopupURL == nil)
+    #expect(imported.optionsURL == nil)
+    #expect(store.startupExtensionPaths.isEmpty)
+    #expect(store.nativeRuleExtensionPaths == [imported.path.path])
 
     let reloaded = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
     let persisted = try #require(reloaded.extensions.first)
     #expect(reloaded.extensions.count == 1)
     #expect(persisted.id == imported.id)
-    #expect(persisted.runtimeStatus == .pendingRuntime)
+    #expect(persisted.runtimeStatus == .ready)
     #expect(persisted.homepageURL?.absoluteString == "https://example.com/extension")
+    let runtimeID = try #require(persisted.runtimeID)
+    #expect(persisted.actionPopupURL?.absoluteString
+        == "rex-extension://\(runtimeID)/popup.html")
+    #expect(persisted.optionsURL?.absoluteString
+        == "rex-extension://\(runtimeID)/options.html")
+    #expect(reloaded.setEnabled(true, for: persisted.id))
+    #expect(reloaded.nativeRuleExtensionPaths == [persisted.path.path])
+
+    let reloadedAgain = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    #expect(reloadedAgain.extensions.first?.runtimeStatus == .ready)
+    #expect(reloadedAgain.startupExtensionPaths == [persisted.path.path])
 }
 
 @Test("Manifest V2 is recognized while invalid manifest versions are rejected")
@@ -276,11 +413,46 @@ func reimportPreservesPackageIdentityAndPreference() throws {
     #expect(updated.version == "2.0.0")
     #expect(!updated.isEnabled)
     #expect(updated.runtimeStatus == .disabled)
+    let replacementTokens = store.pendingRuntimeReplacementTokens
+    store.acknowledgeRuntimePaths([])
+    #expect(store.commitPendingRuntimeReplacements(tokens: replacementTokens).isEmpty)
 
     let reloaded = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
     #expect(reloaded.extensions.first?.runtimeStatus == .disabled)
+    #expect(reloaded.extensions.first?.version == "2.0.0")
     #expect(reloaded.setEnabled(true, for: first.id))
     #expect(reloaded.extensions.first?.runtimeStatus == .pendingRuntime)
+}
+
+@Test("A running local extension can be replaced and acknowledged without restart")
+@MainActor
+func runningLocalExtensionUpdatesInPlace() throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(version: "1.0.0", key: nil), to: paths.source)
+
+    let installingStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try installingStore.installUnpacked(from: paths.source)
+    let runningStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installedManifestURL = installed.path.appendingPathComponent("manifest.json")
+    let originalManifest = try Data(contentsOf: installedManifestURL)
+
+    try writeManifest(validManifest(version: "2.0.0", key: nil), to: paths.source)
+    let updated = try runningStore.installUnpacked(from: paths.source)
+
+    #expect(updated.id == installed.id)
+    #expect(updated.version == "2.0.0")
+    #expect(updated.runtimeStatus == .pendingRuntime)
+    #expect(try Data(contentsOf: installedManifestURL) != originalManifest)
+    runningStore.acknowledgeRuntimePaths([updated.path.path])
+    _ = runningStore.commitPendingRuntimeReplacements(
+        tokens: runningStore.pendingRuntimeReplacementTokens
+    )
+    #expect(runningStore.extensions.first?.runtimeStatus == .ready)
+    let packageEntries = try FileManager.default.contentsOfDirectory(
+        atPath: paths.storeRoot.appendingPathComponent("Packages").path
+    )
+    #expect(!packageEntries.contains { $0.hasPrefix(".runtime-backup-") })
 }
 
 @Test("A package without a manifest key keeps its identity when its managed copy is selected")
@@ -297,7 +469,37 @@ func noKeyManagedCopyDoesNotDuplicatePackage() throws {
     #expect(store.extensions.count == 1)
     #expect(refreshed.id == first.id)
     #expect(refreshed.path == first.path)
+    #expect(store.forcedRuntimeReloadPaths == [first.path.path])
     #expect(FileManager.default.fileExists(atPath: first.path.appendingPathComponent("manifest.json").path))
+}
+
+@Test("Reimporting an edited managed payload forces a Chromium reload")
+@MainActor
+func editedManagedPayloadForcesRuntimeReload() async throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+    try Data("globalThis.rexProbeVersion = 1;".utf8)
+        .write(to: paths.source.appendingPathComponent("content.js"))
+    let extensionsStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try extensionsStore.installUnpacked(from: paths.source)
+    let engine = ExtensionRuntimeTestEngine(observedPackagePath: installed.path.path)
+    let browserStore = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: paths.sandbox.appendingPathComponent("Browser.sqlite"),
+            legacyPersistence: nil
+        ),
+        extensionsStore: extensionsStore
+    )
+    await engine.waitForSyncCount(1)
+
+    try Data("globalThis.rexProbeVersion = 2;".utf8)
+        .write(to: installed.path.appendingPathComponent("content.js"))
+    _ = try await browserStore.installUnpackedExtension(from: installed.path)
+
+    #expect(await engine.latestForcedReloadPaths() == [installed.path.path])
+    #expect(extensionsStore.forcedRuntimeReloadPaths.isEmpty)
 }
 
 @Test("A v0.8.1 no-key catalog entry is reused instead of duplicated on reimport")
@@ -331,15 +533,20 @@ func legacyNoKeyCatalogReimportIsMigratedInPlace() throws {
 
     let store = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
     #expect(store.extensions.count == 1)
+    #expect(store.setEnabled(false, for: legacyID))
+    let stoppedStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
     try writeManifest(validManifest(version: "2.0.0", key: nil), to: paths.source)
 
-    let updated = try store.installUnpacked(from: paths.source)
+    let updated = try stoppedStore.installUnpacked(from: paths.source)
 
-    #expect(store.extensions.count == 1)
+    #expect(stoppedStore.extensions.count == 1)
     #expect(updated.id == legacyID)
     #expect(updated.path.resolvingSymlinksInPath() == legacyPath.resolvingSymlinksInPath())
     #expect(updated.version == "2.0.0")
     #expect(updated.installedAt == installedAt)
+    let replacementTokens = stoppedStore.pendingRuntimeReplacementTokens
+    stoppedStore.acknowledgeRuntimePaths([])
+    #expect(stoppedStore.commitPendingRuntimeReplacements(tokens: replacementTokens).isEmpty)
     let reloaded = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
     #expect(reloaded.extensions.count == 1)
     #expect(reloaded.extensions.first?.id == legacyID)
@@ -442,6 +649,335 @@ func managedPackageRemovalAndMissingFileState() throws {
     #expect(FileManager.default.fileExists(atPath: installedAgain.path.path))
     #expect(missingStore.remove(installedAgain.id))
     #expect(!FileManager.default.fileExists(atPath: installedAgain.path.path))
+}
+
+@Test("A running extension is removed immediately after runtime unload")
+@MainActor
+func runningExtensionRemovalIsImmediate() throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+
+    let installingStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let imported = try installingStore.installUnpacked(from: paths.source)
+    let runningStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let runningPackage = try #require(runningStore.extensions.first)
+    #expect(runningPackage.runtimeStatus == .ready)
+
+    runningStore.acknowledgeRuntimePaths([])
+    #expect(runningStore.remove(runningPackage.id))
+    #expect(runningStore.extensions.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: imported.path.path))
+
+    let restartedStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    #expect(restartedStore.extensions.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: imported.path.path))
+}
+
+@Test("Runtime acknowledgements track disable and re-enable without restart")
+@MainActor
+func runtimeAcknowledgementTracksEnableState() throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+
+    let installingStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    _ = try installingStore.installUnpacked(from: paths.source)
+    let runningStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let runningPackage = try #require(runningStore.extensions.first)
+
+    #expect(runningStore.setEnabled(false, for: runningPackage.id))
+    runningStore.acknowledgeRuntimePaths([])
+    #expect(runningStore.extensions.first?.runtimeStatus == .disabled)
+    #expect(runningStore.setEnabled(true, for: runningPackage.id))
+    #expect(runningStore.extensions.first?.runtimeStatus == .pendingRuntime)
+    runningStore.acknowledgeRuntimePaths([runningPackage.path.path])
+    #expect(runningStore.extensions.first?.runtimeStatus == .ready)
+}
+
+@Test("Private windows neither synchronize nor open extension runtime pages")
+@MainActor
+func privateWindowsExcludeExtensionRuntime() async throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+    try writeFile(
+        Data("<!doctype html><title>Private boundary</title>".utf8),
+        relativePath: "options.html",
+        in: paths.source
+    )
+
+    let extensionsStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try extensionsStore.installUnpacked(from: paths.source)
+    extensionsStore.acknowledgeRuntimePaths([installed.path.path])
+    let runningPackage = try #require(extensionsStore.extensions.first)
+    let optionsURL = try #require(
+        runningPackage.resourceURL(relativePath: "options.html")
+    )
+    let engine = ExtensionRuntimeTestEngine(observedPackagePath: installed.path.path)
+    let browserStore = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: paths.sandbox.appendingPathComponent("Private.sqlite"),
+            legacyPersistence: nil
+        ),
+        profile: .privateWindow(),
+        extensionsStore: extensionsStore
+    )
+    for _ in 0..<10 {
+        await Task.yield()
+    }
+
+    #expect(!browserStore.isRunnableExtension(runtimeID: try #require(runningPackage.runtimeID)))
+    let initialTabCount = browserStore.tabs.count
+    browserStore.openExtensionPage(optionsURL, title: runningPackage.name)
+    #expect(browserStore.tabs.count == initialTabCount)
+    #expect(browserStore.lastError == "隐私窗口不运行或打开扩展页面。")
+    #expect(await engine.syncPathSets().isEmpty)
+}
+
+@Test("A failed hot disable rolls back the persisted preference and runtime set")
+@MainActor
+func failedHotDisableRollsBack() async throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+    let extensionsStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try extensionsStore.installUnpacked(from: paths.source)
+    let engine = ExtensionRuntimeTestEngine(observedPackagePath: installed.path.path)
+    let browserStore = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: paths.sandbox.appendingPathComponent("Browser.sqlite"),
+            legacyPersistence: nil
+        ),
+        extensionsStore: extensionsStore
+    )
+    await engine.waitForSyncCount(1)
+    #expect(extensionsStore.extensions.first?.runtimeStatus == .ready)
+
+    await engine.failNextExtensionSync()
+    #expect(!(await browserStore.setExtensionEnabled(false, id: installed.id)))
+    #expect(extensionsStore.extensions.first?.isEnabled == true)
+    #expect(extensionsStore.extensions.first?.runtimeStatus == .ready)
+    #expect(extensionsStore.lastError?.contains("Simulated extension runtime failure") == true)
+    #expect(Array((await engine.syncPathSets()).suffix(2)) == [[], [installed.path.path]])
+}
+
+@Test("A failed hot update restores and reloads the previous package version")
+@MainActor
+func failedHotUpdateRestoresPreviousVersion() async throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(version: "1.0.0"), to: paths.source)
+    let extensionsStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try extensionsStore.installUnpacked(from: paths.source)
+    let engine = ExtensionRuntimeTestEngine(observedPackagePath: installed.path.path)
+    let browserStore = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: paths.sandbox.appendingPathComponent("Browser.sqlite"),
+            legacyPersistence: nil
+        ),
+        extensionsStore: extensionsStore
+    )
+    await engine.waitForSyncCount(1)
+
+    try writeManifest(validManifest(version: "2.0.0"), to: paths.source)
+    let updated = try extensionsStore.installUnpacked(from: paths.source)
+    #expect(updated.version == "2.0.0")
+    #expect(!extensionsStore.pendingRuntimeReplacementTokens.isEmpty)
+
+    await engine.failNextExtensionSync()
+    #expect(!(await browserStore.reloadExtensionRules()))
+    #expect(extensionsStore.extensions.first?.version == "1.0.0")
+    #expect(extensionsStore.extensions.first?.runtimeStatus == .ready)
+    #expect(extensionsStore.pendingRuntimeReplacementTokens.isEmpty)
+    #expect(Array((await engine.syncVersions()).suffix(2)) == ["2.0.0", "1.0.0"])
+
+    let restoredManifestData = try Data(
+        contentsOf: installed.path.appendingPathComponent("manifest.json")
+    )
+    let restoredManifest = try #require(
+        JSONSerialization.jsonObject(with: restoredManifestData) as? [String: Any]
+    )
+    #expect(restoredManifest["version"] as? String == "1.0.0")
+    let packageEntries = try FileManager.default.contentsOfDirectory(
+        atPath: paths.storeRoot.appendingPathComponent("Packages").path
+    )
+    #expect(!packageEntries.contains { $0.hasPrefix(".runtime-backup-") })
+    #expect(!packageEntries.contains { $0.hasPrefix(".failed-runtime-update-") })
+}
+
+@Test("An unacknowledged package update is restored after relaunch")
+@MainActor
+func unacknowledgedUpdateIsRecoveredAfterRelaunch() throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(version: "1.0.0"), to: paths.source)
+    let firstStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try firstStore.installUnpacked(from: paths.source)
+
+    try writeManifest(validManifest(version: "2.0.0"), to: paths.source)
+    let updated = try firstStore.installUnpacked(from: paths.source)
+    #expect(updated.version == "2.0.0")
+    #expect(!firstStore.pendingRuntimeReplacementTokens.isEmpty)
+    #expect(FileManager.default.fileExists(
+        atPath: paths.storeRoot.appendingPathComponent("runtime-replacements.json").path
+    ))
+
+    let recoveredStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    #expect(recoveredStore.extensions.first?.version == "1.0.0")
+    #expect(recoveredStore.pendingRuntimeReplacementTokens.isEmpty)
+    #expect(!FileManager.default.fileExists(
+        atPath: paths.storeRoot.appendingPathComponent("runtime-replacements.json").path
+    ))
+    let restoredManifestData = try Data(
+        contentsOf: installed.path.appendingPathComponent("manifest.json")
+    )
+    let restoredManifest = try #require(
+        JSONSerialization.jsonObject(with: restoredManifestData) as? [String: Any]
+    )
+    #expect(restoredManifest["version"] as? String == "1.0.0")
+    let packageEntries = try FileManager.default.contentsOfDirectory(
+        atPath: paths.storeRoot.appendingPathComponent("Packages").path
+    )
+    #expect(!packageEntries.contains { $0.hasPrefix(".runtime-backup-") })
+    #expect(!packageEntries.contains { $0.hasPrefix(".failed-runtime-update-") })
+}
+
+@Test("Hot removal unloads Chromium before deleting managed files")
+@MainActor
+func hotRemovalUnloadsBeforeDeletingFiles() async throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+    let extensionsStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try extensionsStore.installUnpacked(from: paths.source)
+    let engine = ExtensionRuntimeTestEngine(observedPackagePath: installed.path.path)
+    let browserStore = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: paths.sandbox.appendingPathComponent("Browser.sqlite"),
+            legacyPersistence: nil
+        ),
+        extensionsStore: extensionsStore
+    )
+    await engine.waitForSyncCount(1)
+
+    #expect(await browserStore.removeExtension(installed.id))
+    #expect(await engine.sawPackageDuringEmptySync())
+    #expect(!FileManager.default.fileExists(atPath: installed.path.path))
+    #expect(extensionsStore.extensions.isEmpty)
+}
+
+@Test("Runtime mutations stay serialized while Chromium synchronization is suspended")
+@MainActor
+func runtimeMutationsRemainSerializedAcrossAwait() async throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    try writeManifest(validManifest(), to: paths.source)
+    let extensionsStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    let installed = try extensionsStore.installUnpacked(from: paths.source)
+    let engine = ExtensionRuntimeTestEngine(observedPackagePath: installed.path.path)
+    let browserStore = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: paths.sandbox.appendingPathComponent("Browser.sqlite"),
+            legacyPersistence: nil
+        ),
+        extensionsStore: extensionsStore
+    )
+    await engine.waitForSyncCount(1)
+    await engine.blockNextExtensionSync()
+
+    let disableTask = Task { @MainActor in
+        await browserStore.setExtensionEnabled(false, id: installed.id)
+    }
+    await engine.waitForBlockedExtensionSync()
+    let removalTask = Task { @MainActor in
+        await browserStore.removeExtension(installed.id)
+    }
+    for _ in 0..<20 {
+        await Task.yield()
+    }
+
+    #expect(FileManager.default.fileExists(atPath: installed.path.path))
+    #expect(extensionsStore.extensions.contains { $0.id == installed.id })
+    #expect(extensionsStore.isRuntimeMutationInProgress)
+
+    await engine.resumeBlockedExtensionSync()
+    #expect(await disableTask.value)
+    #expect(await removalTask.value)
+    #expect(!FileManager.default.fileExists(atPath: installed.path.path))
+    #expect(extensionsStore.extensions.isEmpty)
+}
+
+@Test("A Web Store record must keep its signed manifest identity")
+@MainActor
+func webStoreIdentityIsRevalidatedFromManifestKey() throws {
+    let paths = try ExtensionTestPaths()
+    defer { try? FileManager.default.removeItem(at: paths.sandbox) }
+    let packageID = "local-web-store-identity"
+    let packagePath = paths.storeRoot
+        .appendingPathComponent("Packages", isDirectory: true)
+        .appendingPathComponent(packageID, isDirectory: true)
+    try FileManager.default.createDirectory(at: packagePath, withIntermediateDirectories: true)
+
+    let publicKey = Data("signed-web-store-test-key".utf8)
+    let runtimeID = ChromeExtensionArchiveVerifier.extensionID(forPublicKey: publicKey)
+    try writeManifest(
+        validManifest(key: publicKey.base64EncodedString()),
+        to: packagePath
+    )
+    let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+    let package = BrowserExtensionPackage(
+        id: packageID,
+        name: "Web Store Identity",
+        version: "1.0.0",
+        description: "",
+        author: nil,
+        homepageURL: nil,
+        path: packagePath,
+        isEnabled: true,
+        permissions: [],
+        runtimeStatus: .ready,
+        installedAt: timestamp,
+        updatedAt: timestamp,
+        manifestVersion: 3,
+        iconRelativePath: nil,
+        statusDetail: nil,
+        storeID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        installationSource: .chromeWebStore,
+        runtimeID: runtimeID
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try encoder.encode([package]).write(
+        to: paths.storeRoot.appendingPathComponent("catalog.json"),
+        options: .atomic
+    )
+
+    let store = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    #expect(store.extensions.first?.runtimeStatus == .invalidManifest)
+    #expect(store.extensions.first?.statusDetail?.contains("身份") == true)
+    #expect(store.startupExtensionPaths.isEmpty)
+
+    var malformedKeyPackage = package
+    malformedKeyPackage.storeID = runtimeID
+    try writeManifest(
+        validManifest(key: publicKey.base64EncodedString() + "!"),
+        to: packagePath
+    )
+    try encoder.encode([malformedKeyPackage]).write(
+        to: paths.storeRoot.appendingPathComponent("catalog.json"),
+        options: .atomic
+    )
+
+    let malformedKeyStore = BrowserExtensionsStore(rootDirectoryURL: paths.storeRoot)
+    #expect(malformedKeyStore.extensions.first?.runtimeStatus == .invalidManifest)
+    #expect(malformedKeyStore.extensions.first?.statusDetail?.contains("身份") == true)
+    #expect(malformedKeyStore.startupExtensionPaths.isEmpty)
 }
 
 @Test("Removing a tampered external catalog record never deletes external files")

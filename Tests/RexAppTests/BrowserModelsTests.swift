@@ -38,6 +38,19 @@ private actor RecordingBrowserEngine: BrowserEngine {
         }
     }
 
+    func destroyedPageIDs() -> [UUID] {
+        commands.compactMap { command in
+            guard case let .destroyPage(tabID) = command else { return nil }
+            return tabID
+        }
+    }
+
+    func waitForDestroyedPages(_ expectedCount: Int) async {
+        while destroyedPageIDs().count < expectedCount {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     func loadURLs() -> [URL] {
         commands.compactMap { command in
             guard case let .loadURL(_, url) = command else { return nil }
@@ -161,6 +174,192 @@ private actor DelayedSetupBrowserEngine: BrowserEngine {
             return url
         }
     }
+}
+
+@Test("Closing a window persists it and destroys only its pages once")
+@MainActor
+func closingWindowTearsDownOnlyOwnedPages() async throws {
+    let engine = RecordingBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.CloseWindow.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let firstWindowID = UUID()
+    let secondWindowID = UUID()
+    let firstStore = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: firstWindowID,
+        preferences: preferences
+    )
+    let secondStore = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: secondWindowID,
+        preferences: preferences
+    )
+    let firstTabIDs = Set(firstStore.tabs.map(\.id))
+    let secondTabIDs = Set(secondStore.tabs.map(\.id))
+    await engine.waitForCreatePages(firstTabIDs.count + secondTabIDs.count)
+
+    firstStore.closeWindow()
+    firstStore.closeWindow()
+    await engine.waitForDestroyedPages(firstTabIDs.count)
+
+    let destroyedPageIDs = await engine.destroyedPageIDs()
+    #expect(Set(destroyedPageIDs) == firstTabIDs)
+    #expect(destroyedPageIDs.count == firstTabIDs.count)
+    #expect(Set(destroyedPageIDs).isDisjoint(with: secondTabIDs))
+
+    var savedSnapshot: BrowserSessionSnapshot?
+    for _ in 0..<100 {
+        savedSnapshot = try await persistence.load(windowID: firstWindowID)
+        if savedSnapshot != nil { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(Set(savedSnapshot?.tabs.map(\.id) ?? []) == firstTabIDs)
+    #expect(try await persistence.load(windowID: secondWindowID) == nil)
+
+    secondStore.closeWindow()
+    await engine.waitForDestroyedPages(firstTabIDs.count + secondTabIDs.count)
+    var secondSnapshot = try await persistence.load(windowID: secondWindowID)
+    for _ in 0..<100 where secondSnapshot == nil {
+        try? await Task.sleep(for: .milliseconds(5))
+        secondSnapshot = try await persistence.load(windowID: secondWindowID)
+    }
+    #expect(Set(secondSnapshot?.tabs.map(\.id) ?? []) == secondTabIDs)
+}
+
+@Test("Closing during startup restore preserves the previously saved window")
+@MainActor
+func closingWindowDuringRestoreDoesNotOverwriteSnapshot() async throws {
+    let engine = RecordingBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.CloseDuringRestore.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
+    let windowID = UUID()
+    let persistedSnapshot = testSnapshot(windowID: windowID, title: "Persisted")
+    try await persistence.save(persistedSnapshot)
+
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    let placeholderTabIDs = Set(store.tabs.map(\.id))
+    #expect(store.isRestoringSession)
+
+    store.closeWindow()
+    await engine.waitForDestroyedPages(placeholderTabIDs.count)
+
+    let reloadedSnapshot = try await persistence.load(windowID: windowID)
+    let reloadedTabIDs = Set(reloadedSnapshot?.tabs.map(\.id) ?? [])
+    #expect(reloadedSnapshot == persistedSnapshot)
+    #expect(reloadedTabIDs.isDisjoint(with: placeholderTabIDs))
+}
+
+@Test("Closing a secondary window deletes its persisted session after pending saves")
+@MainActor
+func closingSecondaryWindowDeletesPersistedSession() async throws {
+    let engine = RecordingBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.DeleteClosedWindow.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let windowID = UUID()
+    try await persistence.save(testSnapshot(windowID: windowID, title: "Secondary"))
+
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    let tabIDs = Set(store.tabs.map(\.id))
+    store.flushSession()
+    store.closeWindow(removingPersistedSession: true)
+    await engine.waitForDestroyedPages(tabIDs.count)
+
+    var sessions = try await persistence.loadAllWindows()
+    for _ in 0..<100 where sessions.contains(where: { $0.id == windowID }) {
+        try? await Task.sleep(for: .milliseconds(5))
+        sessions = try await persistence.loadAllWindows()
+    }
+    #expect(!sessions.contains(where: { $0.id == windowID }))
+    #expect(try await persistence.load(windowID: windowID) == nil)
+}
+
+@Test("Window persistence distinguishes manual secondary close from app termination")
+@MainActor
+func windowPersistenceCloseSemantics() {
+    let primaryWindowID = UUID()
+    let secondaryWindowID = UUID()
+
+    #expect(!RexWindowCoordinator.shouldRemovePersistedSession(
+        for: primaryWindowID,
+        primaryWindowID: primaryWindowID,
+        profile: .standard,
+        applicationIsTerminating: false
+    ))
+    #expect(RexWindowCoordinator.shouldRemovePersistedSession(
+        for: secondaryWindowID,
+        primaryWindowID: primaryWindowID,
+        profile: .standard,
+        applicationIsTerminating: false
+    ))
+    #expect(!RexWindowCoordinator.shouldRemovePersistedSession(
+        for: secondaryWindowID,
+        primaryWindowID: primaryWindowID,
+        profile: .standard,
+        applicationIsTerminating: true
+    ))
+    #expect(!RexWindowCoordinator.shouldRemovePersistedSession(
+        for: secondaryWindowID,
+        primaryWindowID: primaryWindowID,
+        profile: .privateWindow(),
+        applicationIsTerminating: false
+    ))
+}
+
+@Test("Browser store deinit destroys pages when no window hook runs")
+@MainActor
+func browserStoreDeinitTearsDownPages() async {
+    let engine = RecordingBrowserEngine()
+    var store: BrowserStore? = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(),
+            legacyPersistence: nil
+        )
+    )
+    let tabIDs = Set(store?.tabs.map(\.id) ?? [])
+    await engine.waitForCreatePages(tabIDs.count)
+    weak let weakStore = store
+
+    store = nil
+
+    #expect(weakStore == nil)
+    await engine.waitForDestroyedPages(tabIDs.count)
+    let destroyedPageIDs = await engine.destroyedPageIDs()
+    #expect(Set(destroyedPageIDs) == tabIDs)
+    #expect(destroyedPageIDs.count == tabIDs.count)
 }
 
 private func testSnapshot(windowID: UUID = UUID(), title: String = "Example") -> BrowserSessionSnapshot {
@@ -1346,6 +1545,221 @@ func loadingEventsWithoutURLPreserveRestoredAddress() async throws {
     await engine.finish()
 }
 
+@Test("Legacy Chromium extension state migrates to Rex URLs")
+@MainActor
+func legacyChromiumExtensionStateMigratesToRexURLs() async throws {
+    let runtimeID = "abcdefghijklmnopabcdefghijklmnop"
+    let chromiumURL = try #require(URL(
+        string: "chrome-extension://\(runtimeID)/pages/options.html"
+    ))
+    let rexURL = try #require(URL(
+        string: "rex-extension://\(runtimeID)/pages/options.html"
+    ))
+    let chromiumOrigin = "chrome-extension://\(runtimeID)"
+    let rexOrigin = "rex-extension://\(runtimeID)"
+    let suiteName = "RexTests.LegacyExtensionState.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let windowID = UUID()
+    let space = BrowserSpace(
+        id: UUID(),
+        name: "扩展测试",
+        symbolName: "puzzlepiece.extension",
+        tintHex: "48A9A6",
+        privacyLevel: .standard,
+        downloadDirectoryBookmark: nil
+    )
+    let primary = BrowserTab(
+        url: chromiumURL,
+        title: chromiumURL.absoluteString,
+        spaceID: space.id
+    )
+    let secondary = BrowserTab(
+        url: URL(string: "https://example.com"),
+        title: "Example",
+        spaceID: space.id
+    )
+    let split = SplitViewSession(
+        primaryTabID: primary.id,
+        secondaryTabID: secondary.id,
+        spaceID: space.id
+    )
+    let snapshot = BrowserSessionSnapshot(
+        schemaVersion: BrowserSessionSnapshot.schemaVersion,
+        windowID: windowID,
+        spaces: [space],
+        tabs: [primary, secondary],
+        currentSpaceID: space.id,
+        selectedTabID: primary.id,
+        splitSession: split,
+        splitPaneStates: [
+            SplitPaneState(
+                pane: .primary,
+                tabID: primary.id,
+                navigation: NavigationState(
+                    url: chromiumURL,
+                    title: chromiumURL.absoluteString
+                ),
+                scrollPosition: 0,
+                isMuted: false
+            ),
+            SplitPaneState(
+                pane: .secondary,
+                tabID: secondary.id,
+                navigation: NavigationState(
+                    url: secondary.url,
+                    title: secondary.title
+                ),
+                scrollPosition: 0,
+                isMuted: false
+            )
+        ],
+        savedAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    let history = BrowserHistoryEntry(
+        url: chromiumURL,
+        title: chromiumURL.absoluteString
+    )
+    let bookmark = BrowserBookmark(
+        url: chromiumURL,
+        title: chromiumURL.absoluteString
+    )
+    let download = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: chromiumURL,
+        suggestedFilename: "export.json",
+        receivedBytes: 10,
+        expectedBytes: 10,
+        state: .completed,
+        createdAt: Date(timeIntervalSince1970: 1_700_000_010)
+    )
+    let permission = WebsitePermission(
+        id: UUID(),
+        profileID: BrowserProfile.standard.id,
+        topLevelOrigin: chromiumOrigin,
+        requestingOrigin: chromiumOrigin,
+        kind: .clipboard,
+        decision: .allowAlways,
+        tabID: nil,
+        expiresAt: nil,
+        updatedAt: Date(timeIntervalSince1970: 1_700_000_020)
+    )
+    try await persistence.save(snapshot)
+    try await persistence.addHistory(history)
+    try await persistence.saveBookmark(bookmark)
+    try await persistence.saveDownload(download)
+    try await persistence.savePermission(permission)
+
+    let engine = ControlledBrowserEngine()
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    await engine.waitForSubscriber()
+    for _ in 0..<200 {
+        if !store.isRestoringSession,
+           store.history.contains(where: { $0.id == history.id }),
+           store.bookmarks.contains(where: { $0.id == bookmark.id }),
+           store.downloads.contains(where: { $0.id == download.id }),
+           store.permissions.contains(where: { $0.id == permission.id }) {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+
+    #expect(store.currentTab?.url == rexURL)
+    #expect(store.currentTab?.title == rexURL.absoluteString)
+    #expect(store.addressText == rexURL.absoluteString)
+    #expect(store.navigationStates[primary.id]?.url == rexURL)
+    #expect(store.navigationStates[primary.id]?.title == rexURL.absoluteString)
+    #expect(store.history.first(where: { $0.id == history.id })?.url == rexURL)
+    #expect(store.bookmarks.first(where: { $0.id == bookmark.id })?.url == rexURL)
+    #expect(store.downloads.first(where: { $0.id == download.id })?.sourceURL == rexURL)
+    #expect(store.permissions.first(where: { $0.id == permission.id })?.topLevelOrigin
+        == rexOrigin)
+    #expect(store.permissions.first(where: { $0.id == permission.id })?.requestingOrigin
+        == rexOrigin)
+
+    #expect(try await persistence.load(windowID: windowID)?.tabs.first?.url == rexURL)
+    #expect(try await persistence.history().first(where: { $0.id == history.id })?.url
+        == rexURL)
+    #expect(try await persistence.bookmarks().first(where: { $0.id == bookmark.id })?.url
+        == rexURL)
+    #expect(try await persistence.downloads().first(where: { $0.id == download.id })?.sourceURL
+        == rexURL)
+    #expect(try await persistence.permissions(profileID: BrowserProfile.standard.id)
+        .first(where: { $0.id == permission.id })?.topLevelOrigin == rexOrigin)
+    await engine.finish()
+}
+
+@Test("Runtime events cannot expose Chromium extension values")
+@MainActor
+func runtimeEventsCannotExposeChromiumExtensionValues() async throws {
+    let runtimeID = "abcdefghijklmnopabcdefghijklmnop"
+    let chromiumURL = try #require(URL(
+        string: "chrome-extension://\(runtimeID)/popup.html"
+    ))
+    let rexURL = try #require(URL(
+        string: "rex-extension://\(runtimeID)/popup.html"
+    ))
+    let engine = ControlledBrowserEngine()
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(),
+            legacyPersistence: nil
+        )
+    )
+    await engine.waitForSubscriber()
+    let tabID = store.selectedTabID
+    let requestID = UUID()
+    let downloadID = UUID()
+
+    await engine.emit(.titleChanged(
+        tabID: tabID,
+        title: chromiumURL.absoluteString
+    ))
+    await engine.emit(.permissionRequested(
+        tabID: tabID,
+        request: WebsitePermissionRequest(
+            id: requestID,
+            topLevelOrigin: "chrome-extension://\(runtimeID)",
+            requestingOrigin: "chrome-extension://\(runtimeID)",
+            kinds: [.clipboard],
+            requestedAt: .now
+        )
+    ))
+    await engine.emit(.downloadUpdated(
+        tabID: tabID,
+        download: BrowserDownloadTask(
+            id: downloadID,
+            sourceURL: chromiumURL,
+            suggestedFilename: "settings.json",
+            receivedBytes: 0,
+            expectedBytes: nil,
+            state: .downloading,
+            createdAt: .now
+        )
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(store.currentTab?.title == rexURL.absoluteString)
+    #expect(store.pendingPermissionPrompts.first(where: { $0.id == requestID })?
+        .request.topLevelOrigin == "rex-extension://\(runtimeID)")
+    #expect(store.pendingPermissionPrompts.first(where: { $0.id == requestID })?
+        .request.requestingOrigin == "rex-extension://\(runtimeID)")
+    #expect(store.downloads.first(where: { $0.id == downloadID })?.sourceURL == rexURL)
+    await engine.finish()
+}
+
 @Test("Address commands wait for page setup and preserve submission order")
 @MainActor
 func addressCommandsPreserveSubmissionOrder() async {
@@ -1758,23 +2172,63 @@ func blockedResourceEventsUpdatePrivacyReport() async throws {
     await engine.waitForSubscriber()
     let tabID = store.selectedTabID
     let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
-    let ad = BlockedResource(
-        id: UUID(), category: .advertisement, host: "doubleclick.net", count: 1, timestamp: timestamp
+    let firstAd = BlockedResource(
+        id: UUID(),
+        category: .advertisement,
+        host: "doubleclick.net",
+        count: 1,
+        timestamp: timestamp
+    )
+    let secondAd = BlockedResource(
+        id: UUID(),
+        category: .advertisement,
+        host: "doubleclick.net",
+        count: 1,
+        timestamp: timestamp
     )
     let tracker = BlockedResource(
         id: UUID(), category: .tracker, host: "google-analytics.com", count: 2, timestamp: timestamp
     )
 
-    await engine.emit(.resourceBlocked(tabID: tabID, resource: ad))
+    await engine.emit(.resourceBlocked(tabID: tabID, resource: firstAd))
+    await engine.emit(.resourceBlocked(tabID: tabID, resource: secondAd))
     await engine.emit(.resourceBlocked(tabID: tabID, resource: tracker))
     try? await Task.sleep(for: .milliseconds(10))
 
     let report = store.privacyReport(for: store.currentTab)
-    #expect(store.currentTab?.privacyState.blockedCount == 15)
-    #expect(report.adsBlocked == 1)
+    #expect(store.currentTab?.privacyState.blockedCount == 16)
+    #expect(report.adsBlocked == 2)
     #expect(report.trackersBlocked == 2)
-    #expect(report.totalBlocked == 3)
+    #expect(report.totalBlocked == 4)
     #expect(report.resources.count == 2)
+    await engine.finish()
+}
+
+@Test("Renderer navigation cannot expose an unavailable extension origin")
+@MainActor
+func rendererNavigationCannotExposeUnavailableExtensionOrigin() async throws {
+    let engine = ControlledBrowserEngine()
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+        )
+    )
+    await engine.waitForSubscriber()
+    let tabID = store.selectedTabID
+    let originalURL = store.currentTab?.url
+    let internalURL = try #require(RexExtensionResourceURL(
+        runtimeID: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        relativePath: "options.html"
+    )?.rexURL)
+
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(url: internalURL)
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(store.currentTab?.url == originalURL)
     await engine.finish()
 }
 

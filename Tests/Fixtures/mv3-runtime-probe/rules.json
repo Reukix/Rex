@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "rex-mv3-dnr-blocked",
+      "resourceTypes": [
+        "xmlhttprequest"
+      ]
+    }
+  }
+]

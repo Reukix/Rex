@@ -159,6 +159,23 @@ enum BrowserExtensionCatalog {
         return URL(string: "https://\(sourceHost)/search/\(encoded)")
     }
 
+    static func extensionID(fromWebStoreInput input: String) -> String? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isValidChromeExtensionID(trimmed) {
+            return trimmed
+        }
+        guard let url = URL(string: trimmed),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == sourceHost,
+              url.user == nil,
+              url.password == nil else {
+            return nil
+        }
+        return url.pathComponents
+            .reversed()
+            .first(where: isValidChromeExtensionID)
+    }
+
     static func isValidChromeExtensionID(_ value: String) -> Bool {
         value.count == 32 && value.allSatisfy { "a"..."p" ~= $0 }
     }

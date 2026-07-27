@@ -50,6 +50,13 @@ struct BrowserWindowChromeState: Equatable {
 
 /// Chrome fills and strokes that stay visible in both appearances. The former
 /// fixed `.white.opacity` values were nearly invisible in light mode.
+enum RexChromeStrokeLevel {
+    case subtle
+    case standard
+    case emphasized
+    case panel
+}
+
 enum RexChromeColor {
     static func fill(_ scheme: ColorScheme, pressed: Bool = false, hovered: Bool = false) -> Color {
         let base: Double = pressed ? 0.16 : (hovered ? 0.12 : 0.07)
@@ -70,6 +77,80 @@ enum RexChromeColor {
             return scheme == .dark ? .white.opacity(0.55) : .black.opacity(0.55)
         }
         return scheme == .dark ? .white.opacity(0.2) : .black.opacity(0.1)
+    }
+
+    static func stroke(
+        _ scheme: ColorScheme,
+        level: RexChromeStrokeLevel,
+        increasedContrast: Bool = false
+    ) -> Color {
+        let base = scheme == .dark ? Color.white : Color.black
+        return base.opacity(strokeOpacity(
+            scheme,
+            level: level,
+            increasedContrast: increasedContrast
+        ))
+    }
+
+    static func strokeOpacity(
+        _ scheme: ColorScheme,
+        level: RexChromeStrokeLevel,
+        increasedContrast: Bool = false
+    ) -> Double {
+        if increasedContrast { return 0.55 }
+
+        return switch (scheme, level) {
+        case (.dark, .subtle): 0.08
+        case (.dark, .standard): 0.1
+        case (.dark, .emphasized): 0.26
+        case (.dark, .panel): 0.2
+        case (.light, .subtle): 0.11
+        case (.light, .standard): 0.16
+        case (.light, .emphasized): 0.24
+        case (.light, .panel): 0.18
+        @unknown default: 0.16
+        }
+    }
+}
+
+private struct RexChromeBorderModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    let cornerRadius: CGFloat
+    let level: RexChromeStrokeLevel
+    let lineWidth: CGFloat
+
+    func body(content: Content) -> some View {
+        let increasedContrast = contrast == .increased
+
+        content.overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    RexChromeColor.stroke(
+                        colorScheme,
+                        level: level,
+                        increasedContrast: increasedContrast
+                    ),
+                    lineWidth: increasedContrast ? max(lineWidth, 1.5) : lineWidth
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+extension View {
+    func rexChromeBorder(
+        cornerRadius: CGFloat,
+        level: RexChromeStrokeLevel = .standard,
+        lineWidth: CGFloat = 0.75
+    ) -> some View {
+        modifier(RexChromeBorderModifier(
+            cornerRadius: cornerRadius,
+            level: level,
+            lineWidth: lineWidth
+        ))
     }
 }
 

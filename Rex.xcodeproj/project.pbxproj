@@ -15,6 +15,7 @@
 		1BC6C0A139B22390A8D27CB6 /* SearchEngineBrandIcons-ATTRIBUTION.txt in Resources */ = {isa = PBXBuildFile; fileRef = D254B9786E3E2D0DB5E25263 /* SearchEngineBrandIcons-ATTRIBUTION.txt */; };
 		1E56805C5440CA42A101C2C2 /* BrowserStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF1D969540ACBDB45304BF99 /* BrowserStore.swift */; };
 		222E26899C5C7D3753053013 /* ProcessMetricsMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 160AC1FA4E46A8FA0FC08422 /* ProcessMetricsMonitor.swift */; };
+		24F66CD3E75045DFF9EE9C4E /* ChromeWebStoreInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C648C0706B3382C68D8B45 /* ChromeWebStoreInstaller.swift */; };
 		308B91D1132FC63E2643AC68 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9099605FB0BCB5705F056B01 /* LiquidGlass.swift */; };
 		30C85F4D9833AF2B656CAF5C /* BrowserLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE91874D049A762CE9F17D3 /* BrowserLibraryView.swift */; };
 		320A3046317E8740D6BCCBD9 /* BrowserSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB07F70356B03CF1E5E2A9E /* BrowserSettingsView.swift */; };
@@ -27,8 +28,10 @@
 		8B2E6D4CDC6A5775D5F43097 /* BrowserExtensionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */; };
 		97287CCA06D3A100ADB6A4C6 /* releases.json in Resources */ = {isa = PBXBuildFile; fileRef = C4299FF5C50A93B3ED6D35ED /* releases.json */; };
 		A13F9576CFBE234A99BCFD49 /* ChromiumBrowserEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FD733807F1487E4BC02F00D /* ChromiumBrowserEngine.swift */; };
+		A18C086C8F1AD42E713A4DB0 /* RexExtensionPageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90DD5D5C922170AB6188BD7 /* RexExtensionPageView.swift */; };
 		A281DECC5A3F6852988D4C43 /* ReleaseNotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE2ABACBE076FE65A7024A0 /* ReleaseNotesView.swift */; };
 		A397DDAC631DEDCA9F01D34E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F612CB12FCF1169F05E6ADB8 /* Assets.xcassets */; };
+		A53FB520EAD4600EDB42E382 /* RexExtensionPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = E580641D8D9EB60F123950C3 /* RexExtensionPages.swift */; };
 		AA5569E2630FC26A66FC857A /* BrowserExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */; };
 		C143AB94D376C2BBE0E8E466 /* ReleaseNotesModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */; };
 		C948AFA13B2EAE9C5C11D22A /* BrowserSessionPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E616930673BBF6FF7361F2 /* BrowserSessionPersistence.swift */; };
@@ -45,6 +48,7 @@
 		23FBE7068E79A7526CCAED00 /* BrowserPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPreferences.swift; sourceTree = "<group>"; };
 		28D1947BF1E8D6EDF090D11A /* PerformanceMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceMonitorView.swift; sourceTree = "<group>"; };
 		2FD733807F1487E4BC02F00D /* ChromiumBrowserEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromiumBrowserEngine.swift; sourceTree = "<group>"; };
+		32C648C0706B3382C68D8B45 /* ChromeWebStoreInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromeWebStoreInstaller.swift; sourceTree = "<group>"; };
 		33630E1B8BA956063CAD60FA /* BrowserRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserRootView.swift; sourceTree = "<group>"; };
 		35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExtensionsView.swift; sourceTree = "<group>"; };
 		3DD5C5C705944BE85DA3522A /* PermissionCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionCenterView.swift; sourceTree = "<group>"; };
@@ -60,6 +64,7 @@
 		927E3936775E7B5569F83267 /* RexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexApp.swift; sourceTree = "<group>"; };
 		A4E616930673BBF6FF7361F2 /* BrowserSessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSessionPersistence.swift; sourceTree = "<group>"; };
 		A6F6DC07D472666EAD96CEB5 /* PrivacyShieldView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyShieldView.swift; sourceTree = "<group>"; };
+		A90DD5D5C922170AB6188BD7 /* RexExtensionPageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexExtensionPageView.swift; sourceTree = "<group>"; };
 		AA89EAF683D419D7D907A5DF /* BrowserSQLitePersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSQLitePersistence.swift; sourceTree = "<group>"; };
 		ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExtensionModels.swift; sourceTree = "<group>"; };
 		BCF6C19E2C63D18F4DCC2A2F /* SiteSecurityModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteSecurityModels.swift; sourceTree = "<group>"; };
@@ -68,6 +73,7 @@
 		CFE91874D049A762CE9F17D3 /* BrowserLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLibraryView.swift; sourceTree = "<group>"; };
 		D254B9786E3E2D0DB5E25263 /* SearchEngineBrandIcons-ATTRIBUTION.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "SearchEngineBrandIcons-ATTRIBUTION.txt"; sourceTree = "<group>"; };
 		DBCF09462E6A7F0422B8603F /* features.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = features.json; sourceTree = "<group>"; };
+		E580641D8D9EB60F123950C3 /* RexExtensionPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexExtensionPages.swift; sourceTree = "<group>"; };
 		EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesModels.swift; sourceTree = "<group>"; };
 		EF1D969540ACBDB45304BF99 /* BrowserStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserStore.swift; sourceTree = "<group>"; };
 		F612CB12FCF1169F05E6ADB8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -208,7 +214,9 @@
 				ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */,
 				5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */,
 				23FBE7068E79A7526CCAED00 /* BrowserPreferences.swift */,
+				32C648C0706B3382C68D8B45 /* ChromeWebStoreInstaller.swift */,
 				836F21B4FF1171FA09A5D56F /* NewTabFavorites.swift */,
+				E580641D8D9EB60F123950C3 /* RexExtensionPages.swift */,
 				BCF6C19E2C63D18F4DCC2A2F /* SiteSecurityModels.swift */,
 			);
 			path = Domain;
@@ -226,6 +234,7 @@
 			isa = PBXGroup;
 			children = (
 				35995D9DD731355D6FFCA747 /* BrowserExtensionsView.swift */,
+				A90DD5D5C922170AB6188BD7 /* RexExtensionPageView.swift */,
 			);
 			path = Extensions;
 			sourceTree = "<group>";
@@ -407,6 +416,7 @@
 				320A3046317E8740D6BCCBD9 /* BrowserSettingsView.swift in Sources */,
 				1B11BA202DE0B4FE4852A8F6 /* BrowserSidebar.swift in Sources */,
 				1E56805C5440CA42A101C2C2 /* BrowserStore.swift in Sources */,
+				24F66CD3E75045DFF9EE9C4E /* ChromeWebStoreInstaller.swift in Sources */,
 				A13F9576CFBE234A99BCFD49 /* ChromiumBrowserEngine.swift in Sources */,
 				308B91D1132FC63E2643AC68 /* LiquidGlass.swift in Sources */,
 				0AF632507BE80B446D06EE5F /* NewTabFavorites.swift in Sources */,
@@ -417,6 +427,8 @@
 				C143AB94D376C2BBE0E8E466 /* ReleaseNotesModels.swift in Sources */,
 				A281DECC5A3F6852988D4C43 /* ReleaseNotesView.swift in Sources */,
 				44A0F4A1FE7CCA54F062D269 /* RexApp.swift in Sources */,
+				A18C086C8F1AD42E713A4DB0 /* RexExtensionPageView.swift in Sources */,
+				A53FB520EAD4600EDB42E382 /* RexExtensionPages.swift in Sources */,
 				161D70C4E2715D2B958387EE /* SiteSecurityModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -430,7 +442,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 900;
+				CURRENT_PROJECT_VERSION = 940;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -446,7 +458,7 @@
 					"$(PROJECT_DIR)/.build/rex-chromium",
 					"$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper",
 				);
-				MARKETING_VERSION = 0.9.0;
+				MARKETING_VERSION = 0.9.4;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -542,7 +554,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 900;
+				CURRENT_PROJECT_VERSION = 940;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -558,7 +570,7 @@
 					"$(PROJECT_DIR)/.build/rex-chromium",
 					"$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper",
 				);
-				MARKETING_VERSION = 0.9.0;
+				MARKETING_VERSION = 0.9.4;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",

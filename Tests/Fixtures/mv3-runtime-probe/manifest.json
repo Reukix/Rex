@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Rex MV3 Runtime Probe",
+  "version": "1.0.0",
+  "description": "Self-reporting black-box fixture for Rex's Chromium extension runtime.",
+  "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCzLTsXgMtgy3/PrumEdIHzNeLx9toMqzkbl6VKRg+1hUKwUFs+nh0Fsg4LHmVEmZeUlwQ4v5Fd+mGwTEgPCvAH3qbDAXeqeLcUdEAYlOaMvHxy1umSTo8N+TuS0s+0X/S29214QLD768J55cbbcNycmQhbBYwJOW+OgfZM6l4PWwIDAQAB",
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "probe_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
+}

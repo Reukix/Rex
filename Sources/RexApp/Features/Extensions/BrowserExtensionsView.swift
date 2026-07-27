@@ -12,29 +12,34 @@ struct BrowserExtensionsView: View {
         var displayName: String {
             switch self {
             case .discover: "发现"
-            case .installed: "已导入"
+            case .installed: "已安装"
             }
         }
     }
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: BrowserStore
     @ObservedObject private var extensionsStore = BrowserExtensionsStore.shared
     @State private var selectedSection: Section = .discover
     @State private var selectedFilter: BrowserExtensionCatalogFilter = .recommended
     @State private var searchText = ""
+    @State private var webStoreInput = ""
     @State private var presentedError: String?
     @State private var isImporting = false
     @State private var selectedCatalogItem: BrowserExtensionCatalogItem?
     @State private var pendingRemoval: BrowserExtensionPackage?
     @State private var shouldImportAfterClosingDetails = false
+    @State private var pendingRuntimePackageIDs = Set<String>()
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             browserControls
+                .disabled(extensionsStore.isRuntimeMutationInProgress)
             Divider()
             content
+                .disabled(extensionsStore.isRuntimeMutationInProgress)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .alert("扩展操作未完成", isPresented: Binding(
@@ -63,14 +68,18 @@ struct BrowserExtensionsView: View {
         ) {
             Button("移除", role: .destructive) {
                 guard let package = pendingRemoval else { return }
-                if !extensionsStore.remove(package.id) {
-                    presentedError = extensionsStore.lastError ?? "无法移除扩展。"
-                }
                 pendingRemoval = nil
+                Task { @MainActor in
+                    pendingRuntimePackageIDs.insert(package.id)
+                    defer { pendingRuntimePackageIDs.remove(package.id) }
+                    if !(await store.removeExtension(package.id)) {
+                        presentedError = extensionsStore.lastError ?? "无法移除扩展。"
+                    }
+                }
             }
             Button("取消", role: .cancel) { pendingRemoval = nil }
         } message: {
-            Text("Rex 管理目录中的扩展文件（若存在）将一并删除。")
+            Text("扩展会立即从 Chromium 卸载，Rex 管理目录中的扩展文件也会一并删除。")
         }
         .fileImporter(
             isPresented: $isImporting,
@@ -92,6 +101,9 @@ struct BrowserExtensionsView: View {
         }) { item in
             BrowserExtensionCatalogDetailView(
                 item: item,
+                onInstall: {
+                    installFromCatalog(item)
+                },
                 onImportLocal: {
                     shouldImportAfterClosingDetails = true
                     selectedCatalogItem = nil
@@ -117,7 +129,7 @@ struct BrowserExtensionsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Rex 扩展")
                     .font(.system(size: 16, weight: .semibold))
-                Text("精选目录链接至 Chrome Web Store，本地扩展由 Rex 独立管理")
+                Text("从 Chrome Web Store 直接安全安装，或导入本地扩展")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -235,6 +247,7 @@ struct BrowserExtensionsView: View {
                     }
                 }
 
+                webStoreDirectInstall
                 officialSearchAction
             }
             .padding(18)
@@ -247,7 +260,7 @@ struct BrowserExtensionsView: View {
                 compatibilityNotice
 
                 HStack {
-                    Text("本地扩展")
+                    Text("已安装扩展")
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
                     Text("\(extensionsStore.extensions.count) 个包")
@@ -257,10 +270,10 @@ struct BrowserExtensionsView: View {
 
                 if filteredInstalledExtensions.isEmpty {
                     ContentUnavailableView(
-                        searchText.isEmpty ? "尚未导入扩展" : "没有匹配的本地扩展",
+                        searchText.isEmpty ? "尚未安装扩展" : "没有匹配的扩展",
                         systemImage: "puzzlepiece.extension",
                         description: Text(searchText.isEmpty
-                            ? "请选择包含 manifest.json 的扩展源码文件夹。"
+                            ? "可从 Chrome Web Store 安装，或导入包含 manifest.json 的扩展文件夹。"
                             : "尝试其他名称、版本或权限关键词。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 220)
@@ -289,9 +302,9 @@ struct BrowserExtensionsView: View {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 4) {
-                Text("当前运行边界")
+                Text("Chromium 扩展运行时")
                     .font(.system(size: 12, weight: .semibold))
-                Text("Chrome Web Store 的“添加至 Chrome”不会安装到 Rex。CEF 150 没有公共扩展加载 API；本地导入可校验、保存、定位和移除包，但不会执行扩展代码。")
+                Text("Rex 会校验并管理扩展包，并与 Chromium 运行时即时同步。后台服务、内容脚本、Chrome API、DNR 与扩展页面均由扩展自身提供；兼容性取决于当前 Chromium 版本。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -303,50 +316,49 @@ struct BrowserExtensionsView: View {
     }
 
     private func catalogCard(_ item: BrowserExtensionCatalogItem) -> some View {
-        Button {
-            selectedCatalogItem = item
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Image(systemName: item.category.symbolName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 34, height: 34)
-                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-                        Text(item.category.displayName)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                selectedCatalogItem = item
+            } label: {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Image(systemName: item.category.symbolName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 34, height: 34)
+                            .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                            Text(item.category.displayName)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
                     }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+
+                    Text(item.summary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
                 }
-
-                Text(item.summary)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
-
-                Label(BrowserExtensionCatalog.sourceName, systemImage: "arrow.up.right.square")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.75)
-            }
+            .buttonStyle(.plain)
+            .accessibilityHint("查看扩展详情和官方商店链接")
+
+            Divider()
+
+            catalogInstallControl(item)
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("查看官方商店链接和兼容说明")
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .rexChromeBorder(cornerRadius: 8)
     }
 
     private func installedExtensionRow(_ package: BrowserExtensionPackage) -> some View {
@@ -368,6 +380,18 @@ struct BrowserExtensionsView: View {
                         .background(Color.primary.opacity(0.07), in: Capsule())
                     statusChip(package.runtimeStatus)
                     Spacer(minLength: 0)
+                    Toggle(
+                        "启用 \(package.name)",
+                        isOn: extensionEnabledBinding(for: package)
+                    )
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .disabled(
+                        [.invalidManifest, .missingFiles].contains(package.runtimeStatus)
+                            || pendingRuntimePackageIDs.contains(package.id)
+                    )
+                    .help(package.isEnabled ? "立即停用扩展" : "立即启用扩展")
                 }
 
                 if !package.description.isEmpty {
@@ -391,7 +415,18 @@ struct BrowserExtensionsView: View {
                 }
 
                 HStack(spacing: 8) {
-                    Label("仅保存包，不执行扩展代码", systemImage: "archivebox")
+                    Label(
+                        package.resolvedInstallationSource == .chromeWebStore
+                            ? package.runtimeStatus == .invalidManifest
+                                ? "Chrome Web Store 安装需要修复"
+                                : "Chrome Web Store 已验签安装"
+                            : "本地受管扩展包",
+                        systemImage: package.resolvedInstallationSource == .chromeWebStore
+                            ? package.runtimeStatus == .invalidManifest
+                                ? "exclamationmark.triangle"
+                                : "checkmark.seal"
+                            : "archivebox"
+                    )
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
 
@@ -406,6 +441,25 @@ struct BrowserExtensionsView: View {
                     }
 
                     Spacer(minLength: 8)
+
+                    if package.resolvedInstallationSource == .chromeWebStore,
+                       package.runtimeStatus == .invalidManifest,
+                       let storeID = package.storeID,
+                       BrowserExtensionCatalog.isValidChromeExtensionID(storeID) {
+                        Button {
+                            reinstallWebStorePackage(package, extensionID: storeID)
+                        } label: {
+                            if isInstalling(storeID) {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Label("重新安装", systemImage: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isInstalling(storeID))
+                        .help("重新下载并验证 Chrome Web Store 扩展")
+                    }
 
                     Button {
                         extensionsStore.revealInFinder(package.id)
@@ -427,10 +481,7 @@ struct BrowserExtensionsView: View {
         }
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.75)
-        }
+        .rexChromeBorder(cornerRadius: 8)
     }
 
     private func statusChip(_ status: BrowserExtensionPackage.RuntimeStatus) -> some View {
@@ -473,6 +524,111 @@ struct BrowserExtensionsView: View {
     }
 
     @ViewBuilder
+    private func catalogInstallControl(_ item: BrowserExtensionCatalogItem) -> some View {
+        let state = extensionsStore.catalogInstallState(for: item.id)
+        let isInstalled = extensionsStore.extensions.contains { $0.storeID == item.id }
+
+        HStack(spacing: 8) {
+            if let state, isActiveInstallPhase(state.phase) {
+                if let progress = state.progress {
+                    ProgressView(value: progress)
+                        .frame(maxWidth: 90)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(state.message)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if isInstalled {
+                Label("已安装到 Rex", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.green)
+            } else if state?.phase == .failed {
+                Label("上次安装未完成", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.orange)
+            } else {
+                Label(BrowserExtensionCatalog.sourceName, systemImage: "checkmark.seal")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                installFromCatalog(item)
+            } label: {
+                Label(
+                    state?.phase == .failed ? "重试" : "直接安装",
+                    systemImage: state?.phase == .failed ? "arrow.clockwise" : "square.and.arrow.down"
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(isInstalled || (state.map { isActiveInstallPhase($0.phase) } ?? false))
+        }
+    }
+
+    private var webStoreDirectInstall: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: "link.badge.plus")
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("从商店链接安装")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("支持 chromewebstore.google.com 详情链接或 32 位扩展 ID")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                TextField("粘贴 Chrome Web Store 链接或扩展 ID", text: $webStoreInput)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        installFromWebStoreInput()
+                    }
+
+                Button {
+                    installFromWebStoreInput()
+                } label: {
+                    Label("直接安装", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    parsedWebStoreInputID == nil
+                        || parsedWebStoreInputID.map(isInstalling) == true
+                )
+            }
+
+            if let extensionID = parsedWebStoreInputID,
+               let state = extensionsStore.catalogInstallState(for: extensionID) {
+                HStack(spacing: 8) {
+                    if isActiveInstallPhase(state.phase) {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: state.phase == .installed
+                            ? "checkmark.circle.fill"
+                            : "exclamationmark.triangle.fill")
+                            .foregroundStyle(state.phase == .installed ? .green : .orange)
+                    }
+                    Text(state.message)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .rexChromeBorder(cornerRadius: 8, level: .subtle)
+    }
+
+    @ViewBuilder
     private var officialSearchAction: some View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty, let url = BrowserExtensionCatalog.chromeWebStoreSearchURL(query: query) {
@@ -480,7 +636,7 @@ struct BrowserExtensionsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("查看完整官方目录")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Chrome Web Store 将在默认浏览器中打开，安装不会进入 Rex。")
+                    Text("在官方目录找到扩展后，可将详情链接粘贴到上方直接安装。")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -497,17 +653,101 @@ struct BrowserExtensionsView: View {
         }
     }
 
-    private func install(from url: URL) {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer {
-            if accessed { url.stopAccessingSecurityScopedResource() }
+    private var parsedWebStoreInputID: String? {
+        BrowserExtensionCatalog.extensionID(fromWebStoreInput: webStoreInput)
+    }
+
+    private func extensionEnabledBinding(
+        for package: BrowserExtensionPackage
+    ) -> Binding<Bool> {
+        Binding(
+            get: {
+                extensionsStore.extensions.first(where: { $0.id == package.id })?.isEnabled
+                    ?? package.isEnabled
+            },
+            set: { enabled in
+                Task { @MainActor in
+                    pendingRuntimePackageIDs.insert(package.id)
+                    defer { pendingRuntimePackageIDs.remove(package.id) }
+                    if !(await store.setExtensionEnabled(enabled, id: package.id)) {
+                        presentedError = extensionsStore.lastError ?? "无法同步扩展状态。"
+                    }
+                }
+            }
+        )
+    }
+
+    private func isActiveInstallPhase(_ phase: BrowserExtensionCatalogInstallPhase) -> Bool {
+        [.downloading, .verifying, .extracting, .importing].contains(phase)
+    }
+
+    private func isInstalling(_ extensionID: String) -> Bool {
+        extensionsStore.catalogInstallState(for: extensionID)
+            .map { isActiveInstallPhase($0.phase) }
+            ?? false
+    }
+
+    private func installFromCatalog(_ item: BrowserExtensionCatalogItem) {
+        Task { @MainActor in
+            do {
+                _ = try await store.installExtensionFromCatalog(item)
+            } catch is CancellationError {
+                return
+            } catch {
+                presentedError = error.localizedDescription
+            }
         }
-        do {
-            _ = try extensionsStore.installUnpacked(from: url)
-            selectedSection = .installed
-            searchText = ""
-        } catch {
-            presentedError = error.localizedDescription
+    }
+
+    private func installFromWebStoreInput() {
+        guard let extensionID = parsedWebStoreInputID else {
+            presentedError = ChromeWebStoreInstallError.invalidCatalogItem.localizedDescription
+            return
+        }
+        Task { @MainActor in
+            do {
+                _ = try await store.installExtensionFromWebStore(
+                    extensionID: extensionID
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                presentedError = error.localizedDescription
+            }
+        }
+    }
+
+    private func reinstallWebStorePackage(
+        _ package: BrowserExtensionPackage,
+        extensionID: String
+    ) {
+        Task { @MainActor in
+            do {
+                _ = try await store.installExtensionFromWebStore(
+                    extensionID: extensionID,
+                    displayName: package.name
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                presentedError = error.localizedDescription
+            }
+        }
+    }
+
+    private func install(from url: URL) {
+        Task { @MainActor in
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                _ = try await store.installUnpackedExtension(from: url)
+                selectedSection = .installed
+                searchText = ""
+            } catch {
+                presentedError = error.localizedDescription
+            }
         }
     }
 }
@@ -515,6 +755,7 @@ struct BrowserExtensionsView: View {
 private struct BrowserExtensionCatalogDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let item: BrowserExtensionCatalogItem
+    let onInstall: () -> Void
     let onImportLocal: () -> Void
 
     var body: some View {
@@ -550,16 +791,16 @@ private struct BrowserExtensionCatalogDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("官方来源：\(BrowserExtensionCatalog.sourceName)", systemImage: "checkmark.seal")
                     .font(.callout.weight(.semibold))
-                Text("官方页面将在默认浏览器中打开。页面上的“添加至 Chrome”只会安装到 Google Chrome，不会安装到 Rex。Rex 不抓取或重新分发商店安装包。")
+                Text("Rex 可直接从 Google 官方更新服务下载这个扩展，验证 CRX 身份与签名后保存到受管目录；扩展包不会由 Rex 镜像或重新分发。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Label("Rex 本地导入", systemImage: "folder.badge.plus")
+                Label("Rex 兼容方式", systemImage: "info.circle")
                     .font(.callout.weight(.semibold))
-                Text("如果开发者另行提供包含 manifest.json 的源码文件夹，可以导入并管理该文件夹。当前 CEF 运行时不会执行其中的扩展代码。")
+                Text("扩展安装或更新完成后会立即同步到 Chromium 运行时。静态 popup、options、后台服务、内容脚本与受支持的 Chrome API 来自扩展本体；Rex 提供安装、启停、列表、小型面板和页面入口。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -569,11 +810,19 @@ private struct BrowserExtensionCatalogDetailView: View {
 
             HStack {
                 Button {
+                    onInstall()
+                    dismiss()
+                } label: {
+                    Label("直接安装到 Rex", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
                     NSWorkspace.shared.open(item.officialURL)
                 } label: {
                     Label("打开 Chrome Web Store", systemImage: "arrow.up.right.square")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
 
                 Button {
                     onImportLocal()

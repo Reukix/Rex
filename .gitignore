@@ -4,6 +4,7 @@
 Vendor/CEF/
 Artifacts/
 Dist/
+/console.log
 DerivedData/
 *.xcuserstate
 xcuserdata/

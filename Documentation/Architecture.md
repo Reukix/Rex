@@ -4,7 +4,7 @@
 
 生产内核首选 CEF（Chromium Embedded Framework），原因是它提供可嵌入 API、多进程模型、DevTools 和相对可控的升级面。Content API 或自维护 Chromium 分支可获得最强控制，但每个 Chromium 大版本的合并、安全补丁和 macOS 签名成本显著更高，暂不作为 MVP 首选。
 
-目标基线：macOS 14+，仅支持 Apple Silicon（arm64），不生成通用二进制或 Intel 构建。v0.9.0 固定 CEF `150.0.14+g7c1aa68+chromium-150.0.7871.129`。版本策略为跟随 CEF 稳定分支，安全高危补丁目标 72 小时内完成评估和候选构建，常规大版本在上游稳定后一周内进入兼容测试。
+目标基线：macOS 14+，仅支持 Apple Silicon（arm64），不生成通用二进制或 Intel 构建。v0.9.4 固定 CEF standard `150.0.14+g7c1aa68+chromium-150.0.7871.129`。版本策略为跟随 CEF 稳定分支，安全高危补丁目标 72 小时内完成评估和候选构建，常规大版本在上游稳定后一周内进入兼容测试。
 
 ## 分层
 
@@ -17,16 +17,21 @@ flowchart TB
     Adapter["CEF Adapter ObjC++\n生命周期·frame·IPC"]
     Chromium["Chromium Processes\nBrowser·Renderer·GPU·Utility"]
     Persistence["SQLite / Keychain\n会话·历史·设置·机密"]
-    Rules["Curated Domain Catalog\n内置域名目录与请求分类"]
+    Extensions["Managed Extension Store\nCRX·Manifest·catalog"]
+    ExtensionControl["Extension Runtime Control\npipe CDP·generation barrier"]
+    ExtensionRuntime["Chromium Extension Runtime\nservice worker·content script·API·DNR"]
+    Rules["Rex Privacy Engine\n内置隐私目录"]
     UI --> Store --> Domain
     Store --> Bridge --> Adapter --> Chromium
     Store --> Persistence
+    UI --> Extensions --> ExtensionControl --> Adapter
+    Adapter --> ExtensionRuntime
     Adapter --> Rules
 ```
 
 SwiftUI 不拥有 Chromium 生命周期。稳定的 `NSView` 宿主由 AppKit 层创建并缓存，SwiftUI 只传递 frame、可见性和焦点。CEF 的 C++ API 由 Objective-C++ facade 包裹，再映射到 Swift `Sendable` 值和 `AsyncStream<BrowserEvent>`。
 
-v0.9.0 的窗口 chrome 由 AppKit 配置透明全尺寸标题栏，并从 `standardWindowButton` 的实际 frame 计算红黄绿按钮尾缘；SwiftUI 将 44 pt 单导航卡放在该尾缘加 8 pt 净空的右侧，性能指标是导航栏首项。全屏时不再预留窗口按钮区域，导航卡改用 8 pt 左边距。
+当前窗口 chrome 由 AppKit 配置透明全尺寸标题栏，并从 `standardWindowButton` 的实际 frame 计算红黄绿按钮尾缘；SwiftUI 将 44 pt 单导航卡放在该尾缘加 8 pt 净空的右侧，性能指标是导航栏首项。全屏时不再预留窗口按钮区域，导航卡改用 8 pt 左边距。Rex 保留自己的浏览器窗口、扩展列表、小型面板与管理界面，不显示 Chrome 自己的标签栏、地址栏或扩展管理页；小型面板直接加载扩展清单声明的静态 `default_popup`，options 等资源也直接来自安装包，内部在 `chrome-extension://` 安全源中执行，对外显示为 `rex-extension://`。
 
 ## 通信时序
 
@@ -54,6 +59,28 @@ sequenceDiagram
 
 `BrowserEngine` 负责实例创建/销毁、导航、缩放、查找、DevTools、崩溃恢复、页面优先级与事件流。Swift 层只发送 `BrowserCommand` 枚举；CEF 适配器为每种命令做长度、枚举、URL scheme、tab ownership 与隐私 profile 校验。禁止通用“执行 JavaScript/调用原生方法”桥。
 
+## v0.9.4 扩展运行时
+
+扩展安装和运行被拆成五个边界明确的层次：
+
+1. **可信包管理**：Swift 域层解析 Chrome Web Store URL/ID，限制下载来源与大小，验证 CRX2/CRX3 身份和签名，安全解包后与本地 Manifest V2/V3 文件夹一起保存到 Rex 受管目录。启动时每个包只执行一次完整文件树验证；名称与描述共享一次加载的 locale 字典。
+2. **身份与预期集合**：商店包读取时要求合法 store ID、有效 manifest 公钥，且公钥推导出的 Chromium runtime ID 必须与验签安装记录一致。Rex 为每次安装、启停、更新和移除生成受管路径与启用状态的预期集合；Chromium 返回的 ID、路径、版本和启用状态同时进入运行时观测数据。
+3. **无端口运行时控制**：Rex 在 `CefInitialize` 前为 Chromium 预留 fd 3/4 专用传输，并以 `--remote-debugging-pipe` 启动 browser process；browser-target `Extensions.getExtensions`、`Extensions.loadUnpacked` 与 `Extensions.uninstall` 只通过该本地通道调用。没有 TCP 监听端口，也不向普通网页或 page target 暴露 browser CDP 会话。
+4. **Chromium 原生执行**：后台 service worker、content script、runtime messaging、`chrome.storage.local`、DNR 与 options 等已支持资源页均来自扩展包并由 Chromium 执行。Rex 不解析规则后模拟扩展行为，也不维护任何扩展专用执行适配器。
+5. **Rex 产品外壳**：扩展发现、安装状态、列表、小型面板入口与管理界面由 Rex 实现；小型面板直接加载清单声明的静态 `default_popup`，options 等资源也直接来自已安装扩展包。执行边界仍使用 `chrome-extension://`，用户可见资源地址统一使用 `rex-extension://<runtime-id>/<包内路径>`。
+
+扩展运行时变更按 generation 串行执行。只有 `Extensions.getExtensions` 确认实际启用的受管路径与当前预期集合一致，generation 才完成；安装、启用、停用、手动更新和移除因此可以在当前进程生效。成功变更后，Rex 对活跃普通窗口中已加载的 HTTP(S) 页面各重载一次；休眠或冻结页面记录一次待处理重载并在恢复时执行，隐私窗口与内部页面不参与。失败 generation 不直接重载，只有随后成功提交的补偿 generation 才统一刷新。
+
+冷启动恢复不会把“`CefInitialize` 已返回”误作扩展就绪。恢复的 HTTP(S) browser 先保持 `about:blank` 与 pending URL；当前 generation 完成后才统一放行首次导航。预期集合为空时也必须先通过 CDP 清理 Chromium profile 中可能残留的受管 unpacked 扩展，不能直接绕过屏障。`chrome.tabs.create` 的转交路径只在主框架确定加载 `about:blank` 后才按空白目标处理，避免临时 Chrome browser 与 Rex 正式标签对同一 URL 分别导航。
+
+Swift 扩展事务由进程级异步门串行化，状态只由对应命令 completion 提交，不接受无关联 generation 的广播二次写入。同路径更新在目录换盘前原子写入 `runtime-replacements.json`，记录旧包、目标、备份和事务阶段；Chromium 确认后才提交并清理备份，确认前崩溃则在下次启动恢复上一版本。用户重新导入 Rex 受管目录自身时会显式传递强制重载路径，既有 JS/CSS 原地覆写无需依赖目录或 manifest stat 变化。多个普通窗口合并首次全量对账；窗口关闭会取消该窗口恢复、导航、休眠和事件任务，随后销毁其全部 Chromium 页面。
+
+真实 popup 内容由扩展包决定尺寸：非广告 fixture 为 `280×113`，显示 `Ready` 并与 service worker 完成消息交互；AdGuard 经相同通用路径调整为 `320×600`，分段交互有效，没有扩展专用执行适配器。普通 Rex UI 仍使用原有 Alloy 子视图嵌入，没有网页裁剪、负偏移或 Chrome 顶层窗口覆盖。未托管的 Chrome extension popup/auxiliary window 会把普通网页目标转交 Rex，再关闭辅助窗口。
+
+Rex 小型面板不触发 Chromium 原生 action popup。stock CEF 150 的 Alloy 嵌入路径没有 Chrome 活动窗口/标签模型，因此当前不提供 `activeTab` 授权或 `chrome.tabs` 当前窗口语义，也不支持未声明静态 `default_popup` 时的 `action.onClicked` 和运行时 `action.setPopup` 动态变更。这些限制意味着核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容。
+
+Rex 源码和主可执行文件不包含 `SystemPasswordsCoordinator` 或 `AuthenticationServices` 依赖，不实现系统密码调用。打包门槛会拒绝 Rex 主 executable 链接该 framework 或 App 包含任何 `.systemextension`，并在 `PACKAGE-INFO.txt` 写入 `rex_password_integration=absent`。上游 Chromium Embedded Framework 自身仍链接该系统 framework，因此 bundle 级依赖审计不能据此声称完全不存在 `AuthenticationServices`。
+
 ## 工程目录
 
 ```text
@@ -77,20 +104,21 @@ Sources/RexApp/
 ## CEF 集成和发布限制
 
 - CEF 主 Helper、Alerts、GPU、Plugin 与 Renderer 五个进程包分别生成；本地 Debug 包不执行分发签名。当前启用 Chromium sandbox，不启用 Mac App Store App Sandbox。
-- CEF 150 最小发行包不包含 `CefExtension` / `LoadExtension` 类 API，因此不承诺 Chrome Web Store 直接安装、自动更新或完整 Manifest V3 运行时。
+- CEF 150 使用官方 standard ARM64 发行包。Rex 在应用层实现 Chrome Web Store CRX 下载、身份/签名校验、安全解包、受管安装和产品外壳；真实扩展包由 Chromium 执行，运行集合经内部 pipe 热同步。当前验证范围覆盖 MV3 核心运行链，但不承诺每个 Chrome Web Store 扩展、全部 Chrome API 或商店自动更新均兼容。
 - Mac App Store 的 App Sandbox、可执行代码和更新机制可能与 Chromium 分发方式冲突；优先规划 Developer ID 签名、公证和 Sparkle 类差分更新，App Store 作为独立可行性研究。
 - CEF 二进制体积、通用架构构建、编解码器专利和 Widevine 分发必须单独评估。
 - Swift Package 的 `PrototypeWebSurface` 仅用于无 Xcode 环境下的 UI 验证；`Rex.xcodeproj` 使用 `ChromiumBrowserSurface` 和固定 CEF runtime。
 
 
-## v0.9.0 隐私、性能与开发者工具
+## v0.9.4 隐私、性能与开发者工具
 
 Rex 在固定 CEF 预编译运行时之上叠加可审计的隐私分类与性能参数：
 
 1. **性能层**（Thorium 风格）：`ChromiumBridge/Privacy/RexThoriumFlags` 在浏览器/子进程启动参数注入 GPU、网络与进程策略优化。
 2. **顶层导航隐私层**：Swift `PrivacyURLPolicy` 在地址栏导航和 Rex 接管的弹窗导航中删除已知追踪参数，并把符合条件的 HTTP URL 改为 HTTPS 尝试；特定 TLS 不可用错误可回退到原 HTTP URL。该层不改写 CEF 自行发起的子资源请求。
-3. **CEF 子资源隐私层**：`RexPrivacyEngine` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目。标准模式匹配第三方广告/追踪；指纹保护默认为开启，因此标准模式也匹配第三方已知指纹服务。严格模式追加社交目录；Swift 的自定义模式映射为 CEF aggressive，允许广告/追踪目录匹配第一方请求，并仅对第三方请求使用路径启发式。主框架导航永不在此层取消；无法判断第一方时放行。命中项由 `OnBeforeResourceLoad` 返回 `RV_CANCEL`。
+3. **CEF 子资源隐私层**：`RexPrivacyEngine` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目。标准模式匹配第三方广告/追踪；指纹保护默认为开启，因此标准模式也匹配第三方已知指纹服务。严格模式追加社交目录；Swift 的自定义模式映射为 CEF aggressive，允许广告/追踪目录匹配第一方请求，并仅对第三方请求使用路径启发式。主框架导航永不在此层取消；无法判断第一方时放行。命中项由 `OnBeforeResourceLoad` 返回 `RV_CANCEL`。扩展 DNR 由 Chromium 扩展运行时独立执行，不合并到此目录。
 4. **Cookie 层**：第三方 Cookie 限制通过 CEF RequestContext/profile 的 `profile.cookie_controls_mode` 全局设置执行，而非每标签 `CanSendCookie`/`CanSaveCookie` 回调。单个标签页关闭盾牌不会关闭全局 Cookie 限制。
+5. **扩展管理性能**：受管扩展启动时只完整扫描一次；启停只更新内存运行状态。单次 manifest 解析只读取一次本地化消息字典，Chrome Web Store 下载中的进度约每 80 毫秒合并发布一次，终态不延迟。
 
 第一方判断使用当前 C++ 实现的有限 registrable-domain 启发式和少量常见二级后缀，不是完整 PSL/eTLD+1 实现。当前也没有 EasyList、自定义规则订阅、恶意网站检测、Safe Browsing 或通用 Canvas/WebGL 指纹随机化。
 

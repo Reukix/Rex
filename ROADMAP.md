@@ -1,6 +1,6 @@
 # Rex 路线图
 
-最后更新：2026-07-27
+最后更新：2026-07-28
 
 ## 已完成 — v0.1.0-alpha.1
 
@@ -93,6 +93,48 @@
 - ✅ 本地扩展管理器完成 MV2/MV3 清单校验、本地化文本、图标、权限、安全复制/更新/回滚、缺失状态和安全移除；运行时不可用时不显示无效启用开关。
 - ✅ `Dist` 改为只保留当前发布产物，历史构建信息继续保存在 CHANGELOG 和版本文档。
 
+## 已完成 — v0.9.1（build 910）
+
+- ✅ 重做版本与功能 UI：发布概览、运行环境、功能状态/分类筛选、已知限制和历史版本使用独立信息层级。
+- ✅ CEF 供应链切换为 150.0.14 官方 standard ARM64 发行包，重新锁定官方 SHA-1 与本地 SHA-256。
+- ✅ Chrome Web Store 精选条目支持一键直接安装，也可粘贴任意官方详情链接或扩展 ID。
+- ✅ 商店 CRX2/CRX3 执行来源限制、下载大小限制、扩展 ID/签名验证、安全 ZIP 解包和受管更新。
+- ✅ 扩展安装来源与商店 ID 持久化，界面展示下载、验证、解包、安装、失败和重试状态。
+- ✅ 深浅色模式下浏览器面板、标签和分屏内容边界统一使用自适应描边层级。
+
+## 已完成 — v0.9.2（build 920）
+
+- ✅ Rex 提供通用扩展列表、小型面板与管理界面；扩展行支持整行点击，小型面板直接加载清单声明的静态 `default_popup`，真实包内页面对外使用 `rex-extension://`。
+- ✅ Chrome Web Store CRX2/CRX3 下载、身份/签名验证、安全解包与 manifest 公钥身份复核已接入；本地 Manifest V2/V3 包继续使用受管副本。
+- ✅ 当前启用包在启动时交给 Chromium 扩展运行时。最终 `Dist` 包的通用 MV3 黑盒探针连续两次 `8/8`，覆盖 service worker、content script、runtime messaging、`chrome.storage.local`、Chromium DNR、options 页面与静态 `default_popup`。
+- ✅ 删除 Rex 自制扩展 DNR 与 AdGuard 专用执行路径；已验证的后台、内容脚本、消息、存储、DNR 和 options 页面均来自真实安装包。
+- ✅ 安装、启用、停用和移除使用启动快照并明确要求重启；已加载包的移除延后到下次启动清理。
+- ✅ 非广告 fixture 与已安装拦截扩展均从列表整行进入自身 popup，自动尺寸、service worker 消息和面板交互通过，无扩展专用代码；普通 Rex UI 无裁剪、负偏移或 Chrome 窗口覆盖。
+- ✅ 未托管 Chrome extension popup/auxiliary window 的普通网页目标会转交 Rex，辅助窗口随后关闭。
+- ✅ Swift Testing `128/128`、完整 CEF bridge 的 Xcode arm64 Debug/Release 构建、Release Validator、deep codesign、ZIP 解压、校验和与隔离 profile 重复启动通过。
+- ✅ 主 App 与五个 Helper 均为 `0.9.2 / 920`、arm64 only；App 为 `342M`（`349776 KiB`），ZIP 为 `142,320,000` bytes（`du` 为 `144M`），SHA-256 为 `c815a492297dac404b0d323eb2b6a628b26d58a352bc02ff9a5760605c2a898c`。
+- ✅ 删除 Rex 系统密码调用、`SystemPasswordsCoordinator` 与主可执行文件的 `AuthenticationServices` 依赖；打包门槛拒绝该主 executable 依赖或任何 `.systemextension`，并记录 `rex_password_integration=absent`。上游 CEF framework 仍保留自身链接。
+- ⚠️ Rex 小型面板不触发 Chromium 原生 action popup；stock CEF 150 Alloy 暂不支持 `activeTab`、`chrome.tabs` 当前窗口语义、无 popup 的 `action.onClicked` 或动态 `action.setPopup`。
+- 🚧 Developer ID 同团队签名、Hardened Runtime、公证与自动更新留待正式分发阶段。
+
+## 已完成 — v0.9.3（build 930）
+
+- ✅ 扩展小型面板等待 Chromium 首个有效内容尺寸后再显示，消除白色占位首帧和可见的二次尺寸跳变。
+- ✅ 加载期间的自动尺寸在主文档完成时立即应用，移除固定 300 ms 延迟；同一窗口会话复用扩展上次确认尺寸。
+- ✅ `chrome.tabs.create(chrome-extension://…)` 创建的包内设置页经应用边界转换为 `rex-extension://` 并进入 Rex 标签页。
+- ✅ popup 先关闭时保留最近有效来源标签，保证后续扩展页面仍能正确路由。
+- ✅ 应用与打包版本推进到 `0.9.3 / 930`。
+
+## 已完成 — v0.9.4（build 940）
+
+- ✅ 使用无监听端口的 `--remote-debugging-pipe` 对账 Chromium 扩展集合，安装、启用、停用、手动更新和移除无需重启。
+- ✅ 冷启动恢复的 HTTP(S) 页面等待 extension-ready generation 后才首次导航，空集合也先清理陈旧注册；热变更只立即重载活跃普通页面，休眠页恢复时重载一次，隐私窗口排除。
+- ✅ 同路径更新使用持久 replacement journal，Chromium ack 前退出会在下次启动恢复上一版本；扩展事务跨 `await` 全局串行。
+- ✅ 修复 `chrome.tabs.create` 转交目标时临时 Chrome browser 与 Rex 标签重复发出主文档请求。
+- ✅ 扩展包启动校验降为每包一次完整扫描，单次 manifest 解析只读取一次 locale 字典，下载进度约每 80 ms 发布一次。
+- ✅ MV3 探针忽略隐藏 `about:blank` 扩展上下文，并以不刷新、不重复导航的首次文档作为冷启动验收对象。
+- ✅ 应用与打包版本推进到 `0.9.4 / 940`。
+
 ## 已完成 — v0.7.0-beta.1
 
 - ✅ EasyList 网络规则引擎：内置 EasyList / EasyPrivacy / EasyList China，支持例外规则、domain/类型/第三方约束与 $document 整页豁免。
@@ -112,9 +154,9 @@
 - ⏳ 原生文件选择、JavaScript 对话框和全屏窗口体验。
 - ⏳ 页面安全状态与 Renderer 崩溃恢复界面。
 - ⏳ 下载校验、危险文件提示和批量清理策略。
-- ⚠️ CEF MVP 只承诺受控扩展子集，不承诺完整 Chrome Web Store 兼容或 Google 账号同步。
+- ⚠️ Chromium 扩展运行时已接入，但不承诺每个 Chrome Web Store 扩展或所有 Chrome API 均兼容，也不提供 Google 账号同步。
 
-## v0.9.0 → v1.0.0
+## v0.9.4 → v1.0.0
 
 - 更新、签名、公证、诊断、无障碍、低电量与兼容性收敛。
 - 安全审计、恢复/回退演练和稳定发布。

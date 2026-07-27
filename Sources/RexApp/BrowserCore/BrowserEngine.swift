@@ -85,6 +85,10 @@ enum BrowserCommand: Sendable, Equatable {
     )
     /// Engine-global ad/tracker content blocking (bound to the Settings toggle).
     case setContentBlocking(enabled: Bool)
+    /// Reconcile Chromium's live extension set with the managed paths.
+    /// `forceReloadPaths` covers an explicitly re-imported managed directory
+    /// whose payload changed without changing its manifest or directory inode.
+    case reloadExtensionRules(paths: [String], forceReloadPaths: [String])
     case find(tabID: UUID, query: String, forward: Bool, findNext: Bool)
     case stopFinding(tabID: UUID)
     case openDeveloperTools(tabID: UUID)
@@ -183,7 +187,10 @@ actor PrototypeBrowserEngine: BrowserEngine {
             emit(.pageClosed(tabID: tabID))
         case let .loadURL(tabID, url):
             try requireKnown(tabID)
-            guard ["http", "https", "about"].contains(url.scheme?.lowercased() ?? "") else {
+            let isExtensionResource = RexExtensionResourceURL(rexURL: url) != nil
+            guard isExtensionResource
+                    || ["http", "https", "about"].contains(url.scheme?.lowercased() ?? "")
+            else {
                 throw BrowserEngineError.unsupportedScheme
             }
         case let .setZoom(tabID, level):
@@ -194,6 +201,8 @@ actor PrototypeBrowserEngine: BrowserEngine {
         case let .setPrivacyPolicy(tabID, _, _, _, _):
             try requireKnown(tabID)
         case .setContentBlocking:
+            break
+        case .reloadExtensionRules:
             break
         case let .find(tabID, query, _, _):
             try requireKnown(tabID)

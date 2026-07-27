@@ -1,0 +1,24 @@
+<!doctype html>
+<html
+  lang="en"
+  data-rex-probe-phase="{{PHASE}}"
+  data-rex-probe-phase-token="{{PHASE_TOKEN}}"
+  data-rex-probe-document-id="{{DOCUMENT_ID}}"
+  data-rex-probe-report-url="{{REPORT_URL}}"
+  data-rex-probe-context-url="{{CONTEXT_URL}}"
+>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rex MV3 Self-report Probe</title>
+</head>
+<body>
+  <main id="probe-page">
+    <h1>Rex MV3 Self-report Probe</h1>
+    <p>Phase: <output id="probe-phase">{{PHASE}}</output></p>
+    <p>Document: <code id="probe-document">{{DOCUMENT_ID}}</code></p>
+    <p>Status: <output id="probe-status">Starting</output></p>
+  </main>
+  <script src="/probe-page.js"></script>
+</body>
+</html>

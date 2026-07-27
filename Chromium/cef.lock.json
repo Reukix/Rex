@@ -4,11 +4,11 @@
   "channel": "stable",
   "cefVersion": "150.0.14+g7c1aa68+chromium-150.0.7871.129",
   "chromiumVersion": "150.0.7871.129",
-  "distribution": "minimal",
-  "filename": "cef_binary_150.0.14+g7c1aa68+chromium-150.0.7871.129_macosarm64_minimal.tar.bz2",
-  "source": "https://cef-builds.spotifycdn.com/cef_binary_150.0.14%2Bg7c1aa68%2Bchromium-150.0.7871.129_macosarm64_minimal.tar.bz2",
-  "officialSha1": "47baa745213c938861861f0f3f65c6dd03e7254e",
-  "sha256": "293048b4f49e0853f2e13394ef3d57d55da7733340e51407e38d826b8ab5a200",
+  "distribution": "standard",
+  "filename": "cef_binary_150.0.14+g7c1aa68+chromium-150.0.7871.129_macosarm64.tar.bz2",
+  "source": "https://cef-builds.spotifycdn.com/cef_binary_150.0.14%2Bg7c1aa68%2Bchromium-150.0.7871.129_macosarm64.tar.bz2",
+  "officialSha1": "ae4a49d31fe61d4e0dc55050449cf967b7549ba0",
+  "sha256": "57f58530234f5b2a24f02479fdbc92b50aa5f94f7a66e32251cb71571284fad1",
   "sandboxCompat": "6c5b35ad81055c14",
   "publishedAt": "2026-07-20T04:16:08.736000Z"
 }

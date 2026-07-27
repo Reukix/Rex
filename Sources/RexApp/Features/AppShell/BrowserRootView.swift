@@ -31,7 +31,14 @@ struct BrowserRootView: View {
                     BrowserToolbar(
                         preferences: store.preferences,
                         certificateViewerSnapshot: $certificateViewerSnapshot,
-                        onShowPerformanceMonitor: { isPerformanceMonitorPresented = true }
+                        onShowPerformanceMonitor: { isPerformanceMonitorPresented = true },
+                        onOpenExtensionPage: { package in
+                            guard let url = package.optionsURL else {
+                                store.isExtensionsPresented = true
+                                return
+                            }
+                            store.openExtensionPage(url, title: package.name)
+                        }
                     )
                     .padding(
                         .leading,
@@ -135,7 +142,10 @@ struct BrowserRootView: View {
             BrowserSettingsView()
                 .environmentObject(store)
         }
-        .sheet(isPresented: $store.isExtensionsPresented) {
+        .sheet(isPresented: Binding(
+            get: { !store.profile.isPrivate && store.isExtensionsPresented },
+            set: { store.isExtensionsPresented = $0 && !store.profile.isPrivate }
+        )) {
             BrowserExtensionsView()
                 .environmentObject(store)
                 .frame(minWidth: 640, minHeight: 480)
@@ -285,11 +295,15 @@ private struct BrowserToolbar: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var preferences: BrowserPreferences
+    @ObservedObject private var extensionsStore = BrowserExtensionsStore.shared
+    @StateObject private var extensionActionPanel = RexExtensionActionPanelController()
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
     let onShowPerformanceMonitor: () -> Void
+    let onOpenExtensionPage: (BrowserExtensionPackage) -> Void
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
     @State private var compositionName = ""
+    @State private var isExtensionsPopoverPresented = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -297,12 +311,65 @@ private struct BrowserToolbar: View {
                 ToolbarStatusCluster(onShowDetails: onShowPerformanceMonitor)
             }
 
-            LiquidGlassIconButton(
-                systemName: "puzzlepiece.extension",
-                label: "扩展",
-                isSelected: store.isExtensionsPresented
-            ) {
-                store.isExtensionsPresented = true
+            if !store.profile.isPrivate {
+                LiquidGlassIconButton(
+                    systemName: "puzzlepiece.extension",
+                    label: "扩展",
+                    isSelected: isExtensionsPopoverPresented || extensionActionPanel.isPresented
+                ) {
+                    if extensionActionPanel.isPresented {
+                        extensionActionPanel.dismiss()
+                    } else if isExtensionsPopoverPresented {
+                        isExtensionsPopoverPresented = false
+                    } else {
+                        isExtensionsPopoverPresented = true
+                    }
+                }
+                .background {
+                    RexExtensionActionPanelAnchor(controller: extensionActionPanel)
+                }
+                .popover(isPresented: $isExtensionsPopoverPresented, arrowEdge: .bottom) {
+                    RexExtensionsListPanel(
+                        packages: extensionsStore.extensions,
+                        onSelect: { package in
+                            isExtensionsPopoverPresented = false
+                            DispatchQueue.main.async {
+                                extensionActionPanel.present(
+                                    package: package,
+                                    store: store,
+                                    onBack: {
+                                        extensionActionPanel.dismiss()
+                                        DispatchQueue.main.async {
+                                            isExtensionsPopoverPresented = true
+                                        }
+                                    },
+                                    onManage: {
+                                        extensionActionPanel.dismiss()
+                                        store.isExtensionsPresented = true
+                                    },
+                                    onOpenOptions: {
+                                        extensionActionPanel.dismiss()
+                                        onOpenExtensionPage(package)
+                                    }
+                                )
+                            }
+                        },
+                        onOpenExtensionPage: { package in
+                            isExtensionsPopoverPresented = false
+                            onOpenExtensionPage(package)
+                        },
+                        onManage: {
+                            isExtensionsPopoverPresented = false
+                            DispatchQueue.main.async {
+                                store.isExtensionsPresented = true
+                            }
+                        },
+                        onClose: {
+                            isExtensionsPopoverPresented = false
+                        }
+                    )
+                    .environmentObject(store)
+                }
             }
 
             LiquidGlassIconButton(systemName: "sidebar.left", label: "显示或隐藏侧栏") {
@@ -508,10 +575,12 @@ private struct BrowserToolbar: View {
                     } label: {
                         Label("开发者工具", systemImage: "hammer")
                     }
-                    Button {
-                        store.isExtensionsPresented = true
-                    } label: {
-                        Label("扩展", systemImage: "puzzlepiece.extension")
+                    if !store.profile.isPrivate {
+                        Button {
+                            store.isExtensionsPresented = true
+                        } label: {
+                            Label("扩展", systemImage: "puzzlepiece.extension")
+                        }
                     }
                     Button {
                         store.isPermissionCenterPresented = true
@@ -550,6 +619,9 @@ private struct BrowserToolbar: View {
             BrowserTitlebarCardSurface()
         }
         .onChange(of: store.addressFocusRequest) { _, _ in addressFocused = true }
+        .onDisappear {
+            extensionActionPanel.dismiss()
+        }
         .alert("保存分屏组合", isPresented: $isSavingComposition) {
             TextField("组合名称", text: $compositionName)
             Button("取消", role: .cancel) { compositionName = "" }
@@ -592,6 +664,590 @@ private struct BrowserToolbar: View {
         case .dangerous: return .red
         case .pending, .internalPage, .unknown, nil: return .secondary
         }
+    }
+}
+
+private struct RexExtensionsListPanel: View {
+    let packages: [BrowserExtensionPackage]
+    let onSelect: (BrowserExtensionPackage) -> Void
+    let onOpenExtensionPage: (BrowserExtensionPackage) -> Void
+    let onManage: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("扩展程序")
+                    .font(.system(size: 21, weight: .bold))
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("关闭")
+                .accessibilityLabel("关闭扩展程序")
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
+
+            Divider()
+
+            if packages.isEmpty {
+                ContentUnavailableView(
+                    "尚未安装扩展",
+                    systemImage: "puzzlepiece.extension",
+                    description: Text("可在扩展管理中安装受 Rex 支持的扩展。")
+                )
+                .frame(height: 250)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("已安装")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(packages) { package in
+                                RexExtensionListRow(
+                                    package: package,
+                                    onSelect: { onSelect(package) },
+                                    onOpenSettings: {
+                                        onOpenExtensionPage(package)
+                                    },
+                                    onManage: onManage
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
+                    }
+                    .frame(maxHeight: 430)
+                }
+            }
+
+            Divider()
+
+            Button(action: onManage) {
+                HStack(spacing: 12) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 24)
+                    Text("管理扩展程序")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Text("\(packages.count)")
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 18)
+                .frame(height: 48)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(width: 390)
+        .frame(minHeight: packages.isEmpty ? 350 : 190)
+    }
+}
+
+private struct RexExtensionListRow: View {
+    let package: BrowserExtensionPackage
+    let onSelect: () -> Void
+    let onOpenSettings: () -> Void
+    let onManage: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: onSelect) {
+                HStack(spacing: 12) {
+                    RexExtensionPanelIcon(package: package, size: 34)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(package.name)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        Text(packageStatus)
+                            .font(.system(size: 10))
+                            .foregroundStyle(package.isEnabled ? Color.secondary : Color.orange)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.leading, 10)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开 \(package.name)")
+
+            Menu {
+                Button(action: onSelect) {
+                    Label("打开控制面板", systemImage: "rectangle.on.rectangle")
+                }
+                Button(action: onOpenSettings) {
+                    Label("扩展设置", systemImage: "gearshape")
+                }
+                Divider()
+                Button(action: onManage) {
+                    Label("管理扩展程序", systemImage: "puzzlepiece.extension")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("\(package.name) 的更多操作")
+            .accessibilityLabel("\(package.name) 的更多操作")
+        }
+        .padding(.trailing, 4)
+        .background(Color.primary.opacity(0.001), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private var packageStatus: String {
+        if !package.isEnabled {
+            return "已停用"
+        }
+        if package.runtimeStatus != .ready {
+            return package.runtimeStatus.displayName
+        }
+        return package.permissionSummary
+    }
+}
+
+private struct RexRuntimeExtensionActionPanel: View {
+    let package: BrowserExtensionPackage
+    let onBack: () -> Void
+    let onManage: () -> Void
+    let onOpenOptions: () -> Void
+    let onPageClose: () -> Void
+    let onPanelSizeChange: (CGSize) -> Void
+
+    static func preferredSize(for package: BrowserExtensionPackage) -> CGSize {
+        guard package.canUseRuntimeResources,
+              package.actionPopupURL != nil else {
+            return CGSize(width: 390, height: 260)
+        }
+        return CGSize(width: 360, height: 600)
+    }
+
+    private var canRunPopupPage: Bool {
+        guard package.canUseRuntimeResources,
+              package.actionPopupURL != nil else { return false }
+        return true
+    }
+
+    private var panelSize: CGSize {
+        Self.preferredSize(for: package)
+    }
+
+    var body: some View {
+#if REX_CEF
+        if canRunPopupPage, let relativePath = package.actionPopupRelativePath {
+            ChromiumExtensionPageSurface(
+                package: package,
+                relativePath: relativePath,
+                surfaceID: "toolbar-popup-\(package.id)",
+                onClose: onPageClose,
+                onPreferredContentSizeChange: onPanelSizeChange
+            )
+            .frame(
+                minWidth: 25,
+                maxWidth: .infinity,
+                minHeight: 25,
+                maxHeight: .infinity
+            )
+            .background(Color(nsColor: .windowBackgroundColor))
+            .accessibilityLabel("\(package.name) 扩展面板")
+        } else {
+            unavailableContent
+                .frame(width: panelSize.width, height: panelSize.height)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .onAppear {
+                    onPanelSizeChange(panelSize)
+                }
+        }
+#else
+        unavailableContent
+            .frame(width: panelSize.width, height: panelSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .onAppear {
+                onPanelSizeChange(panelSize)
+            }
+#endif
+    }
+
+    private var unavailableContent: some View {
+        VStack(spacing: 16) {
+            ContentUnavailableView(
+                unavailableTitle,
+                systemImage: unavailableSymbol,
+                description: Text(unavailableDetail)
+            )
+
+            HStack(spacing: 8) {
+                Button(action: onBack) {
+                    Label("返回", systemImage: "chevron.left")
+                }
+                .buttonStyle(.borderedProminent)
+                Button(action: onManage) {
+                    Label("管理", systemImage: "gearshape")
+                }
+                .buttonStyle(.bordered)
+                if package.optionsURL != nil {
+                    Button(action: onOpenOptions) {
+                        Label("扩展设置", systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(20)
+    }
+
+    private var unavailableTitle: String {
+        if !package.isEnabled {
+            return "扩展已停用"
+        }
+        if package.runtimeStatus != .ready {
+            return package.runtimeStatus.displayName
+        }
+        if package.runtimeID.map(RexExtensionResourceURL.isValidRuntimeID) != true {
+            return "扩展尚未接入运行时"
+        }
+        if package.actionPopupRelativePath == nil {
+            return "此扩展没有小型面板"
+        }
+        return "扩展页面不可用"
+    }
+
+    private var unavailableDetail: String {
+        if !package.isEnabled {
+            return "在扩展管理中启用后可使用扩展页面。"
+        }
+        if package.runtimeStatus != .ready {
+            return package.statusDetail ?? "扩展运行时尚未准备完成。"
+        }
+        if package.runtimeID.map(RexExtensionResourceURL.isValidRuntimeID) != true {
+            return "扩展缺少有效的 Chromium 运行时标识。"
+        }
+        if package.actionPopupRelativePath == nil {
+            return "扩展清单没有声明 action.default_popup。"
+        }
+        return "Chromium 无法打开扩展包内页面。"
+    }
+
+    private var unavailableSymbol: String {
+        if !package.isEnabled {
+            return "pause.circle"
+        }
+        if package.runtimeStatus != .ready ||
+            package.runtimeID.map(RexExtensionResourceURL.isValidRuntimeID) != true {
+            return "exclamationmark.triangle"
+        }
+        return "puzzlepiece.extension"
+    }
+}
+
+private final class RexExtensionPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+@MainActor
+private final class RexExtensionActionPanelController: NSObject, ObservableObject, NSWindowDelegate {
+    @Published private(set) var isPresented = false
+
+    weak var anchorView: NSView?
+
+    private weak var parentWindow: NSWindow?
+    private var panel: NSPanel?
+    private var hostingController: NSHostingController<AnyView>?
+    private var parentWindowObservers: [NSObjectProtocol] = []
+    private var preferredSizesByPackageID: [String: CGSize] = [:]
+    private var revealFallback: DispatchWorkItem?
+
+    func present(
+        package: BrowserExtensionPackage,
+        store: BrowserStore,
+        onBack: @escaping () -> Void,
+        onManage: @escaping () -> Void,
+        onOpenOptions: @escaping () -> Void
+    ) {
+        dismiss()
+        guard let anchorView, let parentWindow = anchorView.window else {
+            store.lastError = "扩展面板暂时无法定位到当前窗口。"
+            return
+        }
+
+        let isRuntimePopup = package.canUseRuntimeResources
+            && package.actionPopupURL != nil
+        let initialSize = preferredSizesByPackageID[package.id]
+            ?? RexRuntimeExtensionActionPanel.preferredSize(for: package)
+        let panel = RexExtensionPanel(
+            contentRect: NSRect(origin: .zero, size: initialSize),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.alphaValue = isRuntimePopup ? 0 : 1
+        panel.backgroundColor = .clear
+        panel.hasShadow = !isRuntimePopup
+        panel.collectionBehavior = [.fullScreenAuxiliary]
+        panel.animationBehavior = .none
+        panel.delegate = self
+        panel.level = parentWindow.level
+
+        let rootView = RexRuntimeExtensionActionPanel(
+            package: package,
+            onBack: onBack,
+            onManage: onManage,
+            onOpenOptions: onOpenOptions,
+            onPageClose: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.dismiss()
+                }
+            },
+            onPanelSizeChange: { [weak self] size in
+                self?.applyPreferredSize(size, packageID: package.id)
+            }
+        )
+        .environmentObject(store)
+        let hostingController = NSHostingController(rootView: AnyView(rootView))
+        panel.contentViewController = hostingController
+
+        self.parentWindow = parentWindow
+        self.panel = panel
+        self.hostingController = hostingController
+        isPresented = true
+
+        observeParentWindow(parentWindow)
+        positionPanel(size: initialSize)
+        parentWindow.addChildWindow(panel, ordered: .above)
+        panel.order(.above, relativeTo: parentWindow.windowNumber)
+        panel.makeKeyAndOrderFront(nil)
+        if isRuntimePopup {
+            scheduleRevealFallback(for: panel)
+        }
+    }
+
+    func dismiss() {
+        revealFallback?.cancel()
+        revealFallback = nil
+        guard let panel else {
+            removeParentWindowObservers()
+            hostingController = nil
+            parentWindow = nil
+            isPresented = false
+            return
+        }
+        panel.delegate = nil
+        removeParentWindowObservers()
+        panel.contentViewController = nil
+        hostingController = nil
+        if panel.parent === parentWindow {
+            parentWindow?.removeChildWindow(panel)
+        }
+        panel.orderOut(nil)
+        panel.close()
+        self.panel = nil
+        parentWindow = nil
+        isPresented = false
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard notification.object as? NSPanel === panel else { return }
+        revealFallback?.cancel()
+        revealFallback = nil
+        removeParentWindowObservers()
+        panel?.contentViewController = nil
+        hostingController = nil
+        if panel?.parent === parentWindow, let panel {
+            parentWindow?.removeChildWindow(panel)
+        }
+        panel = nil
+        parentWindow = nil
+        isPresented = false
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        guard notification.object as? NSPanel === panel else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.dismiss()
+        }
+    }
+
+    private func applyPreferredSize(_ requestedSize: CGSize, packageID: String) {
+        let size = normalizedPanelSize(requestedSize)
+        preferredSizesByPackageID[packageID] = size
+        resizePanel(to: size)
+        revealPanelIfNeeded()
+    }
+
+    private func resizePanel(to requestedSize: CGSize) {
+        guard let panel else { return }
+        let size = normalizedPanelSize(requestedSize)
+        panel.setContentSize(size)
+        positionPanel(size: size)
+    }
+
+    private func normalizedPanelSize(_ requestedSize: CGSize) -> CGSize {
+        CGSize(
+            width: min(800, max(25, requestedSize.width.rounded(.up))),
+            height: min(600, max(25, requestedSize.height.rounded(.up)))
+        )
+    }
+
+    private func scheduleRevealFallback(for expectedPanel: NSPanel) {
+        revealFallback?.cancel()
+        let fallback = DispatchWorkItem { [weak self, weak expectedPanel] in
+            guard let self, let expectedPanel, self.panel === expectedPanel else {
+                return
+            }
+            self.revealPanelIfNeeded()
+        }
+        revealFallback = fallback
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .seconds(1),
+            execute: fallback
+        )
+    }
+
+    private func revealPanelIfNeeded() {
+        guard let panel, panel.alphaValue < 1 else { return }
+        revealFallback?.cancel()
+        revealFallback = nil
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.displayIfNeeded()
+        panel.hasShadow = true
+        panel.alphaValue = 1
+        panel.invalidateShadow()
+    }
+
+    private func positionPanel(size: CGSize) {
+        guard let panel, let anchorView, let anchorWindow = anchorView.window else {
+            return
+        }
+        let anchorInWindow = anchorView.convert(anchorView.bounds, to: nil)
+        let anchorOnScreen = anchorWindow.convertToScreen(anchorInWindow)
+        let visibleFrame = anchorWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let preferredX = anchorOnScreen.minX
+        let preferredY = anchorOnScreen.minY - size.height - 8
+        let maximumX = max(visibleFrame.minX, visibleFrame.maxX - size.width)
+        let maximumY = max(visibleFrame.minY, visibleFrame.maxY - size.height)
+        let origin = NSPoint(
+            x: min(max(preferredX, visibleFrame.minX), maximumX),
+            y: min(max(preferredY, visibleFrame.minY), maximumY)
+        )
+        panel.setFrameOrigin(origin)
+    }
+
+    private func observeParentWindow(_ window: NSWindow) {
+        removeParentWindowObservers()
+        let center = NotificationCenter.default
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            parentWindowObservers.append(
+                center.addObserver(
+                    forName: name,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let panel = self.panel else { return }
+                        self.positionPanel(size: panel.frame.size)
+                    }
+                }
+            )
+        }
+        parentWindowObservers.append(
+            center.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.dismiss()
+                }
+            }
+        )
+    }
+
+    private func removeParentWindowObservers() {
+        let center = NotificationCenter.default
+        parentWindowObservers.forEach(center.removeObserver)
+        parentWindowObservers.removeAll()
+    }
+}
+
+private struct RexExtensionActionPanelAnchor: NSViewRepresentable {
+    let controller: RexExtensionActionPanelController
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            controller.anchorView = view
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if controller.anchorView !== nsView {
+            controller.anchorView = nsView
+        }
+    }
+
+    static func dismantleNSView(
+        _ nsView: NSView,
+        coordinator: Void
+    ) {
+        // The controller is owned by the toolbar and dismisses its panel during teardown.
+    }
+}
+
+private struct RexExtensionPanelIcon: View {
+    let package: BrowserExtensionPackage
+    var size: CGFloat = 40
+
+    var body: some View {
+        Group {
+            if let iconURL = package.iconURL,
+               let image = NSImage(contentsOf: iconURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(5)
+            } else {
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .font(.system(size: max(13, size * 0.4), weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

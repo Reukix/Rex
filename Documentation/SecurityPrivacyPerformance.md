@@ -6,6 +6,12 @@
 - Bridge 采用闭合命令/事件枚举；对 URL 协议、消息大小、tab/profile ownership 和枚举值逐项验证。
 - 网页 JavaScript 无法直接获得 Keychain、文件系统、剪贴板、摄像头、麦克风或原生对象。
 - Rex 不提供 Google 账号同步，也不保存同步令牌。下载由 CEF 下载回调和系统目标选择流程管理；危险文件检测、Safe Browsing、签名及 MIME 一致性校验尚未实现。
+- Chrome Web Store 扩展安装使用独立的受限下载链路：只允许 Google 官方更新/包主机，验证 CRX 扩展 ID 与签名，限制下载、文件数和解包大小，并拒绝路径穿越、符号链接、重复路径和不支持的 ZIP 格式。该校验不等同于通用文件下载的危险内容扫描。
+- 商店扩展读取时重新验证 manifest 公钥推导出的 Chromium runtime ID 与验签 store ID；身份缺失或不一致的包不会进入预期运行集合。
+- 启用的扩展本体在 Chromium 中执行，并获得 manifest 声明且由 Chromium 允许的权限。安装、启用、停用、手动更新和移除使用 browser-target Extensions CDP 即时对账；只有实际启用的受管路径匹配预期 generation 后才报告成功。
+- 内部扩展控制通道在 `CefInitialize` 前预留 Chromium `--remote-debugging-pipe` 使用的 fd 3/4，不绑定 loopback 或其他 TCP 监听地址，也不把 browser CDP 能力暴露给普通网页 target。
+- 冷启动恢复的 HTTP(S) browser 在扩展 generation 就绪前保持 `about:blank`；即使预期集合为空，也先清理 profile 中的陈旧受管注册。热变更只立即重载活跃普通 HTTP(S) 页面，休眠或冻结页面恢复时重载一次，隐私窗口不运行扩展。
+- 同路径更新在任何目录换盘前原子写入 replacement journal；Chromium ack 后才提交并清理备份，确认前崩溃会在下次启动恢复上一版本。扩展状态只由相关命令 completion 提交，延迟广播不能覆盖新事务。
 - 内容拦截目录编译在 `RexPrivacyEngine.cpp` 中，没有独立规则包、签名校验、在线更新或自定义订阅链路。
 
 ## 隐私架构
@@ -15,6 +21,8 @@
 1. **Swift 顶层导航策略**：`PrivacyURLPolicy` 在地址栏提交和 Rex 接管的弹窗导航时移除 `_hsenc`、`fbclid`、`gclid`、`utm_*` 等已知追踪参数，并对非本地 HTTP 地址尝试 HTTPS。只有特定 TLS 不可用错误允许回退 HTTP；证书、DNS 和通用网络错误不会降级。该策略不改写页面自行发起的 CEF 子资源。
 2. **CEF 子资源目录拦截**：`RexPrivacyEngine.cpp` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目。`OnBeforeResourceLoad` 在 IO 线程分类请求，命中时返回 `RV_CANCEL`，并把类别和域名作为 blocked event 回传。主框架导航永不在该层拦截；第一方未知时放行。
 3. **CEF Cookie 设置**：第三方 Cookie 限制通过 RequestContext/profile 的 `profile.cookie_controls_mode` 全局偏好执行。`CanSendCookie` 与 `CanSaveCookie` 不逐请求阻断，因此单标签关闭盾牌不会关闭全局 Cookie 限制，盾牌的 Cookie 拦截计数通常也不会增加。
+
+扩展声明的 DNR 由 Chromium 扩展运行时单独执行，不合并到 `RexPrivacyEngine`，也不受 Rex 盾牌级别解释为另一套近似规则。扩展自身的网络行为和权限应按其 manifest 与 Chromium 扩展安全模型评估。
 
 保护级别语义如下：
 
@@ -39,6 +47,10 @@
 ## 性能
 
 - Chromium IPC、历史数据库和规则加载不占用主线程。
+- 受管扩展启动校验每包只完整扫描一次；启停只更新内存运行状态，不重复遍历扩展文件树。
+- 单次 manifest 解析只加载一次对应 `_locales/.../messages.json`，名称与描述复用同一本地化字典。
+- Chrome Web Store 下载中的进度约每 80 ms 合并发布一次，完成、取消和失败终态立即发布。
+- 普通窗口关闭时取消其会话恢复、导航、休眠和事件任务，并销毁该窗口全部 CEF 页面，避免不可见 renderer、媒体、网络或扩展内容继续占用资源。
 - 每个 tab 的宿主 `NSView` 稳定缓存；分屏 resize 只修改 frame。
 - 可见分屏页面不休眠；播放媒体、会议、上传下载和设备权限活动页不冻结。
 - 内存压力按“已归档→休眠后台→冻结后台”的优先级释放资源，并保留恢复元数据。

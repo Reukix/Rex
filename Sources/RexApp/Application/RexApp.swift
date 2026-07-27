@@ -3,6 +3,15 @@ import Combine
 import SwiftUI
 
 @MainActor
+enum RexApplicationLifecycle {
+    private(set) static var isTerminating = false
+
+    static func beginTermination() {
+        isTerminating = true
+    }
+}
+
+@MainActor
 final class RexWindowCoordinator: ObservableObject {
     let persistence: BrowserSQLitePersistence
     let primaryWindowID: UUID
@@ -38,7 +47,9 @@ final class RexWindowCoordinator: ObservableObject {
             guard let self else { return }
             do {
                 let sessions = try await persistence.loadAllWindows()
-                for session in sessions where session.id != primaryWindowID {
+                for session in sessions
+                where session.id != primaryWindowID
+                    && !openedWindowIDs.contains(session.id) {
                     openWindow(id: "browser", value: session.id)
                     openedWindowIDs.insert(session.id)
                 }
@@ -50,6 +61,34 @@ final class RexWindowCoordinator: ObservableObject {
 
     func registerNewWindow(_ windowID: UUID) {
         openedWindowIDs.insert(windowID)
+    }
+
+    func unregisterWindow(_ windowID: UUID) {
+        openedWindowIDs.remove(windowID)
+    }
+
+    func shouldRemovePersistedSession(
+        for windowID: UUID,
+        profile: BrowserProfile,
+        applicationIsTerminating: Bool = RexApplicationLifecycle.isTerminating
+    ) -> Bool {
+        Self.shouldRemovePersistedSession(
+            for: windowID,
+            primaryWindowID: primaryWindowID,
+            profile: profile,
+            applicationIsTerminating: applicationIsTerminating
+        )
+    }
+
+    static func shouldRemovePersistedSession(
+        for windowID: UUID,
+        primaryWindowID: UUID,
+        profile: BrowserProfile,
+        applicationIsTerminating: Bool
+    ) -> Bool {
+        !profile.isPrivate
+            && windowID != primaryWindowID
+            && !applicationIsTerminating
     }
 }
 
@@ -107,7 +146,14 @@ struct RexWindowScene: View {
                 }
             }
             .onDisappear {
-                store.flushSession()
+                let removesPersistedSession = coordinator.shouldRemovePersistedSession(
+                    for: windowID,
+                    profile: profile
+                )
+                if removesPersistedSession {
+                    coordinator.unregisterWindow(windowID)
+                }
+                store.closeWindow(removingPersistedSession: removesPersistedSession)
             }
     }
 }

@@ -1,11 +1,17 @@
 #import "RexChromiumRuntime.h"
 
 #import <Cocoa/Cocoa.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <objc/runtime.h>
 #include <crt_externs.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cctype>
 #include <climits>
@@ -40,6 +46,10 @@
 #include "include/cef_task_manager.h"
 #include "include/cef_version.h"
 #include "include/cef_x509_certificate.h"
+#include "include/views/cef_browser_view.h"
+#include "include/views/cef_browser_view_delegate.h"
+#include "include/views/cef_window.h"
+#include "include/views/cef_window_delegate.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_library_loader.h"
 #include "RexMessagePumpPolicy.h"
@@ -51,10 +61,108 @@
 #error "Rex Chromium bridge supports Apple Silicon only."
 #endif
 
+NSErrorDomain const RexChromiumErrorDomain = @"com.rex.browser.chromium";
+NSInteger const RexChromiumNormalExitProcessNotifiedCode =
+    CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED;
+
+BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error) {
+  return [error.domain isEqualToString:RexChromiumErrorDomain] &&
+         error.code == RexChromiumNormalExitProcessNotifiedCode;
+}
+
+typedef void (^RexDevToolsPipeCompletion)(
+    NSDictionary<NSString *, id> *_Nullable result,
+    NSError *_Nullable error);
+typedef void (^RexExtensionQueryCompletion)(
+    NSArray<NSDictionary<NSString *, id> *> *_Nullable extensions,
+    NSError *_Nullable error);
+typedef void (^RexExtensionOperationsCompletion)(NSError *_Nullable error);
+
+@interface RexDevToolsPipeWriteRequest : NSObject
+
+@property(nonatomic, copy) NSNumber *messageID;
+@property(nonatomic, copy) NSString *method;
+@property(nonatomic, copy) NSData *payload;
+@property(nonatomic) NSUInteger offset;
+
+@end
+
+@interface RexDevToolsPipeController : NSObject {
+ @private
+  BOOL _prepared;
+  BOOL _reading;
+  BOOL _stopped;
+  BOOL _writeSourceSuspended;
+  int _requestWriteFD;
+  int _responseReadFD;
+  BOOL _ownsChromiumFDs;
+  uint64_t _nextMessageID;
+  dispatch_queue_t _queue;
+  dispatch_source_t _readSource;
+  dispatch_source_t _writeSource;
+  NSMutableData *_readBuffer;
+  NSMutableDictionary<NSNumber *, RexDevToolsPipeCompletion> *_pending;
+  NSMutableArray<RexDevToolsPipeWriteRequest *> *_outboundWrites;
+}
+
+@property(nonatomic, readonly, getter=isPrepared) BOOL prepared;
+
+- (BOOL)prepareWithError:(NSError **)error;
+- (void)startReading;
+- (void)executeMethod:(NSString *)method
+               params:(NSDictionary<NSString *, id> *)params
+           completion:(RexDevToolsPipeCompletion)completion;
+- (void)shutdown;
+- (void)releaseChromiumDescriptors;
+
+@end
+
+@interface RexExtensionSyncRequest : NSObject
+
+@property(nonatomic, copy) NSArray<NSString *> *desiredPaths;
+@property(nonatomic, copy) NSArray<NSString *> *previousPaths;
+@property(nonatomic, copy) NSArray<NSString *> *updatedPaths;
+@property(nonatomic, copy) NSArray<NSString *> *forcedReloadPaths;
+@property(nonatomic, copy)
+    NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *>
+        *expectedManifestMetadataByPath;
+@property(nonatomic, strong)
+    NSMutableDictionary<NSString *, NSString *> *expectedExtensionIDsByPath;
+@property(nonatomic, copy)
+    NSDictionary<NSString *, NSString *> *previousExtensionIDsByPath;
+@property(nonatomic) NSUInteger generation;
+@property(nonatomic) NSUInteger chromeWindowHostEpoch;
+@property(nonatomic) BOOL startup;
+@property(nonatomic) BOOL attemptedMutation;
+@property(nonatomic, copy, nullable)
+    RexChromiumExtensionRuntimeCompletion completion;
+
+@end
+
+@interface RexChromiumRuntime (ExtensionRuntimePrivate)
+
+- (void)chromiumContextInitialized;
+
+@end
+
 namespace {
 
 NSString *RexNSString(const CefString &value) {
   return [[NSString alloc] initWithUTF8String:value.ToString().c_str()] ?: @"";
+}
+
+bool RexCanForwardPopupURL(NSString *value) {
+  if (!value.length) return false;
+  NSURLComponents *components =
+      [NSURLComponents componentsWithString:value];
+  NSString *scheme = components.scheme.lowercaseString;
+  if (!scheme.length || components.user.length || components.password.length) {
+    return false;
+  }
+  return [scheme isEqualToString:@"http"] ||
+         [scheme isEqualToString:@"https"] ||
+         [scheme isEqualToString:@"about"] ||
+         [scheme isEqualToString:@"chrome-extension"];
 }
 
 NSArray<NSString *> *RexNSStringArray(const std::vector<CefString> &values) {
@@ -211,6 +319,369 @@ NSArray<NSString *> *RexPermissionKinds(uint32_t permissions) {
 
 std::string RexUTF8(NSString *value) {
   return value.UTF8String ? std::string(value.UTF8String) : std::string();
+}
+
+NSError *RexExtensionRuntimeError(
+    NSInteger code,
+    NSString *description,
+    NSDictionary<NSString *, id> *details = @{}) {
+  NSMutableDictionary<NSString *, id> *userInfo = [details mutableCopy];
+  userInfo[NSLocalizedDescriptionKey] = description;
+  return [NSError errorWithDomain:RexChromiumErrorDomain
+                             code:code
+                         userInfo:userInfo];
+}
+
+NSDictionary<NSString *, NSString *> *RexExtensionManifestMetadata(
+    NSString *path);
+
+NSArray<NSString *> *_Nullable RexValidatedExtensionPaths(
+    NSArray<NSString *> *extension_paths,
+    NSError **validation_error) {
+  NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSet];
+  NSMutableArray<NSString *> *rejected = [NSMutableArray array];
+  for (id candidate in extension_paths) {
+    if (![candidate isKindOfClass:NSString.class]) {
+      [rejected addObject:@"<non-string>"];
+      continue;
+    }
+    NSString *path = static_cast<NSString *>(candidate);
+    if (!path.length || !path.isAbsolutePath) {
+      [rejected addObject:path.length ? path : @"<empty>"];
+      continue;
+    }
+    NSString *resolved =
+        path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+    BOOL is_directory = NO;
+    NSString *manifest =
+        [resolved stringByAppendingPathComponent:@"manifest.json"];
+    if ([resolved containsString:@","] ||
+        ![NSFileManager.defaultManager fileExistsAtPath:resolved
+                                            isDirectory:&is_directory] ||
+        !is_directory ||
+        ![NSFileManager.defaultManager isReadableFileAtPath:manifest] ||
+        !RexExtensionManifestMetadata(resolved)[@"version"].length) {
+      [rejected addObject:path];
+      continue;
+    }
+    [paths addObject:resolved];
+  }
+  if (rejected.count) {
+    if (validation_error) {
+      *validation_error = RexExtensionRuntimeError(
+          33,
+          @"扩展同步请求包含无效或已移除的包路径",
+          @{@"rejectedPaths": [rejected copy]});
+    }
+    return nil;
+  }
+  return [[paths array] sortedArrayUsingSelector:@selector(compare:)];
+}
+
+NSString *RexExtensionPathFingerprint(NSString *path) {
+  struct stat directory_stat = {};
+  struct stat manifest_stat = {};
+  const std::string directory_path = RexUTF8(path);
+  const std::string manifest_path =
+      directory_path + "/manifest.json";
+  if (stat(directory_path.c_str(), &directory_stat) != 0 ||
+      stat(manifest_path.c_str(), &manifest_stat) != 0) {
+    return @"";
+  }
+  return [NSString
+      stringWithFormat:@"%llu:%llu:%lld:%lld:%ld|%llu:%llu:%lld:%lld:%ld",
+                       static_cast<unsigned long long>(directory_stat.st_dev),
+                       static_cast<unsigned long long>(directory_stat.st_ino),
+                       static_cast<long long>(directory_stat.st_size),
+                       static_cast<long long>(directory_stat.st_mtimespec.tv_sec),
+                       directory_stat.st_mtimespec.tv_nsec,
+                       static_cast<unsigned long long>(manifest_stat.st_dev),
+                       static_cast<unsigned long long>(manifest_stat.st_ino),
+                       static_cast<long long>(manifest_stat.st_size),
+                       static_cast<long long>(manifest_stat.st_mtimespec.tv_sec),
+                       manifest_stat.st_mtimespec.tv_nsec];
+}
+
+NSString *RexExtensionIDFromManifestKey(NSString *encoded_key) {
+  if (!encoded_key.length) return @"";
+  NSData *key = [[NSData alloc]
+      initWithBase64EncodedString:encoded_key
+                         options:NSDataBase64DecodingIgnoreUnknownCharacters];
+  if (!key.length || key.length > UINT_MAX) return @"";
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {};
+  CC_SHA256(key.bytes, static_cast<CC_LONG>(key.length), digest);
+  char identifier[33] = {};
+  for (NSUInteger index = 0; index < 16; ++index) {
+    identifier[index * 2] = static_cast<char>('a' + (digest[index] >> 4));
+    identifier[index * 2 + 1] =
+        static_cast<char>('a' + (digest[index] & 0x0f));
+  }
+  return [[NSString alloc] initWithBytes:identifier
+                                 length:32
+                               encoding:NSASCIIStringEncoding] ?: @"";
+}
+
+NSDictionary<NSString *, NSString *> *RexExtensionManifestMetadata(
+    NSString *path) {
+  NSString *manifestPath =
+      [path stringByAppendingPathComponent:@"manifest.json"];
+  NSError *readError = nil;
+  NSData *data = [NSData dataWithContentsOfFile:manifestPath
+                                       options:NSDataReadingMappedIfSafe
+                                         error:&readError];
+  if (!data.length || data.length > 4 * 1024 * 1024) return @{};
+  id decoded = [NSJSONSerialization JSONObjectWithData:data
+                                               options:0
+                                                 error:nil];
+  if (![decoded isKindOfClass:NSDictionary.class]) return @{};
+  NSDictionary<NSString *, id> *manifest =
+      static_cast<NSDictionary<NSString *, id> *>(decoded);
+  NSString *version = [manifest[@"version"] isKindOfClass:NSString.class]
+      ? manifest[@"version"]
+      : nil;
+  if (!version.length) return @{};
+
+  NSMutableDictionary<NSString *, NSString *> *metadata =
+      [@{@"version": version} mutableCopy];
+  NSString *encodedKey = [manifest[@"key"] isKindOfClass:NSString.class]
+      ? manifest[@"key"]
+      : nil;
+  NSString *identifier = RexExtensionIDFromManifestKey(encodedKey);
+  if (identifier.length) metadata[@"id"] = identifier;
+  return [metadata copy];
+}
+
+NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *
+RexExtensionManifestMetadataByPath(NSArray<NSString *> *paths) {
+  NSMutableDictionary<
+      NSString *,
+      NSDictionary<NSString *, NSString *> *> *metadata =
+      [NSMutableDictionary dictionaryWithCapacity:paths.count];
+  for (NSString *path in paths) {
+    metadata[path] = RexExtensionManifestMetadata(path);
+  }
+  return [metadata copy];
+}
+
+NSArray<NSString *> *RexUpdatedExtensionPaths(
+    NSArray<NSString *> *desired_paths,
+    NSDictionary<NSString *, NSString *> *known_fingerprints,
+    BOOL detect_updates) {
+  if (!detect_updates) return @[];
+  NSMutableArray<NSString *> *updated = [NSMutableArray array];
+  for (NSString *path in desired_paths) {
+    NSString *known = known_fingerprints[path];
+    NSString *current = RexExtensionPathFingerprint(path);
+    if (known.length && current.length && ![known isEqualToString:current]) {
+      [updated addObject:path];
+    }
+  }
+  return [updated copy];
+}
+
+bool RexURLWaitsForExtensionRuntime(NSString *value) {
+  NSString *scheme =
+      [NSURLComponents componentsWithString:value].scheme.lowercaseString;
+  return [scheme isEqualToString:@"http"] ||
+         [scheme isEqualToString:@"https"] ||
+         [scheme isEqualToString:@"chrome-extension"];
+}
+
+NSDictionary<NSString *, NSDictionary<NSString *, id> *> *
+RexLiveExtensionsByPath(
+    NSArray<NSDictionary<NSString *, id> *> *extensions) {
+  NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *result =
+      [NSMutableDictionary dictionaryWithCapacity:extensions.count];
+  for (NSDictionary<NSString *, id> *extension in extensions) {
+    NSString *path = [extension[@"path"] isKindOfClass:NSString.class]
+        ? extension[@"path"]
+        : nil;
+    if (!path.length) continue;
+    result[path] = extension;
+  }
+  return result;
+}
+
+NSArray<NSString *> *RexLiveExtensionPaths(
+    NSArray<NSDictionary<NSString *, id> *> *extensions) {
+  NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSet];
+  for (NSDictionary<NSString *, id> *extension in extensions) {
+    NSString *path = [extension[@"path"] isKindOfClass:NSString.class]
+        ? extension[@"path"]
+        : nil;
+    if (path.length && [extension[@"enabled"] boolValue]) [paths addObject:path];
+  }
+  return [[paths array] sortedArrayUsingSelector:@selector(compare:)];
+}
+
+NSArray<NSString *> *RexLiveExtensionIDs(
+    NSArray<NSDictionary<NSString *, id> *> *extensions) {
+  NSMutableOrderedSet<NSString *> *identifiers =
+      [NSMutableOrderedSet orderedSet];
+  for (NSDictionary<NSString *, id> *extension in extensions) {
+    NSString *identifier = [extension[@"id"] isKindOfClass:NSString.class]
+        ? extension[@"id"]
+        : nil;
+    if (identifier.length && [extension[@"enabled"] boolValue]) {
+      [identifiers addObject:identifier];
+    }
+  }
+  return [[identifiers array] sortedArrayUsingSelector:@selector(compare:)];
+}
+
+NSError *RexVerifyManagedExtensionSet(
+    NSArray<NSString *> *desired_paths,
+    NSArray<NSDictionary<NSString *, id> *> *extensions,
+    NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *>
+        *manifest_metadata_by_path,
+    NSDictionary<NSString *, NSString *> *expected_ids_by_path,
+    NSUInteger generation) {
+  NSDictionary<NSString *, NSDictionary<NSString *, id> *> *by_path =
+      RexLiveExtensionsByPath(extensions);
+  NSSet<NSString *> *desired = [NSSet setWithArray:desired_paths];
+  NSMutableArray<NSString *> *missing = [NSMutableArray array];
+  NSMutableArray<NSString *> *disabled = [NSMutableArray array];
+  NSMutableArray<NSString *> *invalidManifests = [NSMutableArray array];
+  NSMutableArray<NSDictionary<NSString *, NSString *> *> *idMismatches =
+      [NSMutableArray array];
+  NSMutableArray<NSDictionary<NSString *, NSString *> *> *versionMismatches =
+      [NSMutableArray array];
+  for (NSString *path in desired_paths) {
+    NSDictionary<NSString *, id> *extension = by_path[path];
+    if (!extension) {
+      [missing addObject:path];
+      continue;
+    }
+    if (![extension[@"enabled"] boolValue]) {
+      [disabled addObject:path];
+    }
+
+    NSDictionary<NSString *, NSString *> *manifestMetadata =
+        manifest_metadata_by_path[path];
+    NSString *expectedVersion = manifestMetadata[@"version"];
+    if (!expectedVersion.length) {
+      [invalidManifests addObject:path];
+    } else {
+      NSString *actualVersion = extension[@"version"];
+      if (![actualVersion isEqualToString:expectedVersion]) {
+        [versionMismatches addObject:@{
+          @"path": path,
+          @"expected": expectedVersion,
+          @"actual": actualVersion ?: @""
+        }];
+      }
+    }
+
+    NSString *expectedID =
+        manifestMetadata[@"id"] ?: expected_ids_by_path[path];
+    NSString *actualID = extension[@"id"];
+    if (!actualID.length ||
+        (expectedID.length && ![actualID isEqualToString:expectedID])) {
+      [idMismatches addObject:@{
+        @"path": path,
+        @"expected": expectedID ?: @"",
+        @"actual": actualID ?: @""
+      }];
+    }
+  }
+
+  NSMutableArray<NSString *> *unexpected = [NSMutableArray array];
+  NSMutableDictionary<NSString *, NSNumber *> *pathCounts =
+      [NSMutableDictionary dictionary];
+  for (NSDictionary<NSString *, id> *extension in extensions) {
+    NSString *path = extension[@"path"];
+    if (!path.length) continue;
+    pathCounts[path] = @([pathCounts[path] unsignedIntegerValue] + 1);
+    if (![desired containsObject:path]) {
+      [unexpected addObject:path];
+    }
+  }
+  NSMutableArray<NSString *> *duplicatePaths = [NSMutableArray array];
+  for (NSString *path in pathCounts) {
+    if (pathCounts[path].unsignedIntegerValue > 1) {
+      [duplicatePaths addObject:path];
+    }
+  }
+  [unexpected sortUsingSelector:@selector(compare:)];
+  [duplicatePaths sortUsingSelector:@selector(compare:)];
+
+  if (!missing.count && !disabled.count && !invalidManifests.count &&
+      !idMismatches.count && !versionMismatches.count &&
+      !unexpected.count && !duplicatePaths.count) {
+    return nil;
+  }
+  return RexExtensionRuntimeError(
+      40,
+      @"Chromium 扩展运行时与请求的扩展身份集合不一致",
+      @{
+        @"generation": @(generation),
+        @"missingPaths": missing,
+        @"disabledPaths": disabled,
+        @"invalidManifestPaths": invalidManifests,
+        @"idMismatches": idMismatches,
+        @"versionMismatches": versionMismatches,
+        @"unexpectedPaths": unexpected,
+        @"duplicatePaths": duplicatePaths,
+        @"loadedPaths": RexLiveExtensionPaths(extensions)
+      });
+}
+
+NSArray<NSDictionary<NSString *, id> *> *RexExtensionReconcileOperations(
+    NSArray<NSDictionary<NSString *, id> *> *extensions,
+    NSArray<NSString *> *desired_paths,
+    NSSet<NSString *> *updated_paths,
+    NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *>
+        *manifest_metadata_by_path) {
+  NSDictionary<NSString *, NSDictionary<NSString *, id> *> *by_path =
+      RexLiveExtensionsByPath(extensions);
+  NSSet<NSString *> *desired = [NSSet setWithArray:desired_paths];
+  BOOL (^requiresReload)(
+      NSString *,
+      NSDictionary<NSString *, id> *) =
+      ^BOOL(NSString *path, NSDictionary<NSString *, id> *extension) {
+    if (!extension || ![extension[@"enabled"] boolValue] ||
+        [updated_paths containsObject:path]) {
+      return YES;
+    }
+    NSDictionary<NSString *, NSString *> *manifestMetadata =
+        manifest_metadata_by_path[path];
+    NSString *expectedVersion = manifestMetadata[@"version"];
+    NSString *expectedID = manifestMetadata[@"id"];
+    return (expectedVersion.length &&
+            ![extension[@"version"] isEqualToString:expectedVersion]) ||
+           (expectedID.length &&
+            ![extension[@"id"] isEqualToString:expectedID]);
+  };
+
+  NSMutableArray<NSDictionary<NSString *, id> *> *uninstalls =
+      [NSMutableArray array];
+  for (NSDictionary<NSString *, id> *extension in extensions) {
+    NSString *path = [extension[@"path"] isKindOfClass:NSString.class]
+        ? extension[@"path"]
+        : nil;
+    NSString *identifier = [extension[@"id"] isKindOfClass:NSString.class]
+        ? extension[@"id"]
+        : nil;
+    if (!path.length || !identifier.length) continue;
+    if (![desired containsObject:path] || requiresReload(path, extension)) {
+      [uninstalls addObject:@{
+        @"type": @"uninstall",
+        @"id": identifier,
+        @"path": path
+      }];
+    }
+  }
+
+  NSMutableArray<NSDictionary<NSString *, id> *> *loads =
+      [NSMutableArray array];
+  for (NSString *path in desired_paths) {
+    NSDictionary<NSString *, id> *extension = by_path[path];
+    if (requiresReload(path, extension)) {
+      [loads addObject:@{@"type": @"load", @"path": path}];
+    }
+  }
+  [uninstalls addObjectsFromArray:loads];
+  return uninstalls;
 }
 
 std::string RexDownloadKey(NSString *tabID, uint32_t downloadID) {
@@ -417,11 +888,108 @@ class RexRequestContextHandler final : public CefRequestContextHandler {
   IMPLEMENT_REFCOUNTING(RexRequestContextHandler);
 };
 
+class RexExtensionChromeBrowserViewDelegate final
+    : public CefBrowserViewDelegate {
+ public:
+  cef_runtime_style_t GetBrowserRuntimeStyle() override {
+    return CEF_RUNTIME_STYLE_CHROME;
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(RexExtensionChromeBrowserViewDelegate);
+};
+
+class RexExtensionChromeWindowDelegate final : public CefWindowDelegate {
+ public:
+  explicit RexExtensionChromeWindowDelegate(
+      CefRefPtr<CefBrowserView> browser_view)
+      : browser_view_(browser_view) {}
+
+  void OnWindowCreated(CefRefPtr<CefWindow> window) override {
+    window->AddChildView(browser_view_);
+  }
+
+  void OnWindowDestroyed(CefRefPtr<CefWindow> window) override {
+    browser_view_ = nullptr;
+  }
+
+  bool CanClose(CefRefPtr<CefWindow> window) override {
+    CefRefPtr<CefBrowser> browser =
+        browser_view_ ? browser_view_->GetBrowser() : nullptr;
+    return !browser || browser->GetHost()->TryCloseBrowser();
+  }
+
+  CefRect GetInitialBounds(CefRefPtr<CefWindow> window) override {
+    return CefRect(0, 0, 1, 1);
+  }
+
+  cef_show_state_t GetInitialShowState(CefRefPtr<CefWindow> window) override {
+    return CEF_SHOW_STATE_HIDDEN;
+  }
+
+  cef_runtime_style_t GetWindowRuntimeStyle() override {
+    return CEF_RUNTIME_STYLE_CHROME;
+  }
+
+ private:
+  CefRefPtr<CefBrowserView> browser_view_;
+  IMPLEMENT_REFCOUNTING(RexExtensionChromeWindowDelegate);
+};
+
+class RexDefaultChromeClient final : public CefClient,
+                                     public CefLifeSpanHandler,
+                                     public CefLoadHandler,
+                                     public CefRequestHandler {
+ public:
+  explicit RexDefaultChromeClient(__weak RexChromiumRuntime *runtime)
+      : runtime_(runtime) {}
+
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+  CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+  bool DoClose(CefRefPtr<CefBrowser> browser) override { return false; }
+  void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                      CefRefPtr<CefFrame> frame,
+                      CefRefPtr<CefRequest> request,
+                      bool user_gesture,
+                      bool is_redirect) override;
+  void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   TransitionType transition_type) override;
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int http_status_code) override;
+
+  bool CreateExtensionWindowHost();
+  void ForwardBlankBrowserIfStillPending(int browser_id);
+  void CloseAllBrowsers();
+  size_t BrowserCount() const { return browsers_.size(); }
+
+ private:
+  __weak RexChromiumRuntime *runtime_;
+  std::map<int, CefRefPtr<CefBrowser>> browsers_;
+  std::set<int> forwarding_browser_ids_;
+  std::set<int> pending_blank_browser_ids_;
+  CefRefPtr<CefBrowserView> extension_window_host_view_;
+  int extension_window_host_browser_id_ = 0;
+  IMPLEMENT_REFCOUNTING(RexDefaultChromeClient);
+};
+
 class RexCEFApp final : public CefApp, public CefBrowserProcessHandler {
  public:
   explicit RexCEFApp(
-      std::shared_ptr<std::atomic_bool> block_third_party_cookies)
-      : block_third_party_cookies_(std::move(block_third_party_cookies)) {}
+      std::shared_ptr<std::atomic_bool> block_third_party_cookies,
+      std::vector<std::string> extension_paths,
+      CefRefPtr<RexDefaultChromeClient> default_client,
+      __weak RexChromiumRuntime *runtime,
+      bool extension_pipe_enabled)
+      : block_third_party_cookies_(std::move(block_third_party_cookies)),
+        extension_paths_(std::move(extension_paths)),
+        default_client_(default_client),
+        runtime_(runtime),
+        extension_pipe_enabled_(extension_pipe_enabled) {}
 
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
@@ -431,6 +999,17 @@ class RexCEFApp final : public CefApp, public CefBrowserProcessHandler {
     RexApplyThirdPartyCookiePreference(
         CefRequestContext::GetGlobalContext(),
         block_third_party_cookies_->load(std::memory_order_relaxed), "global");
+    NSLog(@"[Rex] Chromium context initialized with %lu extension package(s)",
+          static_cast<unsigned long>(extension_paths_.size()));
+    if (!extension_paths_.empty() && default_client_) {
+      default_client_->CreateExtensionWindowHost();
+    }
+    RexChromiumRuntime *runtime = runtime_;
+    if (runtime) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [runtime chromiumContextInitialized];
+      });
+    }
   }
 
   void OnBeforeCommandLineProcessing(
@@ -440,14 +1019,50 @@ class RexCEFApp final : public CefApp, public CefBrowserProcessHandler {
     // Empty process_type is the browser process.
     if (process_type.empty()) {
       rex::thorium::ApplyBrowserProcessFlags(command_line);
+      std::string joined_paths;
+      for (const std::string &path : extension_paths_) {
+        if (!joined_paths.empty()) joined_paths.push_back(',');
+        joined_paths += path;
+      }
+
+      command_line->RemoveSwitch("remote-debugging-port");
+      command_line->RemoveSwitch("remote-debugging-address");
+      command_line->RemoveSwitch("remote-debugging-pipe");
+      command_line->RemoveSwitch("disable-extensions");
+      command_line->RemoveSwitch("disable-extensions-except");
+      command_line->RemoveSwitch("load-extension");
+      if (!joined_paths.empty()) {
+        command_line->AppendSwitchWithValue("load-extension", joined_paths);
+      }
+      if (extension_pipe_enabled_) {
+        command_line->AppendSwitch("remote-debugging-pipe");
+      }
     } else {
+      command_line->RemoveSwitch("remote-debugging-pipe");
       rex::thorium::ApplyChildProcessFlags(command_line);
     }
   }
 
   void OnBeforeChildProcessLaunch(
       CefRefPtr<CefCommandLine> command_line) override {
+    if (command_line) command_line->RemoveSwitch("remote-debugging-pipe");
     rex::thorium::ApplyChildProcessFlags(command_line);
+  }
+
+  CefRefPtr<CefClient> GetDefaultClient() override {
+    return default_client_;
+  }
+
+  void CloseDefaultBrowsers() {
+    if (default_client_) default_client_->CloseAllBrowsers();
+  }
+
+  bool EnsureExtensionWindowHost() {
+    return default_client_ && default_client_->CreateExtensionWindowHost();
+  }
+
+  size_t DefaultBrowserCount() const {
+    return default_client_ ? default_client_->BrowserCount() : 0;
   }
 
   void OnScheduleMessagePumpWork(int64_t delay_ms) override {
@@ -544,10 +1159,595 @@ class RexCEFApp final : public CefApp, public CefBrowserProcessHandler {
   uint64_t timer_generation_ = 0;
   NSTimer *__strong pump_timer_ = nil;
   std::shared_ptr<std::atomic_bool> block_third_party_cookies_;
+  const std::vector<std::string> extension_paths_;
+  CefRefPtr<RexDefaultChromeClient> default_client_;
+  __weak RexChromiumRuntime *runtime_;
+  const bool extension_pipe_enabled_;
   IMPLEMENT_REFCOUNTING(RexCEFApp);
 };
 
 }  // namespace
+
+@implementation RexDevToolsPipeWriteRequest
+@end
+
+@implementation RexExtensionSyncRequest
+@end
+
+@interface RexDevToolsPipeController ()
+- (void)readAvailableResponses;
+- (void)consumeResponseFrame:(NSData *)frame;
+- (void)drainPendingWrites;
+- (void)armWriteSource;
+- (void)failAllPendingWithError:(NSError *)error;
+- (void)stopOnQueueWithError:(NSError *)error;
+@end
+
+@implementation RexDevToolsPipeController
+
+static void *kRexDevToolsPipeQueueKey = &kRexDevToolsPipeQueueKey;
+
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    _requestWriteFD = -1;
+    _responseReadFD = -1;
+    _nextMessageID = 1;
+    _queue = dispatch_queue_create(
+        "com.rex.browser.extension-devtools-pipe",
+        DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_set_specific(
+        _queue,
+        kRexDevToolsPipeQueueKey,
+        (__bridge void *)self,
+        nullptr);
+    _readBuffer = [[NSMutableData alloc] init];
+    _pending = [[NSMutableDictionary alloc] init];
+    _outboundWrites = [[NSMutableArray alloc] init];
+  }
+  return self;
+}
+
+- (BOOL)isPrepared {
+  if (dispatch_get_specific(kRexDevToolsPipeQueueKey) ==
+      (__bridge void *)self) {
+    return _prepared;
+  }
+  __block BOOL prepared = NO;
+  dispatch_sync(_queue, ^{
+    prepared = self->_prepared;
+  });
+  return prepared;
+}
+
+- (BOOL)prepareWithError:(NSError **)error {
+  NSAssert(NSThread.isMainThread,
+           @"The DevTools pipe must be prepared before CEF initialization");
+  if (_prepared) return YES;
+
+  errno = 0;
+  const BOOL descriptor3Occupied =
+      fcntl(3, F_GETFD) != -1 || errno != EBADF;
+  errno = 0;
+  const BOOL descriptor4Occupied =
+      fcntl(4, F_GETFD) != -1 || errno != EBADF;
+  if (descriptor3Occupied || descriptor4Occupied) {
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          20,
+          @"无法安全建立 Chromium 扩展控制管道：文件描述符 3/4 已被占用");
+    }
+    return NO;
+  }
+
+  // Reserve Chromium's fixed pipe descriptors before creating socket pairs so
+  // no endpoint is accidentally allocated as fd 3 or fd 4 and then clobbered.
+  const int descriptor3 = open("/dev/null", O_RDWR | O_CLOEXEC);
+  const int descriptor4 = open("/dev/null", O_RDWR | O_CLOEXEC);
+  if (descriptor3 != 3 || descriptor4 != 4) {
+    if (descriptor3 >= 0) close(descriptor3);
+    if (descriptor4 >= 0) close(descriptor4);
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          21, @"无法保留 Chromium 扩展控制管道的文件描述符");
+    }
+    return NO;
+  }
+
+  int requestPair[2] = {-1, -1};
+  int responsePair[2] = {-1, -1};
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, requestPair) != 0 ||
+      socketpair(AF_UNIX, SOCK_STREAM, 0, responsePair) != 0) {
+    const int savedErrno = errno;
+    for (int descriptor : requestPair) {
+      if (descriptor >= 0) close(descriptor);
+    }
+    for (int descriptor : responsePair) {
+      if (descriptor >= 0) close(descriptor);
+    }
+    close(3);
+    close(4);
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          22,
+          [NSString stringWithFormat:
+              @"无法建立 Chromium 扩展控制管道：%s",
+              strerror(savedErrno)]);
+    }
+    return NO;
+  }
+
+  BOOL closeOnExecConfigured = YES;
+  for (int descriptor : requestPair) {
+    closeOnExecConfigured &=
+        fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0;
+  }
+  for (int descriptor : responsePair) {
+    closeOnExecConfigured &=
+        fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0;
+  }
+  if (!closeOnExecConfigured) {
+    const int savedErrno = errno;
+    for (int descriptor : requestPair) close(descriptor);
+    for (int descriptor : responsePair) close(descriptor);
+    close(3);
+    close(4);
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          23,
+          [NSString stringWithFormat:
+              @"无法保护 Chromium 扩展控制管道描述符：%s",
+              strerror(savedErrno)]);
+    }
+    return NO;
+  }
+
+  const BOOL mapped =
+      dup2(requestPair[1], 3) == 3 && dup2(responsePair[1], 4) == 4;
+  if (!mapped) {
+    const int savedErrno = errno;
+    for (int descriptor : requestPair) close(descriptor);
+    for (int descriptor : responsePair) close(descriptor);
+    close(3);
+    close(4);
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          23,
+          [NSString stringWithFormat:
+              @"无法映射 Chromium 扩展控制管道：%s",
+              strerror(savedErrno)]);
+    }
+    return NO;
+  }
+
+  if (fcntl(3, F_SETFD, FD_CLOEXEC) != 0 ||
+      fcntl(4, F_SETFD, FD_CLOEXEC) != 0) {
+    const int savedErrno = errno;
+    for (int descriptor : requestPair) close(descriptor);
+    for (int descriptor : responsePair) close(descriptor);
+    close(3);
+    close(4);
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          23,
+          [NSString stringWithFormat:
+              @"无法保护 Chromium 扩展控制管道固定描述符：%s",
+              strerror(savedErrno)]);
+    }
+    return NO;
+  }
+  _requestWriteFD = requestPair[0];
+  _responseReadFD = responsePair[0];
+  close(requestPair[1]);
+  close(responsePair[1]);
+
+  const int writeFlags = fcntl(_requestWriteFD, F_GETFL, 0);
+  const int readFlags = fcntl(_responseReadFD, F_GETFL, 0);
+  if (writeFlags < 0 || readFlags < 0 ||
+      fcntl(_requestWriteFD, F_SETFL, writeFlags | O_NONBLOCK) != 0 ||
+      fcntl(_responseReadFD, F_SETFL, readFlags | O_NONBLOCK) != 0) {
+    const int savedErrno = errno;
+    close(_requestWriteFD);
+    close(_responseReadFD);
+    close(3);
+    close(4);
+    _requestWriteFD = -1;
+    _responseReadFD = -1;
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          24,
+          [NSString stringWithFormat:
+              @"无法将 Chromium 扩展控制管道设为非阻塞模式：%s",
+              strerror(savedErrno)]);
+    }
+    return NO;
+  }
+  int noSigPipe = 1;
+  if (setsockopt(_requestWriteFD, SOL_SOCKET, SO_NOSIGPIPE,
+                 &noSigPipe, sizeof(noSigPipe)) != 0 ||
+      setsockopt(4, SOL_SOCKET, SO_NOSIGPIPE,
+                 &noSigPipe, sizeof(noSigPipe)) != 0) {
+    const int savedErrno = errno;
+    close(_requestWriteFD);
+    close(_responseReadFD);
+    close(3);
+    close(4);
+    _requestWriteFD = -1;
+    _responseReadFD = -1;
+    if (error) {
+      *error = RexExtensionRuntimeError(
+          24,
+          [NSString stringWithFormat:
+              @"无法禁用 Chromium 扩展控制管道 SIGPIPE：%s",
+              strerror(savedErrno)]);
+    }
+    return NO;
+  }
+
+  _ownsChromiumFDs = YES;
+  _prepared = YES;
+  return YES;
+}
+
+- (void)startReading {
+  NSAssert(NSThread.isMainThread,
+           @"The DevTools pipe reader must start on the main thread");
+  if (!_prepared || _reading || _stopped ||
+      _responseReadFD < 0 || _requestWriteFD < 0) {
+    return;
+  }
+  _reading = YES;
+
+  const int requestWriteFD = _requestWriteFD;
+  _writeSource = dispatch_source_create(
+      DISPATCH_SOURCE_TYPE_WRITE,
+      static_cast<uintptr_t>(requestWriteFD),
+      0,
+      _queue);
+  _writeSourceSuspended = YES;
+  __weak RexDevToolsPipeController *weakSelf = self;
+  dispatch_source_set_event_handler(_writeSource, ^{
+    [weakSelf drainPendingWrites];
+  });
+  dispatch_source_set_cancel_handler(_writeSource, ^{
+    close(requestWriteFD);
+  });
+
+  const int responseReadFD = _responseReadFD;
+  _readSource = dispatch_source_create(
+      DISPATCH_SOURCE_TYPE_READ,
+      static_cast<uintptr_t>(responseReadFD),
+      0,
+      _queue);
+  dispatch_source_set_event_handler(_readSource, ^{
+    [weakSelf readAvailableResponses];
+  });
+  dispatch_source_set_cancel_handler(_readSource, ^{
+    close(responseReadFD);
+  });
+  dispatch_resume(_readSource);
+}
+
+- (void)executeMethod:(NSString *)method
+               params:(NSDictionary<NSString *, id> *)params
+           completion:(RexDevToolsPipeCompletion)completion {
+  NSString *methodCopy = [method copy];
+  NSDictionary<NSString *, id> *paramsCopy = [params copy] ?: @{};
+  RexDevToolsPipeCompletion completionCopy = [completion copy];
+  dispatch_async(_queue, ^{
+    if (!self->_prepared || self->_stopped ||
+        self->_requestWriteFD < 0) {
+      NSError *pipeError = RexExtensionRuntimeError(
+          24, @"Chromium 扩展控制管道不可用");
+      dispatch_async(dispatch_get_main_queue(), ^{
+        completionCopy(nil, pipeError);
+      });
+      return;
+    }
+
+    const uint64_t messageID = self->_nextMessageID++;
+    NSNumber *key = @(messageID);
+    self->_pending[key] = completionCopy;
+    NSDictionary<NSString *, id> *message = @{
+      @"id": key,
+      @"method": methodCopy,
+      @"params": paramsCopy
+    };
+    NSError *serializationError = nil;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:message
+                                                   options:0
+                                                     error:&serializationError];
+    if (!json) {
+      [self->_pending removeObjectForKey:key];
+      NSError *resultError = RexExtensionRuntimeError(
+          25,
+          @"无法编码 Chromium 扩展控制命令",
+          serializationError
+              ? @{NSUnderlyingErrorKey: serializationError}
+              : @{});
+      dispatch_async(dispatch_get_main_queue(), ^{
+        completionCopy(nil, resultError);
+      });
+      return;
+    }
+
+    NSMutableData *framed = [json mutableCopy];
+    const uint8_t terminator = 0;
+    [framed appendBytes:&terminator length:1];
+    RexDevToolsPipeWriteRequest *writeRequest =
+        [[RexDevToolsPipeWriteRequest alloc] init];
+    writeRequest.messageID = key;
+    writeRequest.method = methodCopy;
+    writeRequest.payload = framed;
+    [self->_outboundWrites addObject:writeRequest];
+    [self drainPendingWrites];
+
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC),
+        self->_queue, ^{
+          RexDevToolsPipeCompletion pending = self->_pending[key];
+          if (!pending) return;
+          const BOOL mutationMayCompleteLate =
+              [methodCopy isEqualToString:@"Extensions.loadUnpacked"] ||
+              [methodCopy isEqualToString:@"Extensions.uninstall"];
+          NSError *timeoutError = RexExtensionRuntimeError(
+              27,
+              mutationMayCompleteLate
+                  ? [NSString stringWithFormat:
+                      @"Chromium 扩展变更命令超时，运行时状态未知，请重新启动 Rex：%@",
+                      methodCopy]
+                  : [NSString stringWithFormat:
+                      @"Chromium 扩展控制命令超时：%@",
+                      methodCopy],
+              mutationMayCompleteLate
+                  ? @{@"requiresRestart": @YES,
+                      @"runtimeState": @"unknown",
+                      @"method": methodCopy}
+                  : @{@"method": methodCopy});
+          const BOOL writeIncomplete =
+              [self->_outboundWrites indexOfObjectPassingTest:^BOOL(
+                  RexDevToolsPipeWriteRequest *request,
+                  NSUInteger index,
+                  BOOL *stop) {
+                return [request.messageID isEqualToNumber:key];
+              }] != NSNotFound;
+          if (writeIncomplete || mutationMayCompleteLate) {
+            // A partially written NUL-delimited frame cannot be discarded
+            // without corrupting the stream. A fully written mutation also
+            // cannot be cancelled and may complete after its timeout, so poison
+            // the channel instead of attempting a false rollback/commit.
+            [self stopOnQueueWithError:timeoutError];
+            return;
+          }
+          [self->_pending removeObjectForKey:key];
+          dispatch_async(dispatch_get_main_queue(), ^{
+            pending(nil, timeoutError);
+          });
+        });
+  });
+}
+
+- (void)drainPendingWrites {
+  while (_outboundWrites.count && !_stopped && _requestWriteFD >= 0) {
+    RexDevToolsPipeWriteRequest *request = _outboundWrites.firstObject;
+    const uint8_t *bytes =
+        static_cast<const uint8_t *>(request.payload.bytes);
+    while (request.offset < request.payload.length) {
+      const ssize_t count = write(
+          _requestWriteFD,
+          bytes + request.offset,
+          request.payload.length - request.offset);
+      if (count > 0) {
+        request.offset += static_cast<NSUInteger>(count);
+        continue;
+      }
+      if (count < 0 && errno == EINTR) continue;
+      if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        [self armWriteSource];
+        return;
+      }
+
+      const int savedErrno = count == 0 ? EPIPE : errno;
+      [self stopOnQueueWithError:RexExtensionRuntimeError(
+          26,
+          [NSString stringWithFormat:
+              @"无法写入 Chromium 扩展控制管道：%s",
+              strerror(savedErrno)])];
+      return;
+    }
+    [_outboundWrites removeObjectAtIndex:0];
+  }
+
+  if (!_outboundWrites.count && _writeSource &&
+      !_writeSourceSuspended) {
+    _writeSourceSuspended = YES;
+    dispatch_suspend(_writeSource);
+  }
+}
+
+- (void)armWriteSource {
+  if (!_writeSource || !_writeSourceSuspended ||
+      _stopped || _requestWriteFD < 0) {
+    return;
+  }
+  _writeSourceSuspended = NO;
+  dispatch_resume(_writeSource);
+}
+
+- (void)readAvailableResponses {
+  if (_responseReadFD < 0 || _stopped) return;
+  uint8_t bytes[64 * 1024];
+  while (true) {
+    const ssize_t count = read(_responseReadFD, bytes, sizeof(bytes));
+    if (count > 0) {
+      [_readBuffer appendBytes:bytes length:static_cast<NSUInteger>(count)];
+      if (_readBuffer.length > 8 * 1024 * 1024) {
+        [self stopOnQueueWithError:RexExtensionRuntimeError(
+            28, @"Chromium 扩展控制响应超过安全大小限制")];
+        return;
+      }
+
+      const uint8_t delimiter = 0;
+      NSData *delimiterData = [NSData dataWithBytes:&delimiter length:1];
+      while (true) {
+        NSRange range = [_readBuffer rangeOfData:delimiterData
+                                        options:0
+                                          range:NSMakeRange(
+                                              0, _readBuffer.length)];
+        if (range.location == NSNotFound) break;
+        NSData *frame = [_readBuffer subdataWithRange:
+            NSMakeRange(0, range.location)];
+        [_readBuffer replaceBytesInRange:
+            NSMakeRange(0, NSMaxRange(range))
+                                withBytes:nullptr
+                                   length:0];
+        if (frame.length) [self consumeResponseFrame:frame];
+      }
+      continue;
+    }
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
+    const int savedErrno = errno;
+    NSString *description = count == 0
+        ? @"Chromium 扩展控制管道已到达 EOF"
+        : [NSString stringWithFormat:
+            @"Chromium 扩展控制管道读取失败：%s",
+            strerror(savedErrno)];
+    [self stopOnQueueWithError:RexExtensionRuntimeError(29, description)];
+    return;
+  }
+}
+
+- (void)consumeResponseFrame:(NSData *)frame {
+  NSError *parseError = nil;
+  id decoded = [NSJSONSerialization JSONObjectWithData:frame
+                                               options:0
+                                                 error:&parseError];
+  if (![decoded isKindOfClass:NSDictionary.class]) {
+    NSLog(@"[Rex] ignored malformed extension DevTools response: %@",
+          parseError.localizedDescription ?: @"not a dictionary");
+    return;
+  }
+  NSDictionary<NSString *, id> *message =
+      static_cast<NSDictionary<NSString *, id> *>(decoded);
+  NSNumber *messageID = [message[@"id"] isKindOfClass:NSNumber.class]
+      ? message[@"id"]
+      : nil;
+  if (!messageID) return;
+  RexDevToolsPipeCompletion completion = _pending[messageID];
+  if (!completion) return;
+  [_pending removeObjectForKey:messageID];
+
+  NSDictionary<NSString *, id> *errorPayload =
+      [message[@"error"] isKindOfClass:NSDictionary.class]
+          ? message[@"error"]
+          : nil;
+  if (errorPayload) {
+    NSString *errorMessage =
+        [errorPayload[@"message"] isKindOfClass:NSString.class]
+            ? errorPayload[@"message"]
+            : @"Chromium 扩展控制命令失败";
+    NSError *error = RexExtensionRuntimeError(
+        30, errorMessage, @{@"devToolsError": errorPayload});
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(nil, error);
+    });
+    return;
+  }
+
+  NSDictionary<NSString *, id> *result =
+      [message[@"result"] isKindOfClass:NSDictionary.class]
+          ? message[@"result"]
+          : @{};
+  dispatch_async(dispatch_get_main_queue(), ^{
+    completion(result, nil);
+  });
+}
+
+- (void)failAllPendingWithError:(NSError *)error {
+  NSDictionary<NSNumber *, RexDevToolsPipeCompletion> *pending =
+      [_pending copy];
+  [_pending removeAllObjects];
+  for (RexDevToolsPipeCompletion completion in pending.allValues) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(nil, error);
+    });
+  }
+}
+
+- (void)stopOnQueueWithError:(NSError *)error {
+  if (_stopped) return;
+  _stopped = YES;
+  _prepared = NO;
+  _reading = NO;
+  [_outboundWrites removeAllObjects];
+  [_readBuffer setLength:0];
+
+  if (_writeSource) {
+    if (_writeSourceSuspended) {
+      _writeSourceSuspended = NO;
+      dispatch_resume(_writeSource);
+    }
+    dispatch_source_cancel(_writeSource);
+    _writeSource = nil;
+    _requestWriteFD = -1;
+  } else if (_requestWriteFD >= 0) {
+    close(_requestWriteFD);
+    _requestWriteFD = -1;
+  }
+  if (_readSource) {
+    dispatch_source_cancel(_readSource);
+    _readSource = nil;
+    _responseReadFD = -1;
+  } else if (_responseReadFD >= 0) {
+    close(_responseReadFD);
+    _responseReadFD = -1;
+  }
+  if (_ownsChromiumFDs) {
+    // Chromium's DevToolsPipeHandler keeps the numeric descriptors and may
+    // asynchronously call shutdown after Rex observes an error. Disconnect
+    // now, but keep 3/4 occupied until CefShutdown has fully returned.
+    shutdown(3, SHUT_RDWR);
+    shutdown(4, SHUT_RDWR);
+  }
+  [self failAllPendingWithError:error];
+}
+
+- (void)shutdown {
+  if (!_queue) return;
+  dispatch_block_t stop = ^{
+    [self stopOnQueueWithError:RexExtensionRuntimeError(
+        31, @"Chromium 扩展控制管道已关闭")];
+  };
+  if (dispatch_get_specific(kRexDevToolsPipeQueueKey) ==
+      (__bridge void *)self) {
+    stop();
+  } else {
+    dispatch_sync(_queue, stop);
+  }
+}
+
+- (void)releaseChromiumDescriptors {
+  if (!_queue) return;
+  dispatch_block_t release = ^{
+    if (!self->_ownsChromiumFDs) return;
+    close(3);
+    close(4);
+    self->_ownsChromiumFDs = NO;
+  };
+  if (dispatch_get_specific(kRexDevToolsPipeQueueKey) ==
+      (__bridge void *)self) {
+    release();
+  } else {
+    dispatch_sync(_queue, release);
+  }
+}
+
+- (void)dealloc {
+  [self shutdown];
+}
+
+@end
 
 namespace {
 
@@ -738,6 +1938,8 @@ class RexBrowserClient final : public CefClient,
                        const CefString &url) override;
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString &title) override;
+  bool OnAutoResize(CefRefPtr<CefBrowser> browser,
+                    const CefSize &new_size) override;
   void OnFaviconURLChange(
       CefRefPtr<CefBrowser> browser,
       const std::vector<CefString> &icon_urls) override;
@@ -784,6 +1986,10 @@ class RexBrowserClient final : public CefClient,
                                  const CefString &error_string) override;
 
  private:
+  bool IsPrimaryBrowser(CefRefPtr<CefBrowser> browser) const {
+    return browser && primary_browser_identifier_ > 0 &&
+           browser->GetIdentifier() == primary_browser_identifier_;
+  }
   void Emit(NSString *kind, NSDictionary<NSString *, id> *fields = @{});
   void EmitBlockedResource(NSString *category, const std::string &host);
   void EmitMediaAccess(bool has_video_access, bool has_audio_access);
@@ -791,7 +1997,10 @@ class RexBrowserClient final : public CefClient,
 
   __weak RexChromiumRuntime *runtime_;
   NSString *tab_id_;
+  int primary_browser_identifier_ = 0;
   uint64_t navigation_generation_ = 0;
+  int pending_auto_resize_width_ = 0;
+  int pending_auto_resize_height_ = 0;
   bool has_video_access_ = false;
   bool has_audio_access_ = false;
   IMPLEMENT_REFCOUNTING(RexBrowserClient);
@@ -840,6 +2049,21 @@ class RexDevToolsClient final : public CefClient,
                    profileID:(NSString *)profileID
              privateBrowsing:(BOOL)privateBrowsing;
 - (void)registerBrowser:(CefRefPtr<CefBrowser>)browser tabID:(NSString *)tabID;
+- (void)browser:(CefRefPtr<CefBrowser>)browser
+    preferredContentSizeDidChange:(NSSize)size
+                            tabID:(NSString *)tabID;
+- (void)registerAuxiliaryChromeBrowser:(CefRefPtr<CefBrowser>)browser
+                           sourceTabID:(NSString *)sourceTabID;
+- (void)auxiliaryChromeBrowserDidClose:(CefRefPtr<CefBrowser>)browser;
+- (void)handleDefaultChromeBrowser:(CefRefPtr<CefBrowser>)browser
+                         targetURL:(nullable NSString *)targetURL;
+- (void)parkDefaultChromeBrowser:(CefRefPtr<CefBrowser>)browser;
+- (void)registerExtensionChromeWindowHost:(CefRefPtr<CefBrowser>)browser;
+- (void)extensionChromeWindowHostDidClose;
+- (void)defaultChromeBrowserDidClose;
+- (void)registerChromePopupBrowser:(CefRefPtr<CefBrowser>)browser
+                        sourceTabID:(NSString *)sourceTabID;
+- (void)chromePopupBrowserDidClose:(CefRefPtr<CefBrowser>)browser;
 - (void)forceBrowserRepaintForTabID:(NSString *)tabID;
 - (void)registerDeveloperToolsBrowser:(CefRefPtr<CefBrowser>)browser
                                 tabID:(NSString *)tabID;
@@ -865,7 +2089,8 @@ class RexDevToolsClient final : public CefClient,
 - (void)developerToolsCreationAbortedForTabID:(NSString *)tabID;
 - (void)developerToolsBrowser:(CefRefPtr<CefBrowser>)browser
         didCloseForTabID:(NSString *)tabID;
-- (void)browserDidCloseForTabID:(NSString *)tabID;
+- (void)browser:(CefRefPtr<CefBrowser>)browser
+        didCloseForTabID:(NSString *)tabID;
 - (void)finishTerminationIfReady;
 - (void)emitEvent:(NSDictionary<NSString *, id> *)event;
 - (void)registerMediaPermissionRequestID:(NSString *)requestID
@@ -886,6 +2111,29 @@ class RexDevToolsClient final : public CefClient,
                            tabID:(NSString *)tabID;
 - (void)removeDownloadCallbackID:(uint32_t)downloadID tabID:(NSString *)tabID;
 - (void)removeDownloadCallbacksForTabID:(NSString *)tabID;
+- (void)enqueueExtensionSyncPaths:(NSArray<NSString *> *)paths
+                 forceReloadPaths:(NSArray<NSString *> *)forceReloadPaths
+                          startup:(BOOL)startup
+                       completion:
+                           (nullable RexChromiumExtensionRuntimeCompletion)
+                               completion;
+- (void)startNextExtensionSyncIfNeeded;
+- (void)queryLiveExtensions:(RexExtensionQueryCompletion)completion;
+- (void)performExtensionOperations:
+            (NSArray<NSDictionary<NSString *, id> *> *)operations
+                                index:(NSUInteger)index
+           loadedExtensionIDsByPath:
+               (NSMutableDictionary<NSString *, NSString *> *)loadedIDsByPath
+                           completion:
+                               (RexExtensionOperationsCompletion)completion;
+- (void)finishExtensionSyncRequest:(RexExtensionSyncRequest *)request
+                         extensions:
+                             (NSArray<NSDictionary<NSString *, id> *> *)extensions;
+- (void)failExtensionSyncRequest:(RexExtensionSyncRequest *)request
+                           error:(NSError *)error
+              attemptedMutation:(BOOL)attemptedMutation;
+- (void)releaseExtensionStartupNavigationBarrier;
+- (void)reloadWebPagesAfterExtensionChange;
 @end
 
 class RexFaviconDownloadCallback final : public CefDownloadImageCallback {
@@ -969,6 +2217,8 @@ class RexFaviconDownloadCallback final : public CefDownloadImageCallback {
                                          profileID:self.profileID
                                    privateBrowsing:self.isPrivateBrowsing];
     [RexChromiumRuntime.shared setFocused:YES tabID:self.tabID];
+  } else {
+    [RexChromiumRuntime.shared setFocused:NO tabID:self.tabID];
   }
 }
 
@@ -1043,11 +2293,25 @@ struct RexPendingPermission {
   BOOL _ready;
   BOOL _shuttingDown;
   BOOL _layoutSyncSuspended;
+  BOOL _chromiumContextReady;
+  BOOL _extensionChromeWindowHostReady;
+  BOOL _extensionStartupBarrierActive;
+  BOOL _extensionSyncActive;
+  BOOL _extensionPageReloadPending;
+  NSUInteger _extensionRuntimeGeneration;
+  NSUInteger _extensionChromeWindowHostEpoch;
   std::unique_ptr<CefScopedLibraryLoader> _libraryLoader;
   CefRefPtr<RexCEFApp> _application;
   CefRefPtr<CefTaskManager> _taskManager;
+  RexDevToolsPipeController *_extensionPipe;
+  NSArray<NSString *> *_managedExtensionPaths;
+  NSMutableDictionary<NSString *, NSString *> *_extensionPathFingerprints;
+  NSMutableArray<RexExtensionSyncRequest *> *_extensionSyncQueue;
+  RexExtensionSyncRequest *_activeExtensionSyncRequest;
   std::shared_ptr<std::atomic_bool> _blockThirdPartyCookiesPreference;
   std::map<std::string, CefRefPtr<CefBrowser>> _browsers;
+  std::map<int, CefRefPtr<CefBrowser>> _auxiliaryChromeBrowsers;
+  std::map<int, CefRefPtr<CefBrowser>> _chromePopupBrowsers;
   std::map<std::string, CefRefPtr<CefBrowser>> _developerToolsBrowsers;
   std::map<std::string, int> _developerToolsFrontendReadyBrowserIDs;
   std::set<std::string> _developerToolsDesiredTabs;
@@ -1058,14 +2322,19 @@ struct RexPendingPermission {
   std::map<std::string, RexDevToolsFrontendAction>
       _pendingDeveloperToolsFrontendActions;
   std::set<std::string> _pendingTabs;
+  std::set<std::string> _suspendedTabs;
+  std::set<std::string> _needsExtensionReloadTabs;
   NSMutableDictionary<NSString *, NSString *> *_pendingURLs;
   NSMutableDictionary<NSString *, RexChromiumBrowserView *> *_views;
   NSMutableDictionary<NSString *, RexChromiumDevToolsView *> *_developerToolsViews;
+  NSMutableDictionary<NSNumber *, NSWindow *> *_chromePopupWindowsByBrowserID;
   NSMutableDictionary<NSNumber *, NSWindow *> *_developerToolsPopupWindowsByBrowserID;
   NSMutableDictionary<NSNumber *, NSView *> *_developerToolsNativeViewsByBrowserID;
   NSMutableDictionary<NSString *, NSString *> *_tabProfileIDs;
   NSMutableDictionary<NSString *, NSNumber *> *_privateTabs;
   NSMutableDictionary<NSString *, NSNumber *> *_mutedTabs;
+  NSString *_focusedTabID;
+  NSString *_lastFocusedTabID;
   // Per-tab Brave-style shield policy (enabled/mode/fingerprint/cookies).
   NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *_privacyPolicies;
   NSMutableDictionary<NSString *, NSURL *> *_downloadDirectories;
@@ -1087,11 +2356,15 @@ struct RexPendingPermission {
   self = [super init];
   if (self) {
     _layoutSyncSuspended = NO;
+    _managedExtensionPaths = @[];
+    _extensionPathFingerprints = [[NSMutableDictionary alloc] init];
+    _extensionSyncQueue = [[NSMutableArray alloc] init];
     _blockThirdPartyCookiesPreference = std::make_shared<std::atomic_bool>(
         RexInitialBlockThirdPartyCookiesPreference());
     _pendingURLs = [[NSMutableDictionary alloc] init];
     _views = [[NSMutableDictionary alloc] init];
     _developerToolsViews = [[NSMutableDictionary alloc] init];
+    _chromePopupWindowsByBrowserID = [[NSMutableDictionary alloc] init];
     _developerToolsPopupWindowsByBrowserID = [[NSMutableDictionary alloc] init];
     _developerToolsNativeViewsByBrowserID = [[NSMutableDictionary alloc] init];
     _tabProfileIDs = [[NSMutableDictionary alloc] init];
@@ -1163,20 +2436,77 @@ struct RexPendingPermission {
 
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
                     locale:(NSString *)locale
+            extensionPaths:(NSArray<NSString *> *)extensionPaths
                      error:(NSError **)error {
   NSAssert(NSThread.isMainThread, @"CEF must initialize on the main thread");
   if (_ready) return YES;
 
   RexInstallCEFApplicationHooks();
 
+  NSError *pathValidationError = nil;
+  NSArray<NSString *> *managedExtensionPaths =
+      RexValidatedExtensionPaths(extensionPaths, &pathValidationError);
+  if (!managedExtensionPaths) {
+    if (error) *error = pathValidationError;
+    return NO;
+  }
+
+  NSString *rootPath =
+      cacheRoot.path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+  NSString *profilePath = [rootPath stringByAppendingPathComponent:@"Default"];
+  NSError *profileDirectoryError = nil;
+  if (![NSFileManager.defaultManager
+          createDirectoryAtPath:profilePath
+    withIntermediateDirectories:YES
+                     attributes:nil
+                          error:&profileDirectoryError]) {
+    if (error) {
+      *error = [NSError errorWithDomain:RexChromiumErrorDomain
+                                   code:2
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey:
+                                     @"无法创建 Chromium 用户资料目录",
+                                 NSUnderlyingErrorKey: profileDirectoryError
+                               }];
+    }
+    return NO;
+  }
+
+  _managedExtensionPaths = [managedExtensionPaths copy];
+  // Reconcile even an empty desired set before restored HTTP(S) documents can
+  // navigate, so persisted unpacked extensions never inject into a first load.
+  _extensionStartupBarrierActive = YES;
+
+  // Chromium hard-codes descriptors 3/4 for --remote-debugging-pipe. Reserve
+  // them before loading the CEF framework, whose initializers may open files.
+  _extensionPipe = [[RexDevToolsPipeController alloc] init];
+  NSError *extensionPipeError = nil;
+  if (![_extensionPipe prepareWithError:&extensionPipeError]) {
+    NSError *startupError = extensionPipeError ?: RexExtensionRuntimeError(
+        32, @"无法初始化 Chromium 扩展控制管道");
+    NSLog(@"[Rex] extension runtime initialization failed closed: %@",
+          startupError.localizedDescription);
+    if (error) *error = startupError;
+    [_extensionPipe shutdown];
+    [_extensionPipe releaseChromiumDescriptors];
+    _extensionPipe = nil;
+    _extensionStartupBarrierActive = NO;
+    return NO;
+  }
+  [_extensionPipe startReading];
+
   _libraryLoader = std::make_unique<CefScopedLibraryLoader>();
   if (!_libraryLoader->LoadInMain()) {
     if (error) {
-      *error = [NSError errorWithDomain:@"com.rex.browser.chromium"
+      *error = [NSError errorWithDomain:RexChromiumErrorDomain
                                    code:1
                                userInfo:@{NSLocalizedDescriptionKey:
                                             @"无法从 Rex.app/Contents/Frameworks 加载 CEF"}];
     }
+    [_extensionPipe shutdown];
+    [_extensionPipe releaseChromiumDescriptors];
+    _extensionPipe = nil;
+    _extensionStartupBarrierActive = NO;
     _libraryLoader.reset();
     return NO;
   }
@@ -1198,23 +2528,51 @@ struct RexPendingPermission {
   settings.log_severity = LOGSEVERITY_WARNING;
   settings.background_color = CefColorSetARGB(255, 245, 245, 247);
 
-  NSString *rootPath = cacheRoot.path;
-  NSString *profilePath = [rootPath stringByAppendingPathComponent:@"Default"];
   CefString(&settings.root_cache_path) = RexUTF8(rootPath);
   CefString(&settings.cache_path) = RexUTF8(profilePath);
   CefString(&settings.locale) = RexUTF8(locale.length ? locale : @"zh-CN");
-  CefString(&settings.user_agent_product) = "Rex/0.9.0";
+  CefString(&settings.user_agent_product) = "Rex/0.9.4";
+  const BOOL extensionPipeEnabled = YES;
 
-  _application = new RexCEFApp(_blockThirdPartyCookiesPreference);
+  std::vector<std::string> chromiumExtensionPaths;
+  chromiumExtensionPaths.reserve(managedExtensionPaths.count);
+  for (NSString *path in managedExtensionPaths) {
+    chromiumExtensionPaths.push_back(RexUTF8(path));
+  }
+
+  CefRefPtr<RexDefaultChromeClient> defaultChromeClient =
+      new RexDefaultChromeClient(self);
+  _application = new RexCEFApp(_blockThirdPartyCookiesPreference,
+                               std::move(chromiumExtensionPaths),
+                               defaultChromeClient,
+                               self,
+                               extensionPipeEnabled);
+  // Reserve generation 1 before CefInitialize can post OnContextInitialized.
+  // Any hot request queued as startup returns is therefore ordered after this
+  // exact-set reconciliation, and commit events stay generation-monotonic.
+  [self enqueueExtensionSyncPaths:managedExtensionPaths
+                 forceReloadPaths:@[]
+                         startup:YES
+                      completion:nil];
   if (!CefInitialize(mainArgs, settings, _application, nullptr)) {
     const int exitCode = CefGetExitCode();
     if (error) {
-      *error = [NSError errorWithDomain:@"com.rex.browser.chromium"
+      NSString *description =
+          exitCode == CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED
+              ? @"现有 Rex 进程已处理本次启动请求"
+              : [NSString stringWithFormat:@"CEF 初始化失败（%d）", exitCode];
+      *error = [NSError errorWithDomain:RexChromiumErrorDomain
                                    code:exitCode
-                               userInfo:@{NSLocalizedDescriptionKey:
-                                            [NSString stringWithFormat:@"CEF 初始化失败（%d）", exitCode]}];
+                               userInfo:@{NSLocalizedDescriptionKey: description}];
     }
     _application = nullptr;
+    [_extensionPipe shutdown];
+    [_extensionPipe releaseChromiumDescriptors];
+    _extensionPipe = nil;
+    [_extensionSyncQueue removeAllObjects];
+    _activeExtensionSyncRequest = nil;
+    _extensionSyncActive = NO;
+    _extensionStartupBarrierActive = NO;
     _libraryLoader.reset();
     return NO;
   }
@@ -1222,6 +2580,8 @@ struct RexPendingPermission {
   _ready = YES;
   NSLog(@"[Rex] performance layer=%s · content filter=host-catalogs (toggleable)",
         rex::thorium::ProfileName());
+  NSLog(@"[Rex] Chromium extension runtime: %lu enabled package(s)",
+        (unsigned long)managedExtensionPaths.count);
   _application->StartMessagePump();
   [self emitEvent:@{ @"kind": @"runtimeReady",
                      @"tabID": @"",
@@ -1238,7 +2598,10 @@ struct RexPendingPermission {
   dispatch_async(dispatch_get_main_queue(), ^{
     const std::string key = RexUTF8(tabID);
     if (!self->_ready || self->_shuttingDown || self->_browsers.contains(key) ||
-        self->_pendingTabs.contains(key)) return;
+        self->_pendingTabs.contains(key) || self->_views[tabID] != view ||
+        !view.window || !view.superview) {
+      return;
+    }
     self->_pendingTabs.insert(key);
 
     CefWindowInfo windowInfo;
@@ -1248,7 +2611,8 @@ struct RexPendingPermission {
                                   std::max(1, (int)bounds.size.height)));
     CefBrowserSettings browserSettings;
     browserSettings.background_color = CefColorSetARGB(255, 255, 255, 255);
-    CefRefPtr<RexBrowserClient> client = new RexBrowserClient(self, tabID);
+    CefRefPtr<RexBrowserClient> client =
+        new RexBrowserClient(self, tabID);
     CefRefPtr<CefRequestContext> requestContext = CefRequestContext::GetGlobalContext();
     if (privateBrowsing) {
       const std::string profileKey = RexUTF8(profileID);
@@ -1267,7 +2631,14 @@ struct RexPendingPermission {
         requestContext = context->second;
       }
     }
-    const std::string url = initialURL.length ? RexUTF8(initialURL) : "about:blank";
+    NSString *effectiveInitialURL =
+        initialURL.length ? [initialURL copy] : @"about:blank";
+    if (self->_extensionStartupBarrierActive &&
+        RexURLWaitsForExtensionRuntime(effectiveInitialURL)) {
+      self->_pendingURLs[tabID] = effectiveInitialURL;
+      effectiveInitialURL = @"about:blank";
+    }
+    const std::string url = RexUTF8(effectiveInitialURL);
     CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
         windowInfo, client, url, browserSettings, nullptr, requestContext);
     if (!browser) {
@@ -1337,6 +2708,197 @@ struct RexPendingPermission {
   } else if (!popupWindow.isVisible) {
     [popupWindow orderFront:nil];
   }
+}
+
+- (void)handleDefaultChromeBrowser:(CefRefPtr<CefBrowser>)browser
+                         targetURL:(nullable NSString *)targetURL {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid()) return;
+
+  [self parkDefaultChromeBrowser:browser];
+
+  NSString *sourceTabID = nil;
+  if (_focusedTabID.length && ![_privateTabs[_focusedTabID] boolValue]) {
+    sourceTabID = [_focusedTabID copy];
+  } else if (_lastFocusedTabID.length &&
+             ![_privateTabs[_lastFocusedTabID] boolValue]) {
+    sourceTabID = [_lastFocusedTabID copy];
+  } else {
+    for (const auto &entry : _browsers) {
+      NSString *candidate =
+          [[NSString alloc] initWithUTF8String:entry.first.c_str()] ?: @"";
+      if (candidate.length && ![_privateTabs[candidate] boolValue]) {
+        sourceTabID = candidate;
+        break;
+      }
+    }
+  }
+  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+  NSString *capturedURL = targetURL.length
+      ? [targetURL copy]
+      : frame ? RexNSString(frame->GetURL()) : @"";
+
+  // Chrome UI operations such as chrome.tabs.create do not pass an originating
+  // CefClient. Capture a regular Rex source synchronously so a later focus
+  // change (especially into a private tab) cannot change attribution.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!browser->IsValid()) return;
+    if (sourceTabID.length && RexCanForwardPopupURL(capturedURL)) {
+      [self emitEvent:RexEvent(@"popup", sourceTabID, @{
+        @"url": capturedURL,
+        @"foreground": @YES,
+        @"userGesture": @YES
+      })];
+    }
+    NSLog(@"[Rex] closed unmanaged Chrome UI browser=%d runtime style=%d url=%@",
+          browser->GetIdentifier(),
+          static_cast<int>(browser->GetHost()->GetRuntimeStyle()), capturedURL);
+    browser->GetHost()->CloseBrowser(true);
+  });
+}
+
+- (void)parkDefaultChromeBrowser:(CefRefPtr<CefBrowser>)browser {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid()) return;
+
+  NSView *nativeView =
+      CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(browser->GetHost()->GetWindowHandle());
+  NSWindow *nativeWindow = nativeView.window;
+  if (nativeWindow) {
+    nativeWindow.alphaValue = 0.01;
+    nativeWindow.ignoresMouseEvents = YES;
+    nativeWindow.hasShadow = NO;
+    nativeWindow.excludedFromWindowsMenu = YES;
+    [nativeWindow orderOut:nil];
+  }
+}
+
+- (void)registerExtensionChromeWindowHost:(CefRefPtr<CefBrowser>)browser {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid()) return;
+  NSView *nativeView =
+      CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(browser->GetHost()->GetWindowHandle());
+  NSWindow *nativeWindow = nativeView.window;
+  if (nativeWindow) {
+    nativeWindow.alphaValue = 0.01;
+    nativeWindow.ignoresMouseEvents = YES;
+    nativeWindow.hasShadow = NO;
+    nativeWindow.excludedFromWindowsMenu = YES;
+    [nativeWindow orderOut:nil];
+  }
+  _extensionChromeWindowHostReady = YES;
+  NSLog(@"[Rex] Chromium extension window context ready browser=%d",
+        browser->GetIdentifier());
+  [self startNextExtensionSyncIfNeeded];
+}
+
+- (void)extensionChromeWindowHostDidClose {
+  CEF_REQUIRE_UI_THREAD();
+  _extensionChromeWindowHostReady = NO;
+  ++_extensionChromeWindowHostEpoch;
+  const BOOL hostRequired =
+      _managedExtensionPaths.count > 0 ||
+      _activeExtensionSyncRequest.desiredPaths.count > 0 ||
+      _extensionSyncQueue.firstObject.desiredPaths.count > 0;
+  if (!_shuttingDown && hostRequired && _application) {
+    _application->EnsureExtensionWindowHost();
+  }
+  [self startNextExtensionSyncIfNeeded];
+  [self finishTerminationIfReady];
+}
+
+- (void)defaultChromeBrowserDidClose {
+  CEF_REQUIRE_UI_THREAD();
+  [self finishTerminationIfReady];
+}
+
+- (void)registerChromePopupBrowser:(CefRefPtr<CefBrowser>)browser
+                        sourceTabID:(NSString *)sourceTabID {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid()) return;
+  const int browserID = browser->GetIdentifier();
+  _chromePopupBrowsers[browserID] = browser;
+
+  NSView *nativeView =
+      CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(browser->GetHost()->GetWindowHandle());
+  NSWindow *popupWindow = nativeView.window;
+  if (popupWindow) {
+    popupWindow.alphaValue = 0.01;
+    popupWindow.ignoresMouseEvents = YES;
+    popupWindow.hasShadow = NO;
+    popupWindow.excludedFromWindowsMenu = YES;
+    _chromePopupWindowsByBrowserID[@(browserID)] = popupWindow;
+  }
+  NSLog(@"[Rex] extension popup browser=%d runtime style=%d source=%@",
+        browserID,
+        static_cast<int>(browser->GetHost()->GetRuntimeStyle()),
+        sourceTabID);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!browser->IsValid()) return;
+    CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+    NSString *url = frame ? RexNSString(frame->GetURL()) : @"";
+    if (!self->_shuttingDown && sourceTabID.length &&
+        RexCanForwardPopupURL(url)) {
+      [self emitEvent:RexEvent(@"popup", sourceTabID, @{
+        @"url": url,
+        @"foreground": @YES,
+        @"userGesture": @YES
+      })];
+    }
+    browser->GetHost()->CloseBrowser(true);
+  });
+}
+
+- (void)registerAuxiliaryChromeBrowser:(CefRefPtr<CefBrowser>)browser
+                           sourceTabID:(NSString *)sourceTabID {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid()) return;
+  const int browserID = browser->GetIdentifier();
+  _auxiliaryChromeBrowsers[browserID] = browser;
+  NSView *nativeView =
+      CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(browser->GetHost()->GetWindowHandle());
+  NSWindow *nativeWindow = nativeView.window;
+  if (nativeWindow) {
+    nativeWindow.alphaValue = 0.01;
+    nativeWindow.ignoresMouseEvents = YES;
+    nativeWindow.hasShadow = NO;
+    nativeWindow.excludedFromWindowsMenu = YES;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!browser->IsValid()) return;
+    CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+    NSString *url = frame ? RexNSString(frame->GetURL()) : @"";
+    if (!self->_shuttingDown && sourceTabID.length &&
+        RexCanForwardPopupURL(url)) {
+      [self emitEvent:RexEvent(@"popup", sourceTabID, @{
+        @"url": url,
+        @"foreground": @YES,
+        @"userGesture": @YES
+      })];
+    }
+    NSLog(@"[Rex] closed auxiliary Chrome tab browser=%d source=%@ url=%@",
+          browserID, sourceTabID, url);
+    browser->GetHost()->CloseBrowser(true);
+  });
+}
+
+- (void)auxiliaryChromeBrowserDidClose:(CefRefPtr<CefBrowser>)browser {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser) return;
+  _auxiliaryChromeBrowsers.erase(browser->GetIdentifier());
+  [self finishTerminationIfReady];
+}
+
+- (void)chromePopupBrowserDidClose:(CefRefPtr<CefBrowser>)browser {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser) return;
+  const int browserID = browser->GetIdentifier();
+  _chromePopupBrowsers.erase(browserID);
+  NSNumber *key = @(browserID);
+  NSWindow *popupWindow = _chromePopupWindowsByBrowserID[key];
+  [popupWindow orderOut:nil];
+  [_chromePopupWindowsByBrowserID removeObjectForKey:key];
+  [self finishTerminationIfReady];
 }
 
 - (void)developerToolsPopupDidBecomeKey:(NSNotification *)notification {
@@ -1673,8 +3235,11 @@ struct RexPendingPermission {
 }
 
 - (void)finishTerminationIfReady {
-  if (_shuttingDown && _browsers.empty() && _pendingTabs.empty() &&
-      _developerToolsBrowsers.empty() && _developerToolsOpeningTabs.empty()) {
+  if (_shuttingDown && _browsers.empty() &&
+      _auxiliaryChromeBrowsers.empty() && _pendingTabs.empty() &&
+      _chromePopupBrowsers.empty() &&
+      _developerToolsBrowsers.empty() && _developerToolsOpeningTabs.empty() &&
+      (!_application || _application->DefaultBrowserCount() == 0)) {
     dispatch_async(dispatch_get_main_queue(), ^{ [self finishTermination]; });
   }
 }
@@ -1689,17 +3254,22 @@ struct RexPendingPermission {
 }
 
 - (void)registerBrowser:(CefRefPtr<CefBrowser>)browser tabID:(NSString *)tabID {
-  _pendingTabs.erase(RexUTF8(tabID));
-  _browsers[RexUTF8(tabID)] = browser;
-  NSView *nativeView = (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+  const std::string key = RexUTF8(tabID);
+  _pendingTabs.erase(key);
   RexChromiumBrowserView *parentView = _views[tabID];
-  if (nativeView && parentView) {
+  if (!parentView || _shuttingDown) {
+    browser->GetHost()->CloseBrowser(true);
+    return;
+  }
+  _browsers[key] = browser;
+
+  NSView *nativeView =
+      (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+  if (nativeView) {
     // Layout the host before attaching so the child gets its final frame on the
     // first pass instead of briefly painting at the representable's zero size.
-    if (parentView.window) {
-      [parentView setNeedsLayout:YES];
-      [parentView layoutSubtreeIfNeeded];
-    }
+    [parentView setNeedsLayout:YES];
+    [parentView layoutSubtreeIfNeeded];
     [self syncNativeBrowserView:nativeView
                      toHostView:parentView
                         browser:browser];
@@ -1713,34 +3283,65 @@ struct RexPendingPermission {
       if (!host || !live || !live->IsSame(browser)) return;
       [host setNeedsLayout:YES];
       [host layoutSubtreeIfNeeded];
-      NSView *attached = (__bridge NSView *)live->GetHost()->GetWindowHandle();
+      NSView *attached =
+          (__bridge NSView *)live->GetHost()->GetWindowHandle();
       [self syncNativeBrowserView:attached
                        toHostView:host
                           browser:live];
     });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-      [self forceBrowserRepaintForTabID:tabCopy];
-    });
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+          [self forceBrowserRepaintForTabID:tabCopy];
+        });
   }
+
   [self emitEvent:RexEvent(@"created", tabID)];
   NSNumber *muted = _mutedTabs[tabID];
   if (muted) browser->GetHost()->SetAudioMuted(muted.boolValue);
-  // A restored URL can arrive before CreateBrowserSync finishes. Apply the
+  // A restored URL can arrive before BrowserView creation finishes. Apply the
   // newest request after the CEF frame has been attached.
   NSString *pendingURL = _pendingURLs[tabID];
-  if (pendingURL) {
-    browser->GetMainFrame()->LoadURL(RexUTF8(pendingURL));
+  if (pendingURL && !_extensionStartupBarrierActive) {
+    CefRefPtr<CefFrame> mainFrame = browser->GetMainFrame();
+    const std::string requestedURL = RexUTF8(pendingURL);
+    if (mainFrame && mainFrame->GetURL().ToString() != requestedURL) {
+      mainFrame->LoadURL(requestedURL);
+    }
     [_pendingURLs removeObjectForKey:tabID];
   }
   if (_shuttingDown) browser->GetHost()->CloseBrowser(true);
 }
 
-- (void)browserDidCloseForTabID:(NSString *)tabID {
+- (void)browser:(CefRefPtr<CefBrowser>)browser
+    preferredContentSizeDidChange:(NSSize)size
+                            tabID:(NSString *)tabID {
+  const std::string key = RexUTF8(tabID);
+  auto browserIterator = _browsers.find(key);
+  if (browserIterator == _browsers.end() ||
+      !browserIterator->second->IsSame(browser)) {
+    return;
+  }
+  RexChromiumBrowserView *view = _views[tabID];
+  RexChromiumBrowserPreferredSizeHandler handler =
+      view.preferredSizeDidChangeHandler;
+  if (handler) handler(size);
+}
+
+- (void)browser:(CefRefPtr<CefBrowser>)browser
+        didCloseForTabID:(NSString *)tabID {
   [self cancelPermissionRequestsForTabID:tabID];
   [self removeDownloadCallbacksForTabID:tabID];
+  RexChromiumBrowserView *closedView = _views[tabID];
+  RexChromiumBrowserDidCloseHandler closeHandler =
+      closedView.browserDidCloseHandler;
+  closedView.browserDidCloseHandler = nil;
   const std::string key = RexUTF8(tabID);
-  _browsers.erase(key);
+  auto browserIterator = _browsers.find(key);
+  if (browserIterator != _browsers.end() &&
+      browserIterator->second->IsSame(browser)) {
+    _browsers.erase(browserIterator);
+  }
   _developerToolsDesiredTabs.erase(key);
   _pendingDeveloperToolsRequests.erase(key);
   _pendingDeveloperToolsFrontendActions.erase(key);
@@ -1750,6 +3351,8 @@ struct RexPendingPermission {
     _developerToolsClosingTabs.insert(key);
   }
   _pendingTabs.erase(key);
+  _suspendedTabs.erase(key);
+  _needsExtensionReloadTabs.erase(key);
   [_pendingURLs removeObjectForKey:tabID];
   [_views removeObjectForKey:tabID];
   [_developerToolsViews removeObjectForKey:tabID];
@@ -1758,8 +3361,10 @@ struct RexPendingPermission {
     [_privacyPolicies removeObjectForKey:tabID];
   }
   [_downloadDirectories removeObjectForKey:tabID];
+  if ([_focusedTabID isEqualToString:tabID]) _focusedTabID = nil;
   [self releaseProfileForTabID:tabID];
   [self emitEvent:RexEvent(@"closed", tabID)];
+  if (closeHandler) closeHandler();
   [self finishTerminationIfReady];
 }
 
@@ -1904,8 +3509,8 @@ struct RexPendingPermission {
                   popupWindow:(nullable NSWindow *)popupWindow {
   if (!nativeView || !hostView || !browser) return;
 
+  NSNumber *browserID = @(browser->GetIdentifier());
   if ([hostView isKindOfClass:RexChromiumDevToolsView.class]) {
-    NSNumber *browserID = @(browser->GetIdentifier());
     NSView *attachedView = _developerToolsNativeViewsByBrowserID[browserID];
     if (attachedView) {
       // Once the Chrome window content is detached, GetWindowHandle() points
@@ -1979,7 +3584,8 @@ struct RexPendingPermission {
   [self onMain:^{
     CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
     if (!browser) return;
-    NSView *nativeView = (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+    NSView *nativeView =
+        (__bridge NSView *)browser->GetHost()->GetWindowHandle();
     [self syncNativeBrowserView:nativeView
                      toHostView:hostView
                         browser:browser];
@@ -2032,7 +3638,8 @@ struct RexPendingPermission {
       RexChromiumBrowserView *hostView = self->_views[tabID];
       CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
       if (!hostView || !browser) continue;
-      NSView *nativeView = (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+      NSView *nativeView =
+          (__bridge NSView *)browser->GetHost()->GetWindowHandle();
       [self syncNativeBrowserView:nativeView
                        toHostView:hostView
                           browser:browser];
@@ -2066,7 +3673,8 @@ struct RexPendingPermission {
     if (!hostView || !browser) return;
     [hostView setNeedsLayout:YES];
     [hostView layoutSubtreeIfNeeded];
-    NSView *nativeView = (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+    NSView *nativeView =
+        (__bridge NSView *)browser->GetHost()->GetWindowHandle();
     [self syncNativeBrowserView:nativeView
                      toHostView:hostView
                         browser:browser];
@@ -2081,11 +3689,14 @@ struct RexPendingPermission {
 
 - (void)closeTabID:(NSString *)tabID {
   [self onMain:^{
+    const std::string key = RexUTF8(tabID);
     CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
     if (browser) browser->GetHost()->CloseBrowser(true);
     else {
       [self cancelPermissionRequestsForTabID:tabID];
-      self->_pendingTabs.erase(RexUTF8(tabID));
+      self->_pendingTabs.erase(key);
+      self->_suspendedTabs.erase(key);
+      self->_needsExtensionReloadTabs.erase(key);
       [self->_pendingURLs removeObjectForKey:tabID];
       [self->_views removeObjectForKey:tabID];
       [self->_mutedTabs removeObjectForKey:tabID];
@@ -2126,6 +3737,16 @@ struct RexPendingPermission {
 
 - (void)loadURLString:(NSString *)urlString tabID:(NSString *)tabID {
   [self onMain:^{
+    if (self->_extensionStartupBarrierActive &&
+        RexURLWaitsForExtensionRuntime(urlString)) {
+      self->_pendingURLs[tabID] = [urlString copy];
+      return;
+    }
+    if (self->_extensionStartupBarrierActive) {
+      // A non-gated navigation supersedes any older gated destination. Do not
+      // let barrier release resurrect a stale restored URL.
+      [self->_pendingURLs removeObjectForKey:tabID];
+    }
     CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
     if (browser) {
       CefRefPtr<CefFrame> frame = browser->GetMainFrame();
@@ -2201,6 +3822,561 @@ struct RexPendingPermission {
   rex::privacy::SetContentBlockingEnabled(enabled);
   NSLog(@"[Rex] content blocking (host catalogs) %@",
         enabled ? @"enabled" : @"disabled");
+}
+
+- (void)chromiumContextInitialized {
+  NSAssert(NSThread.isMainThread,
+           @"Chromium extension startup sync is main-thread serialized");
+  if (_chromiumContextReady || _shuttingDown) return;
+  _chromiumContextReady = YES;
+  [self startNextExtensionSyncIfNeeded];
+}
+
+- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths {
+  [self reloadExtensionRulesFromPaths:extensionPaths completion:nil];
+}
+
+- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths
+                           completion:
+                               (nullable RexChromiumExtensionRuntimeCompletion)
+                                   completion {
+  [self reloadExtensionRulesFromPaths:extensionPaths
+                     forceReloadPaths:@[]
+                           completion:completion];
+}
+
+- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths
+                     forceReloadPaths:(NSArray<NSString *> *)forceReloadPaths
+                           completion:
+                               (nullable RexChromiumExtensionRuntimeCompletion)
+                                   completion {
+  NSError *validationError = nil;
+  NSArray<NSString *> *validatedPaths =
+      RexValidatedExtensionPaths(extensionPaths, &validationError);
+  NSArray<NSString *> *validatedForcedReloadPaths = validatedPaths
+      ? RexValidatedExtensionPaths(forceReloadPaths, &validationError)
+      : nil;
+  if (validatedPaths && validatedForcedReloadPaths) {
+    NSSet<NSString *> *desiredSet = [NSSet setWithArray:validatedPaths];
+    for (NSString *path in validatedForcedReloadPaths) {
+      if (![desiredSet containsObject:path]) {
+        validationError = RexExtensionRuntimeError(
+            33,
+            @"强制重载路径不在请求的扩展集合中",
+            @{@"rejectedPaths": @[path]});
+        validatedForcedReloadPaths = nil;
+        break;
+      }
+    }
+  }
+  if (!validatedPaths || !validatedForcedReloadPaths) {
+    [self onMain:^{
+      NSLog(@"[Rex] rejected extension runtime request: %@",
+            validationError.localizedDescription);
+      [self emitEvent:RexEvent(
+          @"extensionRuntimeError",
+          @"",
+          @{
+            @"generation": @(self->_extensionRuntimeGeneration),
+            @"loadedPaths": self->_managedExtensionPaths ?: @[],
+            @"message": validationError.localizedDescription
+          })];
+      if (completion) completion(nil, validationError);
+    }];
+    return;
+  }
+  [self onMain:^{
+    [self enqueueExtensionSyncPaths:validatedPaths
+                   forceReloadPaths:validatedForcedReloadPaths
+                           startup:NO
+                        completion:completion];
+  }];
+}
+
+- (void)enqueueExtensionSyncPaths:(NSArray<NSString *> *)paths
+                 forceReloadPaths:(NSArray<NSString *> *)forceReloadPaths
+                          startup:(BOOL)startup
+                       completion:
+                           (nullable RexChromiumExtensionRuntimeCompletion)
+                               completion {
+  NSAssert(NSThread.isMainThread,
+           @"Chromium extension transactions are main-thread serialized");
+  RexExtensionSyncRequest *request = [[RexExtensionSyncRequest alloc] init];
+  request.desiredPaths = [paths copy];
+  request.previousPaths = @[];
+  request.updatedPaths = @[];
+  request.forcedReloadPaths = [forceReloadPaths copy];
+  request.expectedManifestMetadataByPath = @{};
+  request.expectedExtensionIDsByPath = [[NSMutableDictionary alloc] init];
+  request.previousExtensionIDsByPath = @{};
+  request.generation = ++_extensionRuntimeGeneration;
+  request.startup = startup;
+  request.completion = [completion copy];
+  [_extensionSyncQueue addObject:request];
+  [self startNextExtensionSyncIfNeeded];
+}
+
+- (void)startNextExtensionSyncIfNeeded {
+  NSAssert(NSThread.isMainThread,
+           @"Chromium extension transactions are main-thread serialized");
+  if (_extensionSyncActive || !_chromiumContextReady ||
+      !_extensionSyncQueue.count) {
+    return;
+  }
+
+  RexExtensionSyncRequest *request = _extensionSyncQueue.firstObject;
+  if (!_shuttingDown && request.desiredPaths.count > 0 &&
+      !_extensionChromeWindowHostReady) {
+    // loadUnpacked may synchronously dispatch runtime.onInstalled. Wait until a
+    // real Chrome-style host exists so chrome.tabs APIs have a window context.
+    if (_application && _application->EnsureExtensionWindowHost()) {
+      __weak RexChromiumRuntime *weakSelf = self;
+      dispatch_after(
+          dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC),
+          dispatch_get_main_queue(), ^{
+        RexChromiumRuntime *runtime = weakSelf;
+        if (!runtime || runtime->_shuttingDown ||
+            runtime->_extensionSyncActive ||
+            runtime->_extensionChromeWindowHostReady ||
+            runtime->_extensionSyncQueue.firstObject != request) {
+          return;
+        }
+        [runtime->_extensionSyncQueue removeObjectAtIndex:0];
+        request.previousPaths = [runtime->_managedExtensionPaths copy];
+        request.expectedManifestMetadataByPath =
+            RexExtensionManifestMetadataByPath(request.desiredPaths);
+        runtime->_extensionSyncActive = YES;
+        runtime->_activeExtensionSyncRequest = request;
+        [runtime failExtensionSyncRequest:request
+                                    error:RexExtensionRuntimeError(
+                                        48,
+                                        @"等待 Chromium 扩展窗口上下文超时")
+                       attemptedMutation:NO];
+      });
+      return;
+    }
+
+    [_extensionSyncQueue removeObjectAtIndex:0];
+    request.previousPaths = [_managedExtensionPaths copy];
+    request.expectedManifestMetadataByPath =
+        RexExtensionManifestMetadataByPath(request.desiredPaths);
+    _extensionSyncActive = YES;
+    _activeExtensionSyncRequest = request;
+    [self failExtensionSyncRequest:request
+                            error:RexExtensionRuntimeError(
+                                46,
+                                @"无法创建 Chromium 扩展窗口上下文")
+               attemptedMutation:NO];
+    return;
+  }
+
+  [_extensionSyncQueue removeObjectAtIndex:0];
+  request.previousPaths = [_managedExtensionPaths copy];
+  NSMutableOrderedSet<NSString *> *updatedPaths =
+      [NSMutableOrderedSet orderedSetWithArray:RexUpdatedExtensionPaths(
+          request.desiredPaths,
+          _extensionPathFingerprints,
+          !request.startup)];
+  [updatedPaths addObjectsFromArray:request.forcedReloadPaths];
+  request.updatedPaths =
+      [[updatedPaths array] sortedArrayUsingSelector:@selector(compare:)];
+  request.expectedManifestMetadataByPath =
+      RexExtensionManifestMetadataByPath(request.desiredPaths);
+  _extensionSyncActive = YES;
+  _activeExtensionSyncRequest = request;
+  request.chromeWindowHostEpoch = _extensionChromeWindowHostEpoch;
+
+  if (_shuttingDown || !_extensionPipe.isPrepared) {
+    [self failExtensionSyncRequest:request
+                            error:RexExtensionRuntimeError(
+                                41,
+                                @"Chromium 扩展热运行时不可用")
+               attemptedMutation:NO];
+    return;
+  }
+
+  [self queryLiveExtensions:^(
+      NSArray<NSDictionary<NSString *, id> *> *extensions,
+      NSError *queryError) {
+    if (queryError) {
+      [self failExtensionSyncRequest:request
+                              error:queryError
+                 attemptedMutation:NO];
+      return;
+    }
+
+    NSSet<NSString *> *desired =
+        [NSSet setWithArray:request.desiredPaths];
+    NSSet<NSString *> *previous =
+        [NSSet setWithArray:request.previousPaths];
+    NSMutableDictionary<NSString *, NSString *> *previousIDs =
+        [NSMutableDictionary dictionary];
+    for (NSDictionary<NSString *, id> *extension in extensions) {
+      NSString *path = extension[@"path"];
+      NSString *identifier = extension[@"id"];
+      if ([desired containsObject:path] && identifier.length) {
+        request.expectedExtensionIDsByPath[path] = identifier;
+      }
+      if ([previous containsObject:path] && identifier.length) {
+        previousIDs[path] = identifier;
+      }
+    }
+    request.previousExtensionIDsByPath = [previousIDs copy];
+
+    NSArray<NSDictionary<NSString *, id> *> *operations =
+        RexExtensionReconcileOperations(
+            extensions,
+            request.desiredPaths,
+            [NSSet setWithArray:request.updatedPaths],
+            request.expectedManifestMetadataByPath);
+    request.attemptedMutation = operations.count > 0;
+    [self performExtensionOperations:operations
+                               index:0
+            loadedExtensionIDsByPath:
+                request.expectedExtensionIDsByPath
+                          completion:^(NSError *operationError) {
+      [self queryLiveExtensions:^(
+          NSArray<NSDictionary<NSString *, id> *> *finalExtensions,
+          NSError *finalQueryError) {
+        NSError *verificationError = finalQueryError;
+        if (!verificationError) {
+          verificationError = RexVerifyManagedExtensionSet(
+              request.desiredPaths,
+              finalExtensions,
+              request.expectedManifestMetadataByPath,
+              request.expectedExtensionIDsByPath,
+              request.generation);
+        }
+        if (!verificationError && request.desiredPaths.count > 0 &&
+            (!self->_extensionChromeWindowHostReady ||
+             request.chromeWindowHostEpoch !=
+                 self->_extensionChromeWindowHostEpoch)) {
+          verificationError = RexExtensionRuntimeError(
+              47,
+              @"Chromium 扩展窗口上下文在事务期间失效",
+              @{@"generation": @(request.generation)});
+        }
+        if (!verificationError) {
+          // A raced "already loaded/uninstalled" operation error is harmless
+          // when the authoritative final registry state matches.
+          [self finishExtensionSyncRequest:request
+                                extensions:finalExtensions];
+          return;
+        }
+        [self failExtensionSyncRequest:request
+                                error:operationError ?: verificationError
+                   attemptedMutation:request.attemptedMutation];
+      }];
+    }];
+  }];
+}
+
+- (void)queryLiveExtensions:(RexExtensionQueryCompletion)completion {
+  [_extensionPipe executeMethod:@"Extensions.getExtensions"
+                         params:@{}
+                     completion:^(
+      NSDictionary<NSString *, id> *result,
+      NSError *error) {
+    if (error) {
+      completion(nil, error);
+      return;
+    }
+    id rawExtensions = result[@"extensions"];
+    if (![rawExtensions isKindOfClass:NSArray.class]) {
+      completion(nil, RexExtensionRuntimeError(
+          42, @"Chromium 返回了无效的扩展列表"));
+      return;
+    }
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *extensions =
+        [NSMutableArray array];
+    for (id value in static_cast<NSArray *>(rawExtensions)) {
+      if (![value isKindOfClass:NSDictionary.class]) continue;
+      NSDictionary<NSString *, id> *raw =
+          static_cast<NSDictionary<NSString *, id> *>(value);
+      NSString *identifier = [raw[@"id"] isKindOfClass:NSString.class]
+          ? raw[@"id"]
+          : nil;
+      NSString *path = [raw[@"path"] isKindOfClass:NSString.class]
+          ? raw[@"path"]
+          : nil;
+      NSNumber *enabled = [raw[@"enabled"] isKindOfClass:NSNumber.class]
+          ? raw[@"enabled"]
+          : nil;
+      if (!identifier.length || !path.length || !enabled) continue;
+      NSString *resolvedPath =
+          path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+      [extensions addObject:@{
+        @"id": identifier,
+        @"path": resolvedPath,
+        @"enabled": enabled,
+        @"name": [raw[@"name"] isKindOfClass:NSString.class]
+            ? raw[@"name"]
+            : @"",
+        @"version": [raw[@"version"] isKindOfClass:NSString.class]
+            ? raw[@"version"]
+            : @""
+      }];
+    }
+    completion([extensions copy], nil);
+  }];
+}
+
+- (void)performExtensionOperations:
+            (NSArray<NSDictionary<NSString *, id> *> *)operations
+                                index:(NSUInteger)index
+           loadedExtensionIDsByPath:
+               (NSMutableDictionary<NSString *, NSString *> *)loadedIDsByPath
+                           completion:
+                               (RexExtensionOperationsCompletion)completion {
+  if (index >= operations.count) {
+    completion(nil);
+    return;
+  }
+  NSDictionary<NSString *, id> *operation = operations[index];
+  NSString *type = operation[@"type"];
+  NSString *method = nil;
+  NSDictionary<NSString *, id> *params = nil;
+  if ([type isEqualToString:@"uninstall"]) {
+    method = @"Extensions.uninstall";
+    params = @{@"id": operation[@"id"] ?: @""};
+  } else if ([type isEqualToString:@"load"]) {
+    method = @"Extensions.loadUnpacked";
+    params = @{@"path": operation[@"path"] ?: @""};
+  } else {
+    completion(RexExtensionRuntimeError(
+        43, @"扩展事务包含未知操作"));
+    return;
+  }
+
+  [_extensionPipe executeMethod:method
+                         params:params
+                     completion:^(
+      NSDictionary<NSString *, id> *result,
+      NSError *error) {
+    if (error) {
+      completion(error);
+      return;
+    }
+    if ([type isEqualToString:@"load"]) {
+      NSString *identifier = [result[@"id"] isKindOfClass:NSString.class]
+          ? result[@"id"]
+          : nil;
+      NSString *path = operation[@"path"];
+      if (!identifier.length || !path.length) {
+        completion(RexExtensionRuntimeError(
+            44, @"Chromium 未返回已加载扩展的标识"));
+        return;
+      }
+      loadedIDsByPath[path] = identifier;
+    }
+    [self performExtensionOperations:operations
+                               index:index + 1
+            loadedExtensionIDsByPath:loadedIDsByPath
+                          completion:completion];
+  }];
+}
+
+- (void)finishExtensionSyncRequest:(RexExtensionSyncRequest *)request
+                         extensions:
+                             (NSArray<NSDictionary<NSString *, id> *> *)extensions {
+  _managedExtensionPaths = [request.desiredPaths copy];
+  [_extensionPathFingerprints removeAllObjects];
+  for (NSString *path in _managedExtensionPaths) {
+    NSString *fingerprint = RexExtensionPathFingerprint(path);
+    if (fingerprint.length) _extensionPathFingerprints[path] = fingerprint;
+  }
+
+  NSDictionary<NSString *, id> *result = @{
+    @"generation": @(request.generation),
+    @"loadedPaths": RexLiveExtensionPaths(extensions),
+    @"loadedExtensionIDs": RexLiveExtensionIDs(extensions)
+  };
+  NSLog(@"[Rex] extension runtime generation %lu committed (%lu package(s))",
+        (unsigned long)request.generation,
+        (unsigned long)request.desiredPaths.count);
+  if (request.attemptedMutation) {
+    _extensionPageReloadPending = YES;
+  }
+  [self emitEvent:RexEvent(@"extensionRuntimeChanged", @"", result)];
+
+  if (request.completion) request.completion(result, nil);
+  _activeExtensionSyncRequest = nil;
+  _extensionSyncActive = NO;
+  if (_extensionStartupBarrierActive && !_extensionSyncQueue.count) {
+    [self releaseExtensionStartupNavigationBarrier];
+    _extensionPageReloadPending = NO;
+  } else if (!_extensionStartupBarrierActive &&
+             !_extensionSyncQueue.count &&
+             _extensionPageReloadPending) {
+    _extensionPageReloadPending = NO;
+    [self reloadWebPagesAfterExtensionChange];
+  }
+  [self startNextExtensionSyncIfNeeded];
+}
+
+- (void)failExtensionSyncRequest:(RexExtensionSyncRequest *)request
+                           error:(NSError *)error
+              attemptedMutation:(BOOL)attemptedMutation {
+  if (attemptedMutation) {
+    // A compensating generation may be a no-op after this rollback. Preserve
+    // the refresh obligation, but never reload against an unverified failure.
+    _extensionPageReloadPending = YES;
+  }
+  void (^completeFailure)(
+      NSArray<NSDictionary<NSString *, id> *> *_Nullable,
+      NSError *_Nullable) =
+      ^(NSArray<NSDictionary<NSString *, id> *> *extensions,
+        NSError *rollbackError) {
+    NSArray<NSString *> *loadedPaths =
+        extensions ? RexLiveExtensionPaths(extensions) : @[];
+    NSMutableDictionary<NSString *, id> *details =
+        [error.userInfo mutableCopy] ?: [NSMutableDictionary dictionary];
+    details[@"generation"] = @(request.generation);
+    details[@"loadedPaths"] = loadedPaths;
+    details[@"loadedPathsKnown"] = @(extensions != nil);
+    if (rollbackError) {
+      details[@"rollbackError"] = rollbackError.localizedDescription;
+    }
+    NSError *reportedError = RexExtensionRuntimeError(
+        error.code ?: 45,
+        error.localizedDescription ?: @"Chromium 扩展事务失败",
+        details);
+    NSLog(@"[Rex] extension runtime generation %lu failed: %@",
+          (unsigned long)request.generation,
+          reportedError.localizedDescription);
+    [self emitEvent:RexEvent(
+        @"extensionRuntimeError",
+        @"",
+        @{
+          @"generation": @(request.generation),
+          @"loadedPaths": loadedPaths,
+          @"loadedPathsKnown": @(extensions != nil),
+          @"message": reportedError.localizedDescription
+        })];
+    // Never reload on a failed generation. The live set may be missing or
+    // unverified; a successful compensating generation performs the one reload.
+    if (request.completion) request.completion(nil, reportedError);
+    self->_activeExtensionSyncRequest = nil;
+    self->_extensionSyncActive = NO;
+    [self startNextExtensionSyncIfNeeded];
+  };
+
+  if (!_extensionPipe.isPrepared) {
+    completeFailure(nil, error);
+    return;
+  }
+
+  if (request.startup || !attemptedMutation) {
+    [self queryLiveExtensions:^(
+        NSArray<NSDictionary<NSString *, id> *> *extensions,
+        NSError *queryError) {
+      completeFailure(extensions, queryError);
+    }];
+    return;
+  }
+
+  NSMutableArray<NSString *> *rollbackPaths =
+      [request.previousPaths mutableCopy];
+  // The old files for an in-place update live in Swift's transaction backup.
+  // Remove those unverified live instances; Swift restores their directories
+  // and submits a compensating sync before deleting the backups. An explicitly
+  // forced reload has no file swap, so its current path remains eligible for
+  // this best-effort runtime rollback.
+  NSMutableArray<NSString *> *replacementPaths =
+      [request.updatedPaths mutableCopy];
+  [replacementPaths removeObjectsInArray:request.forcedReloadPaths];
+  [rollbackPaths removeObjectsInArray:replacementPaths];
+  NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *>
+      *rollbackMetadata =
+      RexExtensionManifestMetadataByPath(rollbackPaths);
+  NSMutableDictionary<NSString *, NSString *> *rollbackIDs =
+      [NSMutableDictionary dictionary];
+  for (NSString *path in rollbackPaths) {
+    NSString *identifier = request.previousExtensionIDsByPath[path];
+    if (identifier.length) rollbackIDs[path] = identifier;
+  }
+
+  [self queryLiveExtensions:^(
+      NSArray<NSDictionary<NSString *, id> *> *extensions,
+      NSError *queryError) {
+    if (queryError) {
+      completeFailure(nil, queryError);
+      return;
+    }
+    NSArray<NSDictionary<NSString *, id> *> *rollbackOperations =
+        RexExtensionReconcileOperations(
+            extensions,
+            rollbackPaths,
+            [NSSet set],
+            rollbackMetadata);
+    [self performExtensionOperations:rollbackOperations
+                               index:0
+            loadedExtensionIDsByPath:rollbackIDs
+                          completion:^(NSError *operationError) {
+      [self queryLiveExtensions:^(
+          NSArray<NSDictionary<NSString *, id> *> *rolledBackExtensions,
+          NSError *finalQueryError) {
+        NSError *verificationError = finalQueryError;
+        if (!verificationError) {
+          verificationError = RexVerifyManagedExtensionSet(
+              rollbackPaths,
+              rolledBackExtensions,
+              rollbackMetadata,
+              rollbackIDs,
+              request.generation);
+        }
+        NSError *rollbackError =
+            verificationError ? (operationError ?: verificationError) : nil;
+        completeFailure(rolledBackExtensions, rollbackError);
+      }];
+    }];
+  }];
+}
+
+- (void)releaseExtensionStartupNavigationBarrier {
+  if (!_extensionStartupBarrierActive) return;
+  _extensionStartupBarrierActive = NO;
+  NSDictionary<NSString *, NSString *> *pending = [_pendingURLs copy];
+  for (NSString *tabID in pending) {
+    CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
+    CefRefPtr<CefFrame> frame = browser ? browser->GetMainFrame() : nullptr;
+    if (!frame) continue;
+    NSString *url = pending[tabID];
+    const std::string requestedURL = RexUTF8(url);
+    if (frame->GetURL().ToString() != requestedURL) {
+      frame->LoadURL(requestedURL);
+    }
+    [_pendingURLs removeObjectForKey:tabID];
+  }
+}
+
+- (void)reloadWebPagesAfterExtensionChange {
+  for (const auto &entry : _browsers) {
+    const std::string &key = entry.first;
+    NSString *tabID =
+        [[NSString alloc] initWithUTF8String:key.c_str()] ?: @"";
+    if ([_privateTabs[tabID] boolValue]) {
+      _needsExtensionReloadTabs.erase(key);
+      continue;
+    }
+    CefRefPtr<CefBrowser> browser = entry.second;
+    CefRefPtr<CefFrame> frame =
+        browser && browser->IsValid() ? browser->GetMainFrame() : nullptr;
+    if (!frame) continue;
+    NSString *scheme =
+        [NSURLComponents componentsWithString:RexNSString(frame->GetURL())]
+            .scheme.lowercaseString;
+    if ([scheme isEqualToString:@"http"] ||
+        [scheme isEqualToString:@"https"]) {
+      if (_suspendedTabs.contains(key)) {
+        _needsExtensionReloadTabs.insert(key);
+      } else {
+        _needsExtensionReloadTabs.erase(key);
+        browser->Reload();
+      }
+    }
+  }
 }
 
 - (rex::privacy::ProtectionPolicy)privacyPolicyForTabID:(NSString *)tabID
@@ -2377,11 +4553,27 @@ struct RexPendingPermission {
   return YES;
 }
 - (void)setFocused:(BOOL)focused tabID:(NSString *)tabID {
-  [self onMain:^{ CefRefPtr<CefBrowser> b = [self browserForTabID:tabID]; if (b) b->GetHost()->SetFocus(focused); }];
+  [self onMain:^{
+    if (focused) {
+      self->_focusedTabID = [tabID copy];
+      self->_lastFocusedTabID = [tabID copy];
+    } else if ([self->_focusedTabID isEqualToString:tabID]) {
+      self->_focusedTabID = nil;
+    }
+    CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
+    if (!browser) return;
+    browser->GetHost()->SetFocus(focused);
+  }];
 }
 
 - (void)setPageSuspended:(BOOL)suspended tabID:(NSString *)tabID {
   [self onMain:^{
+    const std::string key = RexUTF8(tabID);
+    if (suspended) {
+      self->_suspendedTabs.insert(key);
+    } else {
+      self->_suspendedTabs.erase(key);
+    }
     CefRefPtr<CefBrowser> browser = [self browserForTabID:tabID];
     CefRefPtr<CefBrowserHost> host = browser ? browser->GetHost() : nullptr;
     if (!host) return;
@@ -2390,6 +4582,19 @@ struct RexPendingPermission {
     if (host->ExecuteDevToolsMethod(
             0, "Page.setWebLifecycleState", params) == 0) {
       NSLog(@"[Rex] Unable to set page lifecycle state for %@", tabID);
+    }
+    if (!suspended &&
+        self->_needsExtensionReloadTabs.erase(key) > 0 &&
+        ![self->_privateTabs[tabID] boolValue]) {
+      CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+      NSString *scheme = frame
+          ? [NSURLComponents componentsWithString:RexNSString(frame->GetURL())]
+                .scheme.lowercaseString
+          : nil;
+      if ([scheme isEqualToString:@"http"] ||
+          [scheme isEqualToString:@"https"]) {
+        browser->Reload();
+      }
     }
   }];
 }
@@ -2403,8 +4608,28 @@ struct RexPendingPermission {
     // The delegate first cancels Cocoa's current quit event; this block then
     // runs after sendEvent has unwound.
     dispatch_async(dispatch_get_main_queue(), ^{
+      if (self->_application) {
+        self->_application->CloseDefaultBrowsers();
+      }
+      std::vector<CefRefPtr<CefBrowser>> chromePopups;
+      chromePopups.reserve(self->_chromePopupBrowsers.size());
+      for (const auto &entry : self->_chromePopupBrowsers) {
+        chromePopups.push_back(entry.second);
+      }
+      for (const auto &browser : chromePopups) {
+        if (browser && browser->IsValid()) {
+          browser->GetHost()->CloseBrowser(true);
+        }
+      }
       for (const auto &entry : self->_browsers) {
-        entry.second->GetHost()->CloseBrowser(true);
+        if (entry.second && entry.second->IsValid()) {
+          entry.second->GetHost()->CloseBrowser(true);
+        }
+      }
+      for (const auto &entry : self->_auxiliaryChromeBrowsers) {
+        if (entry.second && entry.second->IsValid()) {
+          entry.second->GetHost()->CloseBrowser(true);
+        }
       }
       for (const auto &entry : self->_developerToolsBrowsers) {
         self->_developerToolsClosingTabs.insert(entry.first);
@@ -2419,6 +4644,10 @@ struct RexPendingPermission {
   if (!_ready) return;
   [_views removeAllObjects];
   [_developerToolsViews removeAllObjects];
+  for (NSWindow *popupWindow in _chromePopupWindowsByBrowserID.allValues) {
+    [popupWindow orderOut:nil];
+  }
+  [_chromePopupWindowsByBrowserID removeAllObjects];
   for (NSWindow *popupWindow in _developerToolsPopupWindowsByBrowserID.allValues) {
     [NSNotificationCenter.defaultCenter
         removeObserver:self
@@ -2431,10 +4660,16 @@ struct RexPendingPermission {
   [_tabProfileIDs removeAllObjects];
   [_privateTabs removeAllObjects];
   [_mutedTabs removeAllObjects];
+  _focusedTabID = nil;
+  _lastFocusedTabID = nil;
   @synchronized (_privacyPolicies) {
     [_privacyPolicies removeAllObjects];
   }
   [_downloadDirectories removeAllObjects];
+  _browsers.clear();
+  _auxiliaryChromeBrowsers.clear();
+  _chromePopupBrowsers.clear();
+  _pendingTabs.clear();
   _requestContexts.clear();
   _developerToolsBrowsers.clear();
   _developerToolsFrontendReadyBrowserIDs.clear();
@@ -2457,6 +4692,16 @@ struct RexPendingPermission {
   _application->StopMessagePump();
   _taskManager = nullptr;
   CefShutdown();
+  [_extensionPipe shutdown];
+  [_extensionPipe releaseChromiumDescriptors];
+  _extensionPipe = nil;
+  [_extensionSyncQueue removeAllObjects];
+  _activeExtensionSyncRequest = nil;
+  _extensionSyncActive = NO;
+  _extensionPageReloadPending = NO;
+  _extensionChromeWindowHostReady = NO;
+  _extensionStartupBarrierActive = NO;
+  _chromiumContextReady = NO;
   _application = nullptr;
   _libraryLoader.reset();
   _ready = NO;
@@ -2465,6 +4710,208 @@ struct RexPendingPermission {
 @end
 
 namespace {
+
+bool RexDefaultChromeClient::CreateExtensionWindowHost() {
+  CEF_REQUIRE_UI_THREAD();
+  if (extension_window_host_view_ ||
+      extension_window_host_browser_id_ != 0) {
+    return true;
+  }
+  CefBrowserSettings browserSettings;
+  browserSettings.background_color = CefColorSetARGB(255, 245, 245, 247);
+  CefRefPtr<CefBrowserView> browserView =
+      CefBrowserView::CreateBrowserView(
+          this,
+          "about:blank",
+          browserSettings,
+          nullptr,
+          CefRequestContext::GetGlobalContext(),
+          new RexExtensionChromeBrowserViewDelegate());
+  if (!browserView) {
+    NSLog(@"[Rex] Chromium extension window context creation failed");
+    return false;
+  }
+  extension_window_host_view_ = browserView;
+  CefRefPtr<CefWindow> window = CefWindow::CreateTopLevelWindow(
+      new RexExtensionChromeWindowDelegate(browserView));
+  if (!window) {
+    extension_window_host_view_ = nullptr;
+    NSLog(@"[Rex] Chromium extension host window creation failed");
+    return false;
+  }
+  NSLog(@"[Rex] Chromium extension window context creation started");
+  return true;
+}
+
+void RexDefaultChromeClient::OnAfterCreated(
+    CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid()) return;
+  const int browserID = browser->GetIdentifier();
+  browsers_[browserID] = browser;
+  RexChromiumRuntime *runtime = runtime_;
+  CefRefPtr<CefBrowserView> browserView =
+      CefBrowserView::GetForBrowser(browser);
+  if (extension_window_host_view_ && browserView &&
+      extension_window_host_view_->IsSame(browserView)) {
+    extension_window_host_browser_id_ = browserID;
+    if (runtime) {
+      [runtime registerExtensionChromeWindowHost:browser];
+    } else {
+      browser->GetHost()->CloseBrowser(true);
+    }
+    return;
+  }
+  if (runtime) {
+    [runtime parkDefaultChromeBrowser:browser];
+    pending_blank_browser_ids_.insert(browserID);
+  } else {
+    browser->GetHost()->CloseBrowser(true);
+  }
+}
+
+void RexDefaultChromeClient::ForwardBlankBrowserIfStillPending(
+    int browser_id) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!pending_blank_browser_ids_.contains(browser_id) ||
+      forwarding_browser_ids_.contains(browser_id) ||
+      browser_id == extension_window_host_browser_id_) {
+    return;
+  }
+  auto iterator = browsers_.find(browser_id);
+  if (iterator == browsers_.end() || !iterator->second ||
+      !iterator->second->IsValid()) {
+    pending_blank_browser_ids_.erase(browser_id);
+    return;
+  }
+
+  CefRefPtr<CefBrowser> browser = iterator->second;
+  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+  NSString *url = frame ? RexNSString(frame->GetURL()) : @"";
+  if (![url isEqualToString:@"about:blank"]) return;
+  pending_blank_browser_ids_.erase(browser_id);
+  forwarding_browser_ids_.insert(browser_id);
+  RexChromiumRuntime *runtime = runtime_;
+  if (runtime) {
+    [runtime handleDefaultChromeBrowser:browser targetURL:url];
+  } else {
+    browser->GetHost()->CloseBrowser(true);
+  }
+}
+
+bool RexDefaultChromeClient::OnBeforeBrowse(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request,
+    bool user_gesture,
+    bool is_redirect) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid() || !frame || !frame->IsMain() ||
+      !request) {
+    return false;
+  }
+  const int browserID = browser->GetIdentifier();
+  if (browserID == extension_window_host_browser_id_ ||
+      forwarding_browser_ids_.contains(browserID)) {
+    return false;
+  }
+  NSString *url = RexNSString(request->GetURL());
+  if (!url.length || [url isEqualToString:@"about:blank"] ||
+      !RexCanForwardPopupURL(url)) {
+    return false;
+  }
+
+  // Cancel before Chromium starts the temporary Chrome WebContents request.
+  // Rex will create the single user-visible tab from the forwarded URL.
+  pending_blank_browser_ids_.erase(browserID);
+  forwarding_browser_ids_.insert(browserID);
+  RexChromiumRuntime *runtime = runtime_;
+  if (runtime) {
+    [runtime handleDefaultChromeBrowser:browser targetURL:url];
+  } else {
+    browser->GetHost()->CloseBrowser(true);
+  }
+  return true;
+}
+
+void RexDefaultChromeClient::OnLoadStart(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    TransitionType transition_type) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid() || !frame || !frame->IsMain()) return;
+  const int browserID = browser->GetIdentifier();
+  if (browserID == extension_window_host_browser_id_ ||
+      forwarding_browser_ids_.contains(browserID)) {
+    return;
+  }
+  const std::string url = frame->GetURL();
+  if (url.empty() || url == "about:blank") return;
+  pending_blank_browser_ids_.erase(browserID);
+  forwarding_browser_ids_.insert(browserID);
+  RexChromiumRuntime *runtime = runtime_;
+  if (runtime) {
+    [runtime handleDefaultChromeBrowser:browser
+                              targetURL:RexNSString(frame->GetURL())];
+  } else {
+    browser->GetHost()->CloseBrowser(true);
+  }
+}
+
+void RexDefaultChromeClient::OnLoadEnd(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    int http_status_code) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid() || !frame || !frame->IsMain()) return;
+  const int browserID = browser->GetIdentifier();
+  if (browserID == extension_window_host_browser_id_ ||
+      forwarding_browser_ids_.contains(browserID) ||
+      frame->GetURL().ToString() != "about:blank") {
+    return;
+  }
+  // OnAfterCreated is too early: tabs.create({url}) may still be waiting for a
+  // later navigation callback. A committed blank main document is the first
+  // deterministic signal that the extension explicitly requested a blank tab.
+  ForwardBlankBrowserIfStillPending(browserID);
+}
+
+void RexDefaultChromeClient::OnBeforeClose(
+    CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  bool wasExtensionWindowHost = false;
+  if (browser) {
+    const int browserID = browser->GetIdentifier();
+    browsers_.erase(browserID);
+    forwarding_browser_ids_.erase(browserID);
+    pending_blank_browser_ids_.erase(browserID);
+    if (extension_window_host_browser_id_ == browserID) {
+      wasExtensionWindowHost = true;
+      extension_window_host_browser_id_ = 0;
+      extension_window_host_view_ = nullptr;
+    }
+  }
+  RexChromiumRuntime *runtime = runtime_;
+  if (runtime) {
+    if (wasExtensionWindowHost) {
+      [runtime extensionChromeWindowHostDidClose];
+    } else {
+      [runtime defaultChromeBrowserDidClose];
+    }
+  }
+}
+
+void RexDefaultChromeClient::CloseAllBrowsers() {
+  CEF_REQUIRE_UI_THREAD();
+  std::vector<CefRefPtr<CefBrowser>> browsers;
+  browsers.reserve(browsers_.size());
+  for (const auto &entry : browsers_) browsers.push_back(entry.second);
+  for (const auto &browser : browsers) {
+    if (browser && browser->IsValid()) {
+      browser->GetHost()->CloseBrowser(true);
+    }
+  }
+}
 
 void RexBrowserClient::Emit(NSString *kind, NSDictionary<NSString *, id> *fields) {
   RexChromiumRuntime *runtime = runtime_;
@@ -2480,11 +4927,12 @@ void RexBrowserClient::EmitSecuritySnapshot(CefRefPtr<CefBrowser> browser) {
 void RexBrowserClient::EmitBlockedResource(NSString *category,
                                            const std::string &host) {
   NSString *hostValue = [[NSString alloc] initWithUTF8String:host.c_str()] ?: @"";
-  Emit(@"blockedResource", @{
+  NSMutableDictionary<NSString *, id> *fields = [@{
     @"category": category,
     @"host": hostValue,
     @"count": @1
-  });
+  } mutableCopy];
+  Emit(@"blockedResource", fields);
 }
 
 namespace {
@@ -2681,7 +5129,8 @@ CefResourceRequestHandler::ReturnValue RexBrowserClient::OnBeforeResourceLoad(
     return RV_CONTINUE;
   }
   EmitBlockedResource(
-      @(rex::privacy::CategoryToken(decision.category)), decision.host);
+      @(rex::privacy::CategoryToken(decision.category)),
+      decision.host);
   return RV_CANCEL;
 }
 
@@ -2724,7 +5173,23 @@ void RexBrowserClient::OnBeforeDevToolsPopup(
 void RexBrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   RexChromiumRuntime *runtime = runtime_;
-  if (runtime) [runtime registerBrowser:browser tabID:tab_id_];
+  if (!runtime || !browser || !browser->IsValid()) return;
+  if (browser->IsPopup()) {
+    [runtime registerChromePopupBrowser:browser sourceTabID:tab_id_];
+    return;
+  }
+  if (primary_browser_identifier_ == 0) {
+    primary_browser_identifier_ = browser->GetIdentifier();
+    [runtime registerBrowser:browser tabID:tab_id_];
+    if ([tab_id_ hasPrefix:@"rex-extension-surface:"]) {
+      browser->GetHost()->SetAutoResizeEnabled(
+          true, CefSize(25, 25), CefSize(800, 600));
+    }
+    return;
+  }
+  if (!IsPrimaryBrowser(browser)) {
+    [runtime registerAuxiliaryChromeBrowser:browser sourceTabID:tab_id_];
+  }
 }
 
 bool RexBrowserClient::OnBeforePopup(
@@ -2757,16 +5222,30 @@ bool RexBrowserClient::OnBeforePopup(
 
 bool RexBrowserClient::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-  NSView *nativeView = (__bridge NSView *)browser->GetHost()->GetWindowHandle();
-  [nativeView removeFromSuperview];
-  return true;
+  if (browser &&
+      browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
+    NSView *nativeView =
+        (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+    [nativeView removeFromSuperview];
+    return true;
+  }
+  // Auxiliary Chrome-style windows own their native close lifecycle.
+  return false;
 }
 
 void RexBrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-  EmitMediaAccess(false, false);
   RexChromiumRuntime *runtime = runtime_;
-  if (runtime) [runtime browserDidCloseForTabID:tab_id_];
+  if (browser && browser->IsPopup()) {
+    if (runtime) [runtime chromePopupBrowserDidClose:browser];
+    return;
+  }
+  if (browser && !IsPrimaryBrowser(browser)) {
+    if (runtime) [runtime auxiliaryChromeBrowserDidClose:browser];
+    return;
+  }
+  EmitMediaAccess(false, false);
+  if (runtime) [runtime browser:browser didCloseForTabID:tab_id_];
 }
 
 RexDevToolsClient::~RexDevToolsClient() {
@@ -2937,6 +5416,7 @@ bool RexBrowserClient::OnCertificateError(
 void RexBrowserClient::OnAddressChange(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefFrame> frame,
                                        const CefString &url) {
+  if (!IsPrimaryBrowser(browser)) return;
   if (frame->IsMain()) {
     Emit(@"address", @{ @"url": RexNSString(url) });
     EmitSecuritySnapshot(browser);
@@ -2945,12 +5425,36 @@ void RexBrowserClient::OnAddressChange(CefRefPtr<CefBrowser> browser,
 
 void RexBrowserClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
                                      const CefString &title) {
+  if (!IsPrimaryBrowser(browser)) return;
   Emit(@"title", @{ @"title": RexNSString(title) });
+}
+
+bool RexBrowserClient::OnAutoResize(CefRefPtr<CefBrowser> browser,
+                                    const CefSize &new_size) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser) ||
+      ![tab_id_ hasPrefix:@"rex-extension-surface:"]) {
+    return false;
+  }
+  RexChromiumRuntime *runtime = runtime_;
+  if (!runtime || new_size.width <= 0 || new_size.height <= 0) return false;
+  if (browser->IsLoading()) {
+    pending_auto_resize_width_ = new_size.width;
+    pending_auto_resize_height_ = new_size.height;
+    return true;
+  }
+  pending_auto_resize_width_ = 0;
+  pending_auto_resize_height_ = 0;
+  [runtime browser:browser
+      preferredContentSizeDidChange:NSMakeSize(new_size.width, new_size.height)
+                              tabID:tab_id_];
+  return true;
 }
 
 void RexBrowserClient::OnFaviconURLChange(
     CefRefPtr<CefBrowser> browser,
     const std::vector<CefString> &icon_urls) {
+  if (!IsPrimaryBrowser(browser)) return;
   if (icon_urls.empty()) {
     Emit(@"favicon", @{ @"url": @"" });
     return;
@@ -2969,6 +5473,7 @@ void RexBrowserClient::OnAudioStreamStarted(
     CefRefPtr<CefBrowser> browser,
     const CefAudioParameters &params,
     int channels) {
+  if (!IsPrimaryBrowser(browser)) return;
   Emit(@"audio", @{ @"isPlaying": @YES });
 }
 
@@ -2979,16 +5484,19 @@ void RexBrowserClient::OnAudioStreamPacket(CefRefPtr<CefBrowser> browser,
 }
 
 void RexBrowserClient::OnAudioStreamStopped(CefRefPtr<CefBrowser> browser) {
+  if (!IsPrimaryBrowser(browser)) return;
   Emit(@"audio", @{ @"isPlaying": @NO });
 }
 
 void RexBrowserClient::OnAudioStreamError(CefRefPtr<CefBrowser> browser,
                                           const CefString &message) {
+  if (!IsPrimaryBrowser(browser)) return;
   Emit(@"audio", @{ @"isPlaying": @NO });
 }
 
 void RexBrowserClient::OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
                                                double progress) {
+  if (!IsPrimaryBrowser(browser)) return;
   Emit(@"progress", @{ @"progress": @(progress) });
 }
 
@@ -2996,6 +5504,7 @@ void RexBrowserClient::OnMediaAccessChange(CefRefPtr<CefBrowser> browser,
                                            bool has_video_access,
                                            bool has_audio_access) {
   CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser)) return;
   EmitMediaAccess(has_video_access, has_audio_access);
 }
 
@@ -3004,6 +5513,7 @@ void RexBrowserClient::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                                             bool can_go_back,
                                             bool can_go_forward) {
   CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser)) return;
   Emit(@"loading", @{ @"isLoading": @(is_loading),
                       @"canGoBack": @(can_go_back),
                       @"canGoForward": @(can_go_forward) });
@@ -3106,8 +5616,23 @@ void RexBrowserClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                                  CefRefPtr<CefFrame> frame,
                                  int httpStatusCode) {
   CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser)) return;
   if (!frame || !frame->IsValid()) return;
   if (frame->IsMain()) {
+    if ([tab_id_ hasPrefix:@"rex-extension-surface:"] &&
+        pending_auto_resize_width_ > 0 &&
+        pending_auto_resize_height_ > 0) {
+      const NSSize pendingSize =
+          NSMakeSize(pending_auto_resize_width_, pending_auto_resize_height_);
+      pending_auto_resize_width_ = 0;
+      pending_auto_resize_height_ = 0;
+      RexChromiumRuntime *runtime = runtime_;
+      if (runtime) {
+        [runtime browser:browser
+            preferredContentSizeDidChange:pendingSize
+                                    tabID:tab_id_];
+      }
+    }
     Emit(@"loadEnd", @{ @"httpStatusCode": @(httpStatusCode) });
     EmitSecuritySnapshot(browser);
   }
@@ -3118,6 +5643,7 @@ void RexBrowserClient::OnLoadError(CefRefPtr<CefBrowser> browser,
                                    ErrorCode error_code,
                                    const CefString &error_text,
                                    const CefString &failed_url) {
+  if (!IsPrimaryBrowser(browser)) return;
   if (!frame->IsMain() || error_code == ERR_ABORTED) return;
   Emit(@"loadError", @{ @"code": @((int)error_code),
                         @"message": RexNSString(error_text),
@@ -3129,6 +5655,7 @@ void RexBrowserClient::OnRenderProcessTerminated(
     TerminationStatus status,
     int error_code,
     const CefString &error_string) {
+  if (!IsPrimaryBrowser(browser)) return;
   EmitMediaAccess(false, false);
   Emit(@"crashed", @{ @"status": @((int)status),
                       @"code": @(error_code),

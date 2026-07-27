@@ -1,5 +1,5 @@
 {
-  "lastUpdatedVersion": "0.9.0",
+  "lastUpdatedVersion": "0.9.4",
   "categories": [
     {
       "id": "app-shell",
@@ -78,8 +78,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.2-beta.1",
-          "updatedIn": "0.9.0",
-          "description": "Chrome 风格侧栏设置中心；Google、Bing、DuckDuckGo、Brave Search 或 Ecosia 偏好同时驱动地址栏、新标签页搜索和品牌图标；关于 Rex 从发布数据展示完整版本与功能信息",
+          "updatedIn": "0.9.1",
+          "description": "Chrome 风格侧栏设置中心；搜索引擎偏好同时驱动地址栏、新标签页搜索和品牌图标；版本与功能页提供发布概览、运行环境、功能筛选、已知限制和历史版本详情",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -113,8 +113,8 @@
           "status": "completed",
           "testStatus": "passed",
           "introducedIn": "0.2.0-alpha.1",
-          "updatedIn": "0.2.0-alpha.1",
-          "description": "固定并校验 CEF 150 ARM64 下载、哈希和架构",
+          "updatedIn": "0.9.1",
+          "description": "固定并校验 CEF 150 ARM64 官方 standard 发行包的来源、SHA-1、SHA-256 和架构",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -390,7 +390,7 @@
           "settingsPath": "设置 > 隐私与安全 > 拦截广告与追踪器",
           "limitations": [
             "域名目录为内置快照，在线更新仍待接入",
-            "不执行 EasyList、自定义规则、恶意网站检测或通用指纹随机化",
+            "不执行 EasyList、自定义订阅、恶意网站检测或通用指纹随机化",
             "第三方 Cookie 限制不会随单个标签页盾牌开关切换"
           ]
         },
@@ -467,24 +467,27 @@
     },
     {
       "id": "chrome-compatibility",
-      "name": "Chrome 兼容边界",
+      "name": "扩展兼容性",
       "features": [
         {
           "id": "controlled-extensions",
-          "name": "受控扩展子集",
-          "status": "limited",
+          "name": "Chromium 扩展运行时",
+          "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.9.0",
-          "description": "Rex 扩展商店提供 Chrome Web Store 精选目录、搜索、分类和官方页面入口；本地管理器安全校验并复制 Manifest V2/V3 未打包扩展，支持定位和移除，不显示无效启用开关",
+          "updatedIn": "0.9.4",
+          "description": "Rex 管理 Chrome Web Store 与本地扩展包，并提供列表、小型面板和扩展管理界面；安装、启停、更新与移除通过无监听端口的 --remote-debugging-pipe 即时同步，恢复的 HTTP(S) 页面等待精确对账后首次导航，同路径更新由持久 journal 保护，小型面板加载扩展自身静态 default_popup，扩展创建的包内页面统一映射为 rex-extension://",
           "supportsPrivateWindow": false,
           "supportsSplitView": true,
           "supportsKeyboard": true,
           "requiresRestart": false,
           "settingsPath": "扩展",
           "limitations": [
-            "Chrome Web Store 的官方页面在系统默认浏览器中打开，不会安装到 Rex",
-            "CEF 150 最小发行包没有公开扩展加载 API，本地扩展的脚本、service worker 和 Chrome API 不会执行"
+            "安装、启用、停用、更新和移除会立即对账 Chromium 扩展集合；活跃普通页面立即重载一次，休眠页面恢复时重载一次，隐私窗口不运行扩展",
+            "最终 Dist 包需通过通用 MV3 探针，在不刷新、不重复导航的首次文档上覆盖冷启动、热生命周期、service worker、content script、runtime messaging、chrome.storage.local、Chromium DNR、options 和静态 default_popup",
+            "Rex 小型面板不是 Chromium 原生 action popup；activeTab、chrome.tabs 当前窗口语义、无 popup 的 action.onClicked 和动态 action.setPopup 当前不支持",
+            "核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容",
+            "Chrome Web Store 扩展尚不自动更新，可使用相同链接或 ID 手动重新安装"
           ]
         },
         {

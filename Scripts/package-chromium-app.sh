@@ -4,9 +4,9 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="${1:-0.9.0}"
-BUILD_NUMBER="${2:-900}"
-CONFIGURATION="${3:-Debug}"
+VERSION="${1:-0.9.4}"
+BUILD_NUMBER="${2:-940}"
+CONFIGURATION="${3:-Release}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
   echo "Version must be a SemVer value without a leading v." >&2
@@ -20,6 +20,7 @@ if [[ "$CONFIGURATION" != "Debug" && "$CONFIGURATION" != "Release" ]]; then
   echo "Configuration must be Debug or Release." >&2
   exit 8
 fi
+EXPECTED_MARKETING_VERSION="${VERSION%%-*}"
 
 DERIVED_DATA="$PROJECT_ROOT/.build/xcode-package"
 PRODUCTS_DIR="$DERIVED_DATA/Build/Products/$CONFIGURATION"
@@ -78,14 +79,39 @@ xcodebuild \
   -derivedDataPath "$DERIVED_DATA" \
   -destination 'platform=macOS,arch=arm64' \
   build \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=YES \
+  CODE_SIGN_IDENTITY=- \
+  ENABLE_HARDENED_RUNTIME=NO \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-  MARKETING_VERSION="${VERSION%%-*}"
+  MARKETING_VERSION="$EXPECTED_MARKETING_VERSION"
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "Build product missing: $APP_PATH" >&2
   exit 5
 fi
+
+verify_bundle_version() {
+  local bundle_path="$1"
+  local bundle_name="$2"
+  local info_plist="$bundle_path/Contents/Info.plist"
+  local actual_version
+  local actual_build
+
+  if [[ ! -f "$info_plist" ]]; then
+    echo "$bundle_name Info.plist is missing: $info_plist" >&2
+    exit 9
+  fi
+
+  actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")"
+  actual_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")"
+  if [[ "$actual_version" != "$EXPECTED_MARKETING_VERSION" || "$actual_build" != "$BUILD_NUMBER" ]]; then
+    echo "$bundle_name version mismatch: expected $EXPECTED_MARKETING_VERSION/$BUILD_NUMBER, received $actual_version/$actual_build." >&2
+    exit 9
+  fi
+}
+
+verify_bundle_version "$APP_PATH" "Rex.app"
 
 echo "==> Verifying Chromium runtime embedding"
 FRAMEWORKS="$APP_PATH/Contents/Frameworks"
@@ -97,12 +123,59 @@ test -d "$FRAMEWORKS/Rex Helper (Plugin).app"
 test -d "$FRAMEWORKS/Rex Helper (Alerts).app"
 test -f "$APP_PATH/Contents/Resources/CEF-LICENSE.txt"
 
-ARCH_CHECK="$(/usr/bin/lipo -info "$APP_PATH/Contents/MacOS/Rex" | /usr/bin/tr -d '\n')"
-echo "    binary: $ARCH_CHECK"
-if [[ "$ARCH_CHECK" != *"arm64"* ]]; then
-  echo "Expected arm64 binary." >&2
-  exit 6
+for helper_name in \
+  "Rex Helper" \
+  "Rex Helper (GPU)" \
+  "Rex Helper (Renderer)" \
+  "Rex Helper (Plugin)" \
+  "Rex Helper (Alerts)"; do
+  verify_bundle_version "$FRAMEWORKS/$helper_name.app" "$helper_name.app"
+done
+
+verify_arm64_binary() {
+  local binary_path="$1"
+  local binary_name="$2"
+  local architectures
+
+  architectures="$(/usr/bin/lipo -archs "$binary_path")"
+  echo "    $binary_name: $architectures"
+  if [[ "$architectures" != "arm64" ]]; then
+    echo "$binary_name must be an arm64-only binary; received: $architectures" >&2
+    exit 6
+  fi
+}
+
+verify_arm64_binary "$APP_PATH/Contents/MacOS/Rex" "Rex"
+verify_arm64_binary \
+  "$FRAMEWORKS/Chromium Embedded Framework.framework/Chromium Embedded Framework" \
+  "Chromium Embedded Framework"
+for helper_name in \
+  "Rex Helper" \
+  "Rex Helper (GPU)" \
+  "Rex Helper (Renderer)" \
+  "Rex Helper (Plugin)" \
+  "Rex Helper (Alerts)"; do
+  verify_arm64_binary \
+    "$FRAMEWORKS/$helper_name.app/Contents/MacOS/$helper_name" \
+    "$helper_name"
+done
+
+echo "==> Verifying removed Rex password integration"
+if /usr/bin/otool -L "$APP_PATH/Contents/MacOS/Rex" \
+    | /usr/bin/grep -q '/AuthenticationServices\.framework/'; then
+  echo "Rex must not link AuthenticationServices after password integration removal." >&2
+  exit 11
 fi
+if [[ -d "$APP_PATH/Contents/Library/SystemExtensions" ]] &&
+    /usr/bin/find "$APP_PATH/Contents/Library/SystemExtensions" \
+      -name '*.systemextension' -print -quit \
+      | /usr/bin/grep -q .; then
+  echo "Rex.app unexpectedly contains a system extension." >&2
+  exit 11
+fi
+
+echo "==> Verifying ad-hoc code signatures"
+/usr/bin/codesign --verify --deep --strict --verbose=4 "$APP_PATH"
 
 /bin/rm -rf "$PUBLISH_DIR" "$BACKUP_DIST"
 mkdir -p "$PUBLISH_DIR"
@@ -110,6 +183,11 @@ mkdir -p "$PUBLISH_DIR"
 # Assemble the entire handoff directory away from Dist so a failed copy,
 # archive, checksum, or inventory write cannot mix two releases.
 /usr/bin/ditto "$APP_PATH" "$PUBLISH_DIR/Rex.app"
+/usr/bin/codesign --verify --deep --strict --verbose=4 "$PUBLISH_DIR/Rex.app"
+if /usr/bin/find "$PUBLISH_DIR/Rex.app" -name console.log -print -quit | /usr/bin/grep -q .; then
+  echo "Unexpected console.log found in Rex.app." >&2
+  exit 10
+fi
 
 echo "==> Creating zip archive"
 (
@@ -117,6 +195,11 @@ echo "==> Creating zip archive"
   /usr/bin/ditto -c -k --sequesterRsrc --keepParent Rex.app "$ARCHIVE_NAME"
 )
 /usr/bin/unzip -tq "$PUBLISH_DIR/$ARCHIVE_NAME"
+if /usr/bin/unzip -Z1 "$PUBLISH_DIR/$ARCHIVE_NAME" \
+    | /usr/bin/grep -E '(^|/)console\.log$' >/dev/null; then
+  echo "Unexpected console.log found in release archive." >&2
+  exit 10
+fi
 
 SHA="$(/usr/bin/shasum -a 256 "$PUBLISH_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{print $1}')"
 
@@ -132,9 +215,17 @@ SHA="$(/usr/bin/shasum -a 256 "$PUBLISH_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{prin
   echo "configuration=$CONFIGURATION"
   echo "chromium=150.0.7871.129"
   echo "cef=150.0.14+g7c1aa68+chromium-150.0.7871.129"
-  echo "content_blocking=rex-curated-domain-catalog"
+  echo "cef_distribution=standard"
+  echo "content_blocking=rex-curated-domain-catalog+chromium-extension-dnr"
+  echo "extension_runtime=chromium-browser-target-cdp-over-remote-debugging-pipe"
+  echo "extension_lifecycle=hot-install-enable-disable-update-remove"
+  echo "extension_startup_navigation=extension-ready-generation-barrier"
+  echo "extension_page_reload=automatic-after-hot-runtime-change"
+  echo "rex_password_integration=absent"
   echo "performance_layer=rex-thorium-hybrid-v1.3"
   echo "devtools=cef-chromium-devtools"
+  echo "signing=ad-hoc"
+  echo "hardened_runtime=disabled-for-ad-hoc-build"
   echo "arch=arm64"
   echo "archive=$ARCHIVE_NAME"
   echo "sha256=$SHA"

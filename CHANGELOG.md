@@ -1,5 +1,108 @@
 # 更新日志
 
+## 0.9.4 (build 940) — 2026-07-28
+
+### 扩展热生命周期
+
+- 扩展安装、启用、停用、手动更新和移除改为运行中即时生效，不再要求重新启动 Rex。桥接层通过 Chromium 的 `--remote-debugging-pipe` 调用 `Extensions.getExtensions`、`Extensions.loadUnpacked` 与 `Extensions.uninstall`，不开放本地调试监听端口。
+- 每次扩展集合变更使用串行 generation 对账预期的受管路径与启用状态；Chromium 确认实际集合一致后，活跃普通窗口中的 HTTP(S) 页面立即重载一次，使内容脚本和 DNR 应用或撤销。休眠或冻结页面延迟到恢复时重载一次，隐私窗口不运行扩展且不参与热重载。
+- 扩展包文件仍先经过 Rex 的来源、身份、签名和安全解包校验；热同步只改变运行时生命周期，不降低受管包的校验边界。
+- 同路径更新在换盘前原子写入运行时 replacement journal；Chromium 确认后才提交并清理旧包。若进程在确认前退出，下次启动会恢复上一版本及目录记录，避免留下孤立备份或把未确认版本当作可运行。
+- 重新导入已在 Rex 受管目录内编辑的本地扩展时，会显式强制 Chromium unload/load；只覆写既有 JS/CSS、目录与 manifest stat 均未变化时也不会漏掉热更新。
+
+### 冷启动与页面路由
+
+- 恢复会话时，HTTP(S) 标签先停留在 `about:blank`，等待扩展运行时完成当前 generation 对账后才发出首次导航；即使预期集合为空，也会先清理 Chromium profile 中的陈旧受管注册，内容脚本和 DNR 不再依赖用户手动刷新。
+- 修复 `chrome.tabs.create` 转交包内页面时临时 Chrome browser 与 Rex 正式标签分别请求同一目标、产生两次主文档请求的问题。
+- 成功的热变更只触发一次受控 HTTP(S) 重载，不重载 `about:`、`rex-extension:` 或其他内部页面。
+
+### 性能与验证
+
+- 扩展目录启动校验由每包两次完整文件树扫描降为一次；启停路径只更新内存运行状态，不再重复扫描包内容。
+- 单次 manifest 解析只读取一次对应 `_locales/.../messages.json`，名称与描述共享同一本地化字典。
+- Chrome Web Store 下载进度约每 80 毫秒发布一次，完成、取消与失败状态仍立即送达，减少高频主线程状态更新。
+- 多个普通窗口共享一次进程级首次扩展对账；窗口关闭时取消会话恢复、导航、休眠和无限事件订阅，等待页面任务退出后销毁该窗口全部 CEF 页面，避免隐藏 renderer、媒体、网络和扩展注入继续运行。
+- 会话保存改为串行队列；恢复尚未完成时关窗不会以占位标签覆盖已有快照，手动关闭副窗口会等待待处理保存后删除其记录，应用整体退出仍保留当前全部窗口。
+- 通用 MV3 探针改为页面和内容脚本向同源 fixture server 自报告，不再依赖已关闭的 TCP CDP，也不会把隐藏的 `about:blank` 扩展上下文误判为 Rex 网页。它直接检查冷启动首次文档，不通过刷新或重复导航掩盖启动竞态；真实 UI 热生命周期验收需要已解锁桌面。
+- Swift Testing `140/140` 与 Release Notes Validator（28 个功能 ID）通过；CEF bridge arm64 Release、完整 Xcode Release、主 App 与五个 Helper 的 `0.9.4 / 940` 版本和 arm64 架构、deep/strict codesign、ZIP 解压及 SHA 清单均通过。隔离 App 即使收到 `--remote-debugging-port=9444` 也不会建立 TCP LISTEN。
+
+### 版本
+
+- 应用、Xcode 工程、打包默认值与 Chromium User-Agent 推进到 `v0.9.4` build `940` / `Rex/0.9.4`。
+- 产物：`Dist/Rex.app`（`342M`，`350340 KiB`）与 `Dist/Rex-v0.9.4-macos-arm64-chromium.zip`（`142,468,262` bytes，`148464 KiB` / `145M`）；ZIP SHA-256：`aea9e3fd3e11f46ff9a3934693f05c3f9ac20641c21127ca4f52def5535611c2`。
+
+## 0.9.3 (build 930) — 2026-07-28
+
+### 扩展小型面板
+
+- 扩展面板在 Chromium 返回首个有效内容尺寸后再显示，首次打开不再暴露 CEF 的白色占位首帧；已确认的扩展尺寸会在本次窗口会话中复用，避免再次打开时发生可见跳变。
+- 自动尺寸在扩展主文档完成加载时立即应用，移除固定 300 ms 的加载后等待；面板以最终宽高完成定位和阴影呈现，减少打开时的卡顿感。
+- 保持通用扩展路径：面板仍直接加载扩展声明的静态 `default_popup`，没有添加 AdGuard 或其他单扩展专用页面与逻辑。
+
+### 扩展内部页面路由
+
+- 扩展通过 `chrome.tabs.create` 等 Chromium 路径创建 `chrome-extension://` 包内页面时，桥接层现在会将其交给 Rex，并在应用边界转换为 `rex-extension://` 后以 Rex 标签页打开。
+- Chromium 启动扩展时会建立一个始终隐藏的 Chrome Views 窗口上下文，为后台页补齐 `chrome.tabs` 所需的 current-window 语义；扩展新建的 Chrome 标签在主框架开始导航后再转交 Rex，避免空 URL 抢先关闭。
+- 面板调用 `window.close()` 后仍短暂保留最近一次有效来源标签标识，修复设置按钮先关闭 popup、随后创建 options 标签时来源丢失的问题。
+- HTTP、HTTPS 与 About 弹窗继续沿用原有 Rex 标签路由；带凭据或应用层无法验证的扩展 URL 仍会被拒绝。
+
+### 版本
+
+- 应用、Xcode 工程、打包默认值与 Chromium User-Agent 更新为 `v0.9.3` build `930` / `Rex/0.9.3`。
+- Swift Testing `128/128` 与完整 CEF Objective-C++ bridge 增量构建通过；真实 AdGuard 弹窗点击设置后已确认进入 `rex-extension://…/pages/options.html`，未暴露额外 Chrome 窗口。
+
+## 0.9.2 (build 920) — 2026-07-28
+
+### Chromium 扩展运行时
+
+- Rex 继续提供扩展发现、安装管理、工具栏列表和小型面板；列表行可整行进入扩展交互，小型面板直接加载清单声明的静态 `default_popup` 资源，options 页面使用 `rex-extension://<runtime-id>/<包内路径>` 打开。
+- Chrome Web Store CRX2/CRX3 仍需经过来源限制、扩展身份/签名验证和安全解包，本地 Manifest V2/V3 文件夹则复制到受管目录。商店包会在每次启动前重新核对 manifest 公钥推导出的 Chromium 扩展 ID。
+- 当前启动时启用的受管包由 Chromium 扩展运行时直接加载。已验证的后台服务、内容脚本、消息、存储、DNR 和 options 页面由包内代码与 Chromium 实现，Rex 不再解析规则后模拟扩展行为，也没有 AdGuard 专用执行路径。
+- 最终 `Dist` Release 包的通用 MV3 黑盒探针按 service worker、content script/DNR、options、popup 的顺序等待就绪，连续两次均为 `8/8` 通过。
+- 扩展安装、启用、停用和移除均以启动快照为边界，需要重新启动 Rex 才能改变 Chromium 中的实际加载集合；已加载扩展的移除会延后到下次启动清理。
+- Rex 的小型面板与扩展管理界面是产品外壳；静态 `default_popup`、options 等内容直接来自已安装扩展包，内部仍在 `chrome-extension://` 安全源中执行，对外统一显示为 `rex-extension://`，而不是针对某个扩展重做前端。
+- 小型面板不会触发 Chromium 原生 action popup。stock CEF 150 的 Alloy 嵌入路径不提供 `activeTab` 授权或 `chrome.tabs` 当前窗口语义；未声明静态 popup 而依赖 `action.onClicked` 的按钮，以及运行时 `action.setPopup` 动态变更，当前也不支持。
+- 非广告 fixture 从扩展列表整行进入扩展自身 popup，自动尺寸为 `280×113`，显示 `Ready` 并与 service worker 完成消息交互；AdGuard 通过同一路径自动调整为 `320×600`，分段交互有效，没有专用代码。
+- 普通 Rex UI 回归确认没有网页裁剪、负偏移或 Chrome 窗口覆盖；未托管的 Chrome extension popup/auxiliary window 会把普通网页目标交给 Rex 后关闭。
+
+### 版本与发布状态
+
+- 应用版本、Xcode 工程、打包默认值与 Chromium User-Agent 更新为 `v0.9.2` build `920` / `Rex/0.9.2`。
+- 打包脚本校验主 App 与五个 CEF Helper 的版本、构建号、arm64 架构和 ad-hoc 签名，并拒绝把根目录调试日志带入发布包。
+- 修复 CEF 单实例的正常退出处理：重复启动返回 code 24 时第二个进程静默以状态 0 退出，不再显示故障框或留下空壳窗口；真正的初始化失败仍会提示并退出。
+- 移除系统密码调用、`SystemPasswordsCoordinator` 和 Rex 主可执行文件的 `AuthenticationServices` 依赖。打包门槛拒绝主 executable 链接该 framework 或 App 包含 `.systemextension`，并写入 `rex_password_integration=absent`；上游 Chromium Embedded Framework 自身仍保留该系统 framework 链接。
+- Swift Testing `128/128`、完整 CEF bridge 的 Xcode arm64 Debug/Release 构建、Release Validator、deep codesign、ZIP 解压与校验和验证均通过。隔离 profile 下第二个 Dist Release 实例由首实例接管，并以 exit code 0 正常退出。
+- 主 App 与五个 CEF Helper 均为 `0.9.2 / 920`、仅包含 arm64。产物为 `Dist/Rex.app`（`342M`，`349776 KiB`）和 `Dist/Rex-v0.9.2-macos-arm64-chromium.zip`（`142,320,000` bytes，`du` 为 `144M`）；ZIP SHA-256：`c815a492297dac404b0d323eb2b6a628b26d58a352bc02ff9a5760605c2a898c`。
+
+## 0.9.1 (build 910) — 2026-07-27
+
+### 版本与功能 UI
+
+- 重做「版本与功能」导航与内容结构：当前版本、完整功能、已知问题和历史版本使用独立页面，不再把全部信息堆叠在单一滚动页。
+- 当前版本页新增发布摘要、版本/构建/通道、Chromium/CEF/架构与功能数据版本，并用分段控件切换新增、改进、修复、变更、移除、问题和开发中内容。
+- 完整功能页新增名称/描述/设置路径搜索、分类与状态筛选、状态数量概览，以及可展开的限制详情。
+- 已知问题页合并当前发布问题与结构化功能限制；历史版本页提供版本统计、内容数量和单版本详情。
+- 浏览器外壳、标签、分屏内容与设置卡片统一采用可感知深浅色和增强对比度的描边层级。
+
+### Chrome Web Store 直接安装
+
+- 精选目录条目新增「直接安装」；也可粘贴任意 `chromewebstore.google.com` 详情链接或 32 位扩展 ID。
+- 下载只允许 Google 官方更新与包主机，拒绝非 HTTPS、凭据 URL 和越界重定向，单包下载与解包上限为 256 MB。
+- 支持 CRX2/CRX3：验证扩展 ID、公钥身份及 RSA/ECDSA 签名后才进入解包；ZIP 解包拒绝加密、ZIP64、多卷、符号链接、路径穿越、重复路径、校验和错误和超额文件。
+- 商店 ID 与安装来源写入扩展目录；使用相同 ID 重新安装会原位更新并保留原安装时间与启用偏好。
+- UI 展示下载、验证、解包、导入、成功、失败与重试状态；已安装列表区分商店验签包与本地受管包。
+- CEF 150 在 macOS 原生父视图嵌入下仍使用 Alloy runtime，因此本版“直接安装”指可信获取与包管理，不声称已执行扩展脚本、service worker 或 Chrome API。
+
+### CEF 与发布
+
+- CEF 供应链由 `minimal` 切换为同版本官方 `standard` ARM64 发行包：CEF `150.0.14+g7c1aa68+chromium-150.0.7871.129` / Chromium `150.0.7871.129`。
+- 锁文件更新为官方 SHA-1 `ae4a49d31fe61d4e0dc55050449cf967b7549ba0` 与 SHA-256 `57f58530234f5b2a24f02479fdbc92b50aa5f94f7a66e32251cb71571284fad1`。
+- 应用版本更新为 `v0.9.1` build `910`；User-Agent 产品串更新为 `Rex/0.9.1`。
+- 新增签名 CRX 端到端测试，覆盖下载替身、身份与签名验证、安全解包、受管安装及商店身份持久化；并修复 Foundation 不支持同时使用 `atomic` 与 `withoutOverwriting` 导致的安装崩溃。
+- Release Validator 通过（28 个功能 ID），Swift Testing `108/108` 通过，完整 CEF bridge、XcodeGen、Xcode arm64 Debug 构建与运行时嵌入通过。
+- 真实 Chrome Web Store 烟雾验证完成 uBlock Origin Lite 9,861,135 字节 CRX3 的下载、身份/签名验证与安全解包；最终 UI 验收确认 v0.9.1 版本页、功能筛选、已知问题、历史版本和商店直装入口。
+- 产物：`Dist/Rex.app`（约 348M）与 `Dist/Rex-v0.9.1-macos-arm64-chromium.zip`（144,895,454 字节，约 145M）；ZIP SHA-256：`e0f746d0a584c28c854ffd580c19e281ac426c070a0051200c9ac2393d47310c`。主应用与五个 Helper 均为 `0.9.1 / 910` 且仅包含 arm64。
+
 ## 0.9.0 (build 900) — 2026-07-27
 
 ### 新标签页与收藏网站

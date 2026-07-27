@@ -109,7 +109,11 @@ struct SiteSecurityInfo: Hashable, Sendable {
 
     var level: SiteSecurityLevel {
         if isPending { return .pending }
-        if url?.scheme?.lowercased() == "about" { return .internalPage }
+        if ["about", RexExtensionResourceURL.scheme].contains(
+            url?.scheme?.lowercased() ?? ""
+        ) {
+            return .internalPage
+        }
         if hasCertificateError || certificateErrorCode != nil ||
             !certificateStatus.intersection(.blockingStatuses).isEmpty ||
             contentStatus.contains(.ranInsecureContent) {

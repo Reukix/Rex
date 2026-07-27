@@ -118,17 +118,46 @@ private struct BrowserPane: View {
     let pane: SplitPane?
     let isFocused: Bool
 
+    private var extensionPageError: (title: String, detail: String)? {
+        guard RexExtensionResourceURL.matchesScheme(tab.url) else { return nil }
+        guard let resource = tab.url.flatMap(RexExtensionResourceURL.init(rexURL:)) else {
+            return (
+                "扩展页面地址无效",
+                "Rex 无法验证这个扩展资源地址。"
+            )
+        }
+        guard store.isRunnableExtension(runtimeID: resource.runtimeID) else {
+            return (
+                "扩展不可用",
+                "这个扩展未安装、未启用或尚未在本次启动中加载。"
+            )
+        }
+        return nil
+    }
+
     var body: some View {
         Group {
             if BrowserStartPage.matches(tab.url) {
                 BrowserStartPageView(tabID: tab.id)
+            } else if let extensionPageError {
+                RexExtensionPageUnavailableView(
+                    title: extensionPageError.title,
+                    detail: extensionPageError.detail
+                )
             } else {
 #if REX_CEF
                 ChromiumBrowserSurface(tab: tab, profile: store.profile)
                     .id(tab.id)
 #else
-                PrototypeWebSurface(url: tab.url)
-                    .id(tab.id)
+                if tab.url.flatMap(RexExtensionResourceURL.init(rexURL:)) != nil {
+                    RexExtensionPageUnavailableView(
+                        title: "扩展页面需要 Chromium 运行时",
+                        detail: "当前构建未包含 Chromium，无法运行扩展包内页面。"
+                    )
+                } else {
+                    PrototypeWebSurface(url: tab.url)
+                        .id(tab.id)
+                }
 #endif
             }
         }

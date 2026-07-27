@@ -3,6 +3,24 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^RexChromiumEventHandler)(NSDictionary<NSString *, id> *event);
+typedef void (^RexChromiumBrowserDidCloseHandler)(void);
+typedef void (^RexChromiumBrowserPreferredSizeHandler)(NSSize size);
+/// `result` is nonnull only after Chromium's browser-level Extensions domain
+/// confirms the requested set. It contains `generation`, `loadedPaths`, and
+/// `loadedExtensionIDs`.
+typedef void (^RexChromiumExtensionRuntimeCompletion)(
+    NSDictionary<NSString *, id> *_Nullable result,
+    NSError *_Nullable error);
+
+/// Errors produced while loading or initializing the embedded Chromium runtime.
+FOUNDATION_EXPORT NSErrorDomain const RexChromiumErrorDomain;
+
+/// CEF's process-singleton relaunch result. This is a successful handoff to an
+/// existing Rex process, not an initialization failure.
+FOUNDATION_EXPORT NSInteger const RexChromiumNormalExitProcessNotifiedCode;
+
+/// Returns YES only for CEF's normal process-singleton early-exit result.
+FOUNDATION_EXPORT BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error);
 
 /// Stable AppKit host for one CEF browser instance. SwiftUI may resize or move
 /// this view but must not recreate it for ordinary state changes.
@@ -11,6 +29,12 @@ typedef void (^RexChromiumEventHandler)(NSDictionary<NSString *, id> *event);
 @property(nonatomic, readonly, copy) NSString *tabID;
 @property(nonatomic, readonly, copy) NSString *profileID;
 @property(nonatomic, readonly, getter=isPrivateBrowsing) BOOL privateBrowsing;
+@property(nonatomic, copy, nullable) RexChromiumBrowserDidCloseHandler
+    browserDidCloseHandler;
+/// Set only by extension popup surfaces. Chromium reports the popup document's
+/// preferred size using the same 25...800 by 25...600 DIP bounds as Chrome.
+@property(nonatomic, copy, nullable) RexChromiumBrowserPreferredSizeHandler
+    preferredSizeDidChangeHandler;
 
 - (instancetype)initWithTabID:(NSString *)tabID
                     initialURL:(NSString *)initialURL
@@ -51,6 +75,7 @@ typedef void (^RexChromiumEventHandler)(NSDictionary<NSString *, id> *event);
 
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
                     locale:(NSString *)locale
+            extensionPaths:(NSArray<NSString *> *)extensionPaths
                      error:(NSError **)error;
 - (void)prepareForApplicationTermination:(void (^)(void))completion;
 - (void)shutdownAfterApplicationTermination;
@@ -91,6 +116,23 @@ typedef void (^RexChromiumEventHandler)(NSDictionary<NSString *, id> *event);
 /// Global content-blocking toggle for the curated ad/tracker host catalogs.
 /// Takes effect immediately for subsequent requests; no restart needed.
 - (void)setContentBlockingEnabled:(BOOL)enabled;
+/// Reconciles Chromium's live unpacked-extension set with `extensionPaths`.
+/// The legacy fire-and-forget form remains for existing callers.
+- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths;
+/// Completion is delivered on the main thread. Success is reported only after
+/// a final Extensions.getExtensions result matches the requested managed set.
+- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths
+                           completion:
+                               (nullable RexChromiumExtensionRuntimeCompletion)
+                                   completion;
+/// `forceReloadPaths` must be a subset of `extensionPaths`. Those packages are
+/// unloaded and loaded even when the directory/manifest stat fingerprint is
+/// unchanged, covering explicit re-import of an edited managed directory.
+- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths
+                     forceReloadPaths:(NSArray<NSString *> *)forceReloadPaths
+                           completion:
+                               (nullable RexChromiumExtensionRuntimeCompletion)
+                                   completion;
 - (void)setZoomLevel:(double)zoomLevel tabID:(NSString *)tabID;
 - (void)findText:(NSString *)text
          forward:(BOOL)forward

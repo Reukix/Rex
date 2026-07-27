@@ -72,6 +72,7 @@ final class BrowserStore: ObservableObject {
     private let engine: any BrowserEngine
     private let persistence: BrowserSQLitePersistence
     private let newTabFavoritesStore: NewTabFavoritesStore
+    private let extensionsStore: BrowserExtensionsStore
     private var splitSessionsBySpace: [UUID: SplitViewSession] = [:]
     private var pendingNavigationURLs: [UUID: URL] = [:]
     private var httpsUpgradeAttempts: [UUID: HTTPSUpgradeAttempt] = [:]
@@ -83,10 +84,15 @@ final class BrowserStore: ObservableObject {
     private var securityScopedDownloadDirectoryURLsBySpace: [UUID: URL] = [:]
     private var activeDownloadTabIDsByDownloadID: [UUID: UUID] = [:]
     private var activeMediaTabIDs = Set<UUID>()
+    private var extensionSourceWebTabIDsByPackage: [String: UUID] = [:]
     private var recentlyClosedTabs: [BrowserTab] = []
     private var faviconCacheOrder: [UUID] = []
     private var pendingSave: Task<Void, Never>?
+    private var sessionPersistenceTail: Task<Void, Never>?
     private var automaticSleepTask: Task<Void, Never>?
+    private var engineEventTask: Task<Void, Never>?
+    private var sessionRestorationTask: Task<Void, Never>?
+    private var didTearDownWindow = false
     private var preferenceCancellables = Set<AnyCancellable>()
     private var observedHTTPSUpgradeEnabled = BrowserPreferences.defaultHTTPSUpgradeEnabled
     private var observedBlockThirdPartyCookies = BrowserPreferences.defaultBlockThirdPartyCookies
@@ -103,7 +109,8 @@ final class BrowserStore: ObservableObject {
         windowID: UUID = UUID(),
         profile: BrowserProfile = .standard,
         preferences: BrowserPreferences = .shared,
-        newTabFavoritesStore: NewTabFavoritesStore = .shared
+        newTabFavoritesStore: NewTabFavoritesStore = .shared,
+        extensionsStore: BrowserExtensionsStore = .shared
     ) {
         let activeEngine = engine ?? BrowserEngineFactory.makeDefault()
         let work = BrowserSpace(
@@ -173,6 +180,7 @@ final class BrowserStore: ObservableObject {
 
         var configuredInitialTabs = initialTabs
         for index in configuredInitialTabs.indices {
+            configuredInitialTabs[index] = Self.userVisibleTab(configuredInitialTabs[index])
             configuredInitialTabs[index].privacyState.httpsUpgradeEnabled = preferences.httpsUpgradeEnabled
         }
 
@@ -185,29 +193,56 @@ final class BrowserStore: ObservableObject {
         self.groups = []
         self.tabs = configuredInitialTabs
         self.currentSpaceID = initialSpaces[0].id
-        self.selectedTabID = initialTabs[0].id
-        self.addressText = BrowserStartPage.matches(initialTabs[0].url) ? "" : (initialTabs[0].url?.absoluteString ?? "")
+        self.selectedTabID = configuredInitialTabs[0].id
+        let initialURL = configuredInitialTabs[0].url
+        self.addressText = BrowserStartPage.matches(initialURL)
+            ? ""
+            : (initialURL?.absoluteString ?? "")
         self.engine = activeEngine
         self.persistence = databasePersistence
         self.newTabFavoritesStore = newTabFavoritesStore
+        self.extensionsStore = extensionsStore
         self.observedHTTPSUpgradeEnabled = preferences.httpsUpgradeEnabled
         self.observedBlockThirdPartyCookies = preferences.blockThirdPartyCookies
         self.newTabFavorites = profile.isPrivate ? [] : newTabFavoritesStore.favorites
 
-        createEnginePages(for: initialTabs.map(\.id))
-        Task { @MainActor [weak self, activeEngine] in
+        createEnginePages(for: configuredInitialTabs.map(\.id))
+        let shouldPerformInitialRuntimeSync =
+            !profile.isPrivate && extensionsStore.claimInitialRuntimeSync()
+        engineEventTask = Task { @MainActor [weak self, activeEngine, extensionsStore] in
             let events = await activeEngine.eventStream()
+            if shouldPerformInitialRuntimeSync {
+                let succeeded = await self?.reloadExtensionRules() ?? false
+                extensionsStore.finishInitialRuntimeSync(succeeded: succeeded)
+            }
             for await event in events { self?.apply(event) }
         }
         if !profile.isPrivate {
-            Task { @MainActor [weak self, databasePersistence, profile] in
+            sessionRestorationTask = Task { @MainActor [weak self, databasePersistence, profile] in
                 do {
                     if preferences.restorePreviousSession,
                        let snapshot = try await databasePersistence.load(windowID: windowID) {
-                        self?.restore(snapshot)
+                        guard !Task.isCancelled else { return }
+                        let visibleSnapshot = Self.userVisibleSnapshot(snapshot)
+                        self?.restore(visibleSnapshot)
+                        if visibleSnapshot != snapshot {
+                            try await databasePersistence.save(visibleSnapshot)
+                        }
                     }
+                    guard !Task.isCancelled else { return }
                     self?.finishSessionRestoration()
-                    let persistedHistory = try await databasePersistence.history()
+                    let storedHistory = try await databasePersistence.history()
+                    guard !Task.isCancelled else { return }
+                    let persistedHistory = storedHistory.compactMap(Self.userVisibleHistoryEntry)
+                    for storedEntry in storedHistory {
+                        guard let visibleEntry = Self.userVisibleHistoryEntry(storedEntry) else {
+                            try? await databasePersistence.removeHistory(id: storedEntry.id)
+                            continue
+                        }
+                        if visibleEntry != storedEntry {
+                            try? await databasePersistence.addHistory(visibleEntry)
+                        }
+                    }
                     if let self {
                         let liveHistoryIDs = Set(self.history.map(\.id))
                         self.history.append(contentsOf: persistedHistory.filter {
@@ -215,7 +250,18 @@ final class BrowserStore: ObservableObject {
                         })
                         self.history.sort { $0.visitedAt > $1.visitedAt }
                     }
-                    let persistedBookmarks = try await databasePersistence.bookmarks()
+                    let storedBookmarks = try await databasePersistence.bookmarks()
+                    guard !Task.isCancelled else { return }
+                    let persistedBookmarks = storedBookmarks.compactMap(Self.userVisibleBookmark)
+                    for storedBookmark in storedBookmarks {
+                        guard let visibleBookmark = Self.userVisibleBookmark(storedBookmark) else {
+                            try? await databasePersistence.removeBookmark(id: storedBookmark.id)
+                            continue
+                        }
+                        if visibleBookmark != storedBookmark {
+                            try? await databasePersistence.saveBookmark(visibleBookmark)
+                        }
+                    }
                     if let self {
                         let liveBookmarkURLs = Set(self.bookmarks.map(\.url))
                         self.bookmarks.append(contentsOf: persistedBookmarks.filter {
@@ -223,7 +269,18 @@ final class BrowserStore: ObservableObject {
                         })
                         self.bookmarks.sort { $0.updatedAt > $1.updatedAt }
                     }
-                    let persistedDownloads = try await databasePersistence.downloads()
+                    let storedDownloads = try await databasePersistence.downloads()
+                    guard !Task.isCancelled else { return }
+                    let persistedDownloads = storedDownloads.compactMap(Self.userVisibleDownload)
+                    for storedDownload in storedDownloads {
+                        guard let visibleDownload = Self.userVisibleDownload(storedDownload) else {
+                            try? await databasePersistence.removeDownload(id: storedDownload.id)
+                            continue
+                        }
+                        if visibleDownload != storedDownload {
+                            try? await databasePersistence.saveDownload(visibleDownload)
+                        }
+                    }
                     if let self {
                         let liveDownloadIDs = Set(self.downloads.map(\.id))
                         self.downloads.append(contentsOf: persistedDownloads.filter {
@@ -231,7 +288,24 @@ final class BrowserStore: ObservableObject {
                         })
                         self.downloads.sort { $0.createdAt > $1.createdAt }
                     }
-                    let persistedPermissions = try await databasePersistence.permissions(profileID: profile.id)
+                    let storedPermissions = try await databasePersistence.permissions(profileID: profile.id)
+                    guard !Task.isCancelled else { return }
+                    let persistedPermissions = storedPermissions.map(Self.userVisiblePermission)
+                    for (storedPermission, visiblePermission) in zip(
+                        storedPermissions,
+                        persistedPermissions
+                    ) where storedPermission != visiblePermission {
+                        do {
+                            try await databasePersistence.removePermission(id: storedPermission.id)
+                            do {
+                                try await databasePersistence.savePermission(visiblePermission)
+                            } catch {
+                                try? await databasePersistence.savePermission(storedPermission)
+                            }
+                        } catch {
+                            continue
+                        }
+                    }
                     let durablePermissions = persistedPermissions.filter(\.decision.isPersistent)
                     for permission in persistedPermissions where !permission.decision.isPersistent {
                         try? await databasePersistence.removePermission(id: permission.id)
@@ -245,6 +319,7 @@ final class BrowserStore: ObservableObject {
                     }
                     self?.synchronizeBookmarkFlags()
                 } catch {
+                    guard !Task.isCancelled else { return }
                     self?.finishSessionRestoration()
                     self?.lastError = "会话恢复失败：\(error.localizedDescription)"
                 }
@@ -308,12 +383,67 @@ final class BrowserStore: ObservableObject {
         )
     }
 
-    deinit {
+    isolated deinit {
+        tearDownWindowResources()
+    }
+
+    func closeWindow(removingPersistedSession: Bool = false) {
+        guard !didTearDownWindow else { return }
+        if removingPersistedSession {
+            pendingSave?.cancel()
+            let pendingSave = pendingSave
+            let persistenceTail = sessionPersistenceTail
+            let restorationTask = sessionRestorationTask
+            let persistence = persistence
+            let windowID = windowID
+            tearDownWindowResources()
+            Task {
+                await pendingSave?.value
+                await restorationTask?.value
+                await persistenceTail?.value
+                try? await persistence.deleteWindow(windowID: windowID)
+            }
+            return
+        }
+
+        flushSession()
+        tearDownWindowResources()
+    }
+
+    private func tearDownWindowResources() {
+        guard !didTearDownWindow else { return }
+        didTearDownWindow = true
+
+        let tabIDs = tabs.map(\.id)
+        let pageTasks = Array(pageSetupTasks.values)
+            + Array(pageSuspensionTasks.values)
+            + Array(navigationCommandTasks.values)
+
         pendingSave?.cancel()
+        pendingSave = nil
         automaticSleepTask?.cancel()
-        for task in pageSuspensionTasks.values { task.cancel() }
+        automaticSleepTask = nil
+        engineEventTask?.cancel()
+        engineEventTask = nil
+        sessionRestorationTask?.cancel()
+        sessionRestorationTask = nil
+        for task in pageTasks { task.cancel() }
+        pageSetupTasks.removeAll()
+        pageSuspensionTasks.removeAll()
+        navigationCommandTasks.removeAll()
+        preferenceCancellables.removeAll()
         for url in securityScopedDownloadDirectoryURLsBySpace.values {
             url.stopAccessingSecurityScopedResource()
+        }
+        securityScopedDownloadDirectoryURLsBySpace.removeAll()
+
+        Task { [engine] in
+            for task in pageTasks {
+                await task.value
+            }
+            for tabID in tabIDs {
+                try? await engine.execute(.destroyPage(tabID: tabID))
+            }
         }
     }
 
@@ -352,6 +482,21 @@ final class BrowserStore: ObservableObject {
     }
 
     var currentSiteSecurityInfo: SiteSecurityInfo? {
+        if let url = currentTab?.url,
+           RexExtensionResourceURL(rexURL: url) != nil {
+            return SiteSecurityInfo(
+                url: url,
+                navigationGeneration: 0,
+                isPending: false,
+                isSecureConnection: false,
+                hasCertificateError: false,
+                certificateErrorCode: nil,
+                certificateStatus: [],
+                tlsVersion: .unknown,
+                contentStatus: [],
+                certificate: nil
+            )
+        }
         guard let info = siteSecurityInfoByTabID[selectedTabID],
               let infoURL = info.url,
               let tabURL = currentTab?.url else { return nil }
@@ -468,6 +613,355 @@ final class BrowserStore: ObservableObject {
         createEnginePages(for: [tab.id])
         updateTabLifecycles()
         scheduleSave()
+    }
+
+    func openExtensionPage(_ url: URL, title: String) {
+        guard !profile.isPrivate else {
+            lastError = "隐私窗口不运行或打开扩展页面。"
+            return
+        }
+        guard let resource = RexExtensionResourceURL(rexURL: url),
+              let package = extensionsStore.runnablePackage(
+                  runtimeID: resource.runtimeID
+              ) else {
+            lastError = "这个扩展未安装、未启用或尚未在本次启动中加载。"
+            return
+        }
+        if let sourceTabID = currentTab.flatMap({ tab -> UUID? in
+            guard let scheme = tab.url?.scheme?.lowercased(),
+                  ["http", "https"].contains(scheme) else {
+                return nil
+            }
+            return tab.id
+        }) {
+            extensionSourceWebTabIDsByPackage[package.id] = sourceTabID
+        }
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? package.name
+            : title
+        if let currentURL = currentTab?.url,
+           let currentResource = RexExtensionResourceURL(rexURL: currentURL),
+           currentResource.runtimeID == resource.runtimeID {
+            navigateExtensionTab(selectedTabID, to: resource.rexURL, title: resolvedTitle)
+            return
+        }
+        if let existing = visibleTabs.first(where: { tab in
+            guard let existingURL = tab.url,
+                  let existingResource = RexExtensionResourceURL(rexURL: existingURL) else {
+                return false
+            }
+            return existingResource.runtimeID == resource.runtimeID
+        }) {
+            selectTab(existing.id)
+            navigateExtensionTab(existing.id, to: resource.rexURL, title: resolvedTitle)
+            return
+        }
+
+        clearSplit(in: currentSpaceID)
+        var tab = BrowserTab(
+            url: resource.rexURL,
+            title: resolvedTitle,
+            spaceID: currentSpaceID
+        )
+        if let spaceLevel = currentSpace?.privacyLevel {
+            tab.privacyState.level = spaceLevel
+        }
+        tab.privacyState.httpsUpgradeEnabled = preferences.httpsUpgradeEnabled
+        tabs.append(tab)
+        selectedTabID = tab.id
+        addressText = resource.rexURL.absoluteString
+        createEnginePages(for: [tab.id])
+        updateTabLifecycles()
+        scheduleSave()
+    }
+
+    func isRunnableExtension(runtimeID: String) -> Bool {
+        !profile.isPrivate
+            && extensionsStore.runnablePackage(runtimeID: runtimeID) != nil
+    }
+
+    private func navigateExtensionTab(_ tabID: UUID, to url: URL, title: String) {
+        pendingNavigationURLs[tabID] = url
+        httpsUpgradeAttempts.removeValue(forKey: tabID)
+        activeHTTPFallbackURLs.removeValue(forKey: tabID)
+        siteSecurityInfoByTabID.removeValue(forKey: tabID)
+        addressText = url.absoluteString
+        mutateTab(tabID) { tab in
+            tab.url = url
+            tab.title = title
+            tab.isLoading = true
+            tab.loadingProgress = 0.15
+        }
+        let pageSetupTask = pageSetupTasks[tabID]
+        let previousNavigationTask = navigationCommandTasks[tabID]
+        let navigationTask = Task { [engine] in
+            await pageSetupTask?.value
+            await previousNavigationTask?.value
+            guard !Task.isCancelled else { return }
+            do {
+                try await engine.execute(.loadURL(tabID: tabID, url: url))
+            } catch {
+                await MainActor.run {
+                    if self.pendingNavigationURLs[tabID] == url {
+                        self.pendingNavigationURLs.removeValue(forKey: tabID)
+                    }
+                    self.lastError = error.localizedDescription
+                }
+            }
+        }
+        navigationCommandTasks[tabID] = navigationTask
+        scheduleSave()
+    }
+
+    func sourceWebTab(forExtensionPackageID packageID: String) -> BrowserTab? {
+        guard !profile.isPrivate else { return nil }
+        if let currentTab,
+           currentTab.spaceID == currentSpaceID,
+           !currentTab.isArchived,
+           let scheme = currentTab.url?.scheme?.lowercased(),
+           ["http", "https"].contains(scheme) {
+            return currentTab
+        }
+        if let tabID = extensionSourceWebTabIDsByPackage[packageID],
+           let tab = tab(withID: tabID),
+           tab.spaceID == currentSpaceID,
+           !tab.isArchived,
+           let scheme = tab.url?.scheme?.lowercased(),
+           ["http", "https"].contains(scheme) {
+            return tab
+        }
+        return tabs
+            .filter { tab in
+                guard tab.spaceID == currentSpaceID,
+                      !tab.isArchived,
+                      let scheme = tab.url?.scheme?.lowercased() else {
+                    return false
+                }
+                return ["http", "https"].contains(scheme)
+            }
+            .max { $0.lastAccessedAt < $1.lastAccessedAt }
+    }
+
+    @discardableResult
+    func reloadExtensionRules() async -> Bool {
+        guard !profile.isPrivate else { return true }
+        return await extensionsStore.performSerializedRuntimeMutation {
+            await self.reloadExtensionRulesWithoutSerialization()
+        }
+    }
+
+    private func reloadExtensionRulesWithoutSerialization(
+        paths requestedPaths: [String]? = nil
+    ) async -> Bool {
+        let paths = requestedPaths ?? extensionsStore.nativeRuleExtensionPaths
+        let forceReloadPaths = requestedPaths == nil
+            ? extensionsStore.forcedRuntimeReloadPaths
+            : []
+        let replacementTokens = extensionsStore.pendingRuntimeReplacementTokens
+        do {
+            try await engine.execute(.reloadExtensionRules(
+                paths: paths,
+                forceReloadPaths: forceReloadPaths
+            ))
+            extensionsStore.acknowledgeRuntimePaths(paths)
+            extensionsStore.acknowledgeForcedRuntimeReloadPaths(forceReloadPaths)
+            let cleanupFailures = extensionsStore.commitPendingRuntimeReplacements(
+                tokens: replacementTokens
+            )
+            if !cleanupFailures.isEmpty {
+                extensionsStore.recordRuntimeSyncFailure(
+                    BrowserExtensionRuntimeSyncError(
+                        message: "新版本已接入，但无法清理旧版本备份：\(cleanupFailures.joined(separator: "；"))"
+                    ),
+                    loadedPaths: paths
+                )
+            }
+            return true
+        } catch {
+            let runtimeError = error as NSError
+            extensionsStore.recordRuntimeSyncFailure(
+                error,
+                loadedPaths: runtimeError.userInfo["loadedPaths"] as? [String]
+            )
+            guard !replacementTokens.isEmpty else {
+                return false
+            }
+
+            let originalMessage = error.localizedDescription
+            do {
+                try extensionsStore.rollbackPendingRuntimeReplacements(
+                    tokens: replacementTokens
+                )
+            } catch {
+                extensionsStore.recordRuntimeSyncFailure(
+                    BrowserExtensionRuntimeSyncError(
+                        message: "\(originalMessage)；旧版本自动恢复失败：\(error.localizedDescription)"
+                    )
+                )
+                return false
+            }
+
+            let rollbackPaths = extensionsStore.nativeRuleExtensionPaths
+            do {
+                try await engine.execute(.reloadExtensionRules(
+                    paths: rollbackPaths,
+                    forceReloadPaths: []
+                ))
+                extensionsStore.acknowledgeRuntimePaths(rollbackPaths)
+                extensionsStore.recordRuntimeSyncFailure(
+                    BrowserExtensionRuntimeSyncError(
+                        message: "\(originalMessage)；已恢复并重新接入上一版本。"
+                    ),
+                    loadedPaths: rollbackPaths
+                )
+            } catch {
+                let rollbackError = error as NSError
+                extensionsStore.recordRuntimeSyncFailure(
+                    BrowserExtensionRuntimeSyncError(
+                        message: "\(originalMessage)；旧版本文件已恢复，但 Chromium 重新接入失败：\(error.localizedDescription)"
+                    ),
+                    loadedPaths: rollbackError.userInfo["loadedPaths"] as? [String]
+                )
+            }
+            return false
+        }
+    }
+
+    @discardableResult
+    func setExtensionEnabled(_ enabled: Bool, id: String) async -> Bool {
+        guard !profile.isPrivate else { return false }
+        return await extensionsStore.performSerializedRuntimeMutation {
+            await self.setExtensionEnabledWithoutSerialization(enabled, id: id)
+        }
+    }
+
+    private func setExtensionEnabledWithoutSerialization(
+        _ enabled: Bool,
+        id: String
+    ) async -> Bool {
+        guard let package = extensionsStore.extensions.first(where: { $0.id == id }) else {
+            return false
+        }
+        guard package.isEnabled != enabled else {
+            return await reloadExtensionRulesWithoutSerialization()
+        }
+        guard extensionsStore.setEnabled(enabled, for: id) else { return false }
+        if await reloadExtensionRulesWithoutSerialization() { return true }
+
+        let runtimeError = extensionsStore.lastError
+        _ = extensionsStore.setEnabled(package.isEnabled, for: id)
+        _ = await reloadExtensionRulesWithoutSerialization()
+        if let runtimeError {
+            extensionsStore.recordRuntimeSyncFailure(
+                BrowserExtensionRuntimeSyncError(message: runtimeError),
+                loadedPaths: extensionsStore.nativeRuleExtensionPaths
+            )
+        }
+        return false
+    }
+
+    @discardableResult
+    func removeExtension(_ id: String) async -> Bool {
+        guard !profile.isPrivate else { return false }
+        return await extensionsStore.performSerializedRuntimeMutation {
+            await self.removeExtensionWithoutSerialization(id)
+        }
+    }
+
+    private func removeExtensionWithoutSerialization(_ id: String) async -> Bool {
+        guard let package = extensionsStore.extensions.first(where: { $0.id == id }) else {
+            return false
+        }
+        let packagePath = package.path
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path
+        let unloadedPaths = extensionsStore.nativeRuleExtensionPaths.filter { path in
+            URL(fileURLWithPath: path)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+                .standardizedFileURL
+                .path != packagePath
+        }
+        guard await reloadExtensionRulesWithoutSerialization(paths: unloadedPaths) else {
+            return false
+        }
+        guard extensionsStore.remove(id) else {
+            if package.isEnabled {
+                _ = await reloadExtensionRulesWithoutSerialization()
+            }
+            return false
+        }
+        extensionsStore.acknowledgeRuntimePaths(unloadedPaths)
+        return true
+    }
+
+    @discardableResult
+    func installExtensionFromCatalog(
+        _ item: BrowserExtensionCatalogItem
+    ) async throws -> BrowserExtensionPackage {
+        guard !profile.isPrivate else {
+            throw BrowserExtensionRuntimeSyncError(
+                message: "隐私窗口不安装或更新扩展。"
+            )
+        }
+        return try await extensionsStore.performSerializedRuntimeMutation {
+            let package = try await self.extensionsStore.installFromCatalog(item)
+            guard await self.reloadExtensionRulesWithoutSerialization() else {
+                throw BrowserExtensionRuntimeSyncError(
+                    message: self.extensionsStore.lastError
+                        ?? "扩展已导入，但无法接入 Chromium。"
+                )
+            }
+            return package
+        }
+    }
+
+    @discardableResult
+    func installExtensionFromWebStore(
+        extensionID: String,
+        displayName: String? = nil
+    ) async throws -> BrowserExtensionPackage {
+        guard !profile.isPrivate else {
+            throw BrowserExtensionRuntimeSyncError(
+                message: "隐私窗口不安装或更新扩展。"
+            )
+        }
+        return try await extensionsStore.performSerializedRuntimeMutation {
+            let package = try await self.extensionsStore.installFromWebStore(
+                extensionID: extensionID,
+                displayName: displayName
+            )
+            guard await self.reloadExtensionRulesWithoutSerialization() else {
+                throw BrowserExtensionRuntimeSyncError(
+                    message: self.extensionsStore.lastError
+                        ?? "扩展已导入，但无法接入 Chromium。"
+                )
+            }
+            return package
+        }
+    }
+
+    @discardableResult
+    func installUnpackedExtension(
+        from url: URL
+    ) async throws -> BrowserExtensionPackage {
+        guard !profile.isPrivate else {
+            throw BrowserExtensionRuntimeSyncError(
+                message: "隐私窗口不安装或更新扩展。"
+            )
+        }
+        return try await extensionsStore.performSerializedRuntimeMutation {
+            let package = try self.extensionsStore.installUnpacked(from: url)
+            guard await self.reloadExtensionRulesWithoutSerialization() else {
+                throw BrowserExtensionRuntimeSyncError(
+                    message: self.extensionsStore.lastError
+                        ?? "扩展已导入，但无法接入 Chromium。"
+                )
+            }
+            return package
+        }
     }
 
     func focusAddress() {
@@ -620,15 +1114,21 @@ final class BrowserStore: ObservableObject {
         }
         let policyResult = applyPrivacyURLPolicy(to: inputURL, tabID: tabID)
         let url = policyResult.url
+        let extensionTitle = RexExtensionResourceURL(rexURL: url).flatMap {
+            extensionsStore.runnablePackage(runtimeID: $0.runtimeID)?.name
+        }
+        let navigationTitle = extensionTitle ?? url.host ?? trimmed
         pendingNavigationURLs[tabID] = url
         addressText = url.absoluteString
         mutateTab(tabID) { tab in
             tab.url = url
-            tab.title = url.host ?? trimmed
+            tab.title = navigationTitle
             tab.isLoading = true
             tab.loadingProgress = 0.15
         }
-        recordHistory(url: url, title: url.host ?? trimmed, tabID: tabID)
+        if extensionTitle == nil {
+            recordHistory(url: url, title: navigationTitle, tabID: tabID)
+        }
         let pageSetupTask = pageSetupTasks[tabID]
         let previousNavigationTask = navigationCommandTasks[tabID]
         let navigationTask = Task { [engine] in
@@ -1138,7 +1638,11 @@ final class BrowserStore: ObservableObject {
     }
 
     func openLibraryEntry(url: URL) {
-        addressText = url.absoluteString
+        guard let visibleURL = Self.userVisibleURL(url) else {
+            lastError = "无法打开这个地址"
+            return
+        }
+        addressText = visibleURL.absoluteString
         submitAddress()
         isLibraryPresented = false
     }
@@ -1593,14 +2097,119 @@ final class BrowserStore: ObservableObject {
     }
 
     func flushSession() {
-        guard !profile.isPrivate else { return }
+        guard !profile.isPrivate, !isRestoringSession else { return }
         pendingSave?.cancel()
+        pendingSave = nil
         let snapshot = makeSnapshot()
-        Task { [persistence] in try? await persistence.save(snapshot) }
+        enqueueSessionSave(snapshot, reportsErrors: false)
+    }
+
+    private static func userVisibleURL(_ url: URL?) -> URL? {
+        guard let url else { return nil }
+        return RexExtensionResourceURL.userVisibleURL(from: url)
+    }
+
+    private static func userVisibleTitle(_ title: String) -> String {
+        RexExtensionResourceURL.userVisibleString(from: title)
+    }
+
+    private static func userVisibleTab(_ tab: BrowserTab) -> BrowserTab {
+        var visibleTab = tab
+        visibleTab.url = userVisibleURL(tab.url)
+        visibleTab.faviconURL = userVisibleURL(tab.faviconURL)
+        visibleTab.title = userVisibleTitle(tab.title)
+        return visibleTab
+    }
+
+    private static func userVisibleNavigationState(
+        _ state: NavigationState
+    ) -> NavigationState {
+        var visibleState = state
+        visibleState.url = userVisibleURL(state.url)
+        visibleState.title = userVisibleTitle(state.title)
+        return visibleState
+    }
+
+    private static func userVisibleHistoryEntry(
+        _ entry: BrowserHistoryEntry
+    ) -> BrowserHistoryEntry? {
+        guard let visibleURL = userVisibleURL(entry.url) else { return nil }
+        var visibleEntry = entry
+        visibleEntry.url = visibleURL
+        visibleEntry.title = userVisibleTitle(entry.title)
+        return visibleEntry
+    }
+
+    private static func userVisibleBookmark(
+        _ bookmark: BrowserBookmark
+    ) -> BrowserBookmark? {
+        guard let visibleURL = userVisibleURL(bookmark.url) else { return nil }
+        var visibleBookmark = bookmark
+        visibleBookmark.url = visibleURL
+        visibleBookmark.title = userVisibleTitle(bookmark.title)
+        return visibleBookmark
+    }
+
+    private static func userVisibleDownload(
+        _ download: BrowserDownloadTask
+    ) -> BrowserDownloadTask? {
+        guard let visibleSourceURL = userVisibleURL(download.sourceURL) else { return nil }
+        var visibleDownload = download
+        visibleDownload.sourceURL = visibleSourceURL
+        visibleDownload.errorDescription = download.errorDescription.map(userVisibleTitle)
+        return visibleDownload
+    }
+
+    private static func userVisiblePermission(
+        _ permission: WebsitePermission
+    ) -> WebsitePermission {
+        var visiblePermission = permission
+        visiblePermission.topLevelOrigin = RexExtensionResourceURL.userVisibleOrigin(
+            from: permission.topLevelOrigin
+        )
+        visiblePermission.requestingOrigin = RexExtensionResourceURL.userVisibleOrigin(
+            from: permission.requestingOrigin
+        )
+        return visiblePermission
+    }
+
+    private static func userVisiblePermissionRequest(
+        _ request: WebsitePermissionRequest
+    ) -> WebsitePermissionRequest {
+        var visibleRequest = request
+        visibleRequest.topLevelOrigin = RexExtensionResourceURL.userVisibleOrigin(
+            from: request.topLevelOrigin
+        )
+        visibleRequest.requestingOrigin = RexExtensionResourceURL.userVisibleOrigin(
+            from: request.requestingOrigin
+        )
+        return visibleRequest
+    }
+
+    private static func userVisibleSiteSecurityInfo(
+        _ info: SiteSecurityInfo
+    ) -> SiteSecurityInfo {
+        var visibleInfo = info
+        visibleInfo.url = userVisibleURL(info.url)
+        return visibleInfo
+    }
+
+    private static func userVisibleSnapshot(
+        _ snapshot: BrowserSessionSnapshot
+    ) -> BrowserSessionSnapshot {
+        var visibleSnapshot = snapshot
+        visibleSnapshot.tabs = snapshot.tabs.map(userVisibleTab)
+        visibleSnapshot.splitPaneStates = snapshot.splitPaneStates.map { paneState in
+            var visiblePaneState = paneState
+            visiblePaneState.navigation = userVisibleNavigationState(paneState.navigation)
+            return visiblePaneState
+        }
+        return visibleSnapshot
     }
 
     private func addressBarText(for url: URL?) -> String {
-        BrowserStartPage.matches(url) ? "" : (url?.absoluteString ?? "")
+        let visibleURL = Self.userVisibleURL(url)
+        return BrowserStartPage.matches(visibleURL) ? "" : (visibleURL?.absoluteString ?? "")
     }
 
     private func normalizedURL(from input: String) -> URL? {
@@ -1608,6 +2217,15 @@ final class BrowserStore: ObservableObject {
             return preferences.searchEngine.searchURL(for: input)
         }
         if let direct = URL(string: input), let scheme = direct.scheme?.lowercased() {
+            if scheme == RexExtensionResourceURL.scheme {
+                guard let resource = RexExtensionResourceURL(rexURL: direct),
+                      extensionsStore.runnablePackage(
+                          runtimeID: resource.runtimeID
+                      ) != nil else {
+                    return nil
+                }
+                return resource.rexURL
+            }
             return ["http", "https", "about"].contains(scheme) ? direct : nil
         }
         return URL(string: "https://\(input)")
@@ -1945,7 +2563,7 @@ final class BrowserStore: ObservableObject {
     }
 
     private func makeSnapshot() -> BrowserSessionSnapshot {
-        BrowserSessionSnapshot(
+        Self.userVisibleSnapshot(BrowserSessionSnapshot(
             schemaVersion: BrowserSessionSnapshot.schemaVersion,
             windowID: windowID,
             spaces: spaces,
@@ -1958,7 +2576,7 @@ final class BrowserStore: ObservableObject {
             splitSessionsBySpace: Array(splitSessionsBySpace.values),
             savedSplitCompositions: savedSplitCompositions,
             savedAt: .now
-        )
+        ))
     }
 
     private func makeSplitPaneStates() -> [SplitPaneState] {
@@ -1996,16 +2614,26 @@ final class BrowserStore: ObservableObject {
         guard !profile.isPrivate else { return }
         pendingSave?.cancel()
         let snapshot = makeSnapshot()
-        let persistence = persistence
         pendingSave = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            enqueueSessionSave(snapshot, reportsErrors: true)
+        }
+    }
+
+    private func enqueueSessionSave(
+        _ snapshot: BrowserSessionSnapshot,
+        reportsErrors: Bool
+    ) {
+        let previousPersistenceTask = sessionPersistenceTail
+        let persistence = persistence
+        sessionPersistenceTail = Task { @MainActor [weak self] in
+            await previousPersistenceTask?.value
             do {
-                try await Task.sleep(for: .milliseconds(350))
-                try Task.checkCancellation()
                 try await persistence.save(snapshot)
-            } catch is CancellationError {
-                return
             } catch {
-                await MainActor.run { self.lastError = "会话保存失败：\(error.localizedDescription)" }
+                guard reportsErrors else { return }
+                self?.lastError = "会话保存失败：\(error.localizedDescription)"
             }
         }
     }
@@ -2094,21 +2722,34 @@ final class BrowserStore: ObservableObject {
     }
 
     private func createEnginePages(for tabIDs: [UUID]) {
+        guard !didTearDownWindow else { return }
         for tabID in tabIDs {
             let tab = tab(withID: tabID)
             let directoryURL = tab.flatMap { downloadDirectoryURL(for: $0.spaceID) }
-            // Keep Chromium on a blank document for start pages; the SwiftUI
-            // start page owns the visible chrome until the user navigates.
-            let initialURL = tab.flatMap { BrowserStartPage.matches($0.url) ? nil : $0.url }
+            let initialURL: URL? = tab.flatMap {
+                guard !BrowserStartPage.matches($0.url), let url = $0.url else { return nil }
+                if let resource = RexExtensionResourceURL(rexURL: url) {
+                    guard !profile.isPrivate,
+                          extensionsStore.runnablePackage(
+                              runtimeID: resource.runtimeID
+                          ) != nil else {
+                        return nil
+                    }
+                }
+                return url
+            }
             let privacy = tab?.privacyState ?? PrivacyState()
             let blockThirdPartyCookies = preferences.blockThirdPartyCookies
             pageSetupTasks[tabID]?.cancel()
             pageSetupTasks[tabID] = Task { @MainActor [weak self, engine, profile] in
+                guard !Task.isCancelled else { return }
                 try? await engine.execute(.createPage(tabID: tabID, profile: profile))
+                guard !Task.isCancelled else { return }
                 try? await engine.execute(.setDownloadDirectory(
                     tabID: tabID,
                     directoryURL: directoryURL
                 ))
+                guard !Task.isCancelled else { return }
                 try? await engine.execute(.setPrivacyPolicy(
                     tabID: tabID,
                     enabled: privacy.isEnabled,
@@ -2116,7 +2757,8 @@ final class BrowserStore: ObservableObject {
                     fingerprintProtection: privacy.fingerprintProtectionEnabled,
                     blockThirdPartyCookies: blockThirdPartyCookies
                 ))
-                if let initialURL,
+                if !Task.isCancelled,
+                   let initialURL,
                    self?.shouldLoadInitialURL(initialURL, for: tabID) == true {
                     try? await engine.execute(.loadURL(tabID: tabID, url: initialURL))
                 }
@@ -2215,13 +2857,20 @@ final class BrowserStore: ObservableObject {
 
     @discardableResult
     private func openPopup(url: URL, sourceTabID: UUID, foreground: Bool) -> UUID? {
-        guard let sourceIndex = tabs.firstIndex(where: { $0.id == sourceTabID }) else { return nil }
+        guard let visibleURL = Self.userVisibleURL(url),
+              let sourceIndex = tabs.firstIndex(where: { $0.id == sourceTabID }) else {
+            return nil
+        }
+        if profile.isPrivate,
+           RexExtensionResourceURL(rexURL: visibleURL) != nil {
+            return nil
+        }
         let source = tabs[sourceIndex]
         if foreground, source.spaceID != currentSpaceID {
             switchSpace(to: source.spaceID)
         }
         let policyResult = PrivacyURLPolicy.apply(
-            to: url,
+            to: visibleURL,
             isEnabled: source.privacyState.isEnabled,
             upgradeHTTPS: source.privacyState.httpsUpgradeEnabled
         )
@@ -2257,15 +2906,29 @@ final class BrowserStore: ObservableObject {
             guard tab(withID: tabID) != nil else { return }
         case let .navigationChanged(tabID, state):
             guard tab(withID: tabID) != nil else { return }
+            var navigationState = Self.userVisibleNavigationState(state)
+            if state.url != nil, navigationState.url == nil {
+                return
+            }
+            if let resource = navigationState.url.flatMap(RexExtensionResourceURL.init(rexURL:)) {
+                guard !profile.isPrivate,
+                      extensionsStore.runnablePackage(
+                          runtimeID: resource.runtimeID
+                      ) != nil else {
+                    return
+                }
+            }
             if let pendingURL = pendingNavigationURLs[tabID] {
-                guard let eventURL = state.url, navigationURLsMatch(eventURL, pendingURL) else { return }
+                guard let eventURL = navigationState.url,
+                      navigationURLsMatch(eventURL, pendingURL) else {
+                    return
+                }
                 pendingNavigationURLs.removeValue(forKey: tabID)
             }
-            var navigationState = state
             if navigationState.url == nil {
                 navigationState.url = tab(withID: tabID)?.url
             }
-            if let url = state.url {
+            if let url = navigationState.url {
                 let isHTTPFallback = activeHTTPFallbackURLs[tabID].map {
                     navigationURLsMatch($0, url)
                 } ?? false
@@ -2315,6 +2978,7 @@ final class BrowserStore: ObservableObject {
             scheduleSave()
         case let .siteSecurityChanged(tabID, info):
             guard let tab = tab(withID: tabID) else { return }
+            let info = Self.userVisibleSiteSecurityInfo(info)
             if let current = siteSecurityInfoByTabID[tabID] {
                 guard info.navigationGeneration >= current.navigationGeneration else { return }
                 if info.navigationGeneration == current.navigationGeneration,
@@ -2333,13 +2997,14 @@ final class BrowserStore: ObservableObject {
             guard siteSecurityInfoByTabID[tabID] != info else { return }
             siteSecurityInfoByTabID[tabID] = info
         case let .titleChanged(tabID, title):
+            let title = Self.userVisibleTitle(title)
             guard pendingNavigationURLs[tabID] == nil,
                   !title.isEmpty, tab(withID: tabID) != nil else { return }
             mutateTab(tabID) { $0.title = title }
             scheduleSave()
         case let .faviconChanged(tabID, url, imageData):
             guard tab(withID: tabID) != nil else { return }
-            mutateTab(tabID) { $0.faviconURL = url }
+            mutateTab(tabID) { $0.faviconURL = Self.userVisibleURL(url) }
             if let imageData, !imageData.isEmpty {
                 cacheFavicon(imageData, for: tabID)
             } else {
@@ -2381,7 +3046,8 @@ final class BrowserStore: ObservableObject {
             guard tab(withID: tabID) != nil else { return }
             mutateTab(tabID) { tab in
                 if let index = tab.privacyState.resources.firstIndex(where: {
-                    $0.category == resource.category && $0.host == resource.host
+                    $0.category == resource.category
+                        && $0.host == resource.host
                 }) {
                     tab.privacyState.resources[index].count += resource.count
                     tab.privacyState.resources[index].timestamp = resource.timestamp
@@ -2393,6 +3059,7 @@ final class BrowserStore: ObservableObject {
             scheduleSave()
         case let .permissionRequested(tabID, request):
             guard tab(withID: tabID) != nil else { return }
+            let request = Self.userVisiblePermissionRequest(request)
             let prompt = WebsitePermissionPrompt(tabID: tabID, request: request)
             if let decision = automaticPermissionDecision(for: prompt) {
                 Task { [engine] in
@@ -2407,7 +3074,10 @@ final class BrowserStore: ObservableObject {
         case let .permissionRequestDismissed(tabID, requestID):
             pendingPermissionPrompts.removeAll { $0.tabID == tabID && $0.id == requestID }
         case let .downloadUpdated(tabID, download):
-            guard tab(withID: tabID) != nil else { return }
+            guard tab(withID: tabID) != nil,
+                  let download = Self.userVisibleDownload(download) else {
+                return
+            }
             if download.canCancel {
                 activeDownloadTabIDsByDownloadID[download.id] = tabID
             } else {
@@ -2420,6 +3090,8 @@ final class BrowserStore: ObservableObject {
             }
         case let .navigationFailed(tabID, failedURL, errorCode, reason):
             guard let tab = tab(withID: tabID) else { return }
+            let failedURL = Self.userVisibleURL(failedURL)
+            let reason = Self.userVisibleTitle(reason)
             if let failedURL {
                 let relevantURLs = [
                     pendingNavigationURLs[tabID],
@@ -2467,6 +3139,7 @@ final class BrowserStore: ObservableObject {
             if tabID == selectedTabID { lastError = reason }
         case let .pageCrashed(tabID, reason):
             guard tab(withID: tabID) != nil else { return }
+            let reason = Self.userVisibleTitle(reason)
             activeMediaTabIDs.remove(tabID)
             pendingNavigationURLs.removeValue(forKey: tabID)
             httpsUpgradeAttempts.removeValue(forKey: tabID)
@@ -2560,4 +3233,10 @@ final class BrowserStore: ObservableObject {
             faviconDataByTabID.removeValue(forKey: evictedID)
         }
     }
+}
+
+private struct BrowserExtensionRuntimeSyncError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }

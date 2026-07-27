@@ -1,0 +1,29 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 280px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+main {
+  padding: 20px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+p {
+  margin: 0 0 16px;
+  color: GrayText;
+}
+
+output {
+  font-weight: 600;
+}
