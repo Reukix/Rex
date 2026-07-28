@@ -18,9 +18,10 @@
 
 当前隐私链路由三个独立层组成，不是所有网络请求依次经过同一条规则管线：
 
-1. **Swift 顶层导航策略**：`PrivacyURLPolicy` 在地址栏提交和 Rex 接管的弹窗导航时移除 `_hsenc`、`fbclid`、`gclid`、`utm_*` 等已知追踪参数，并对非本地 HTTP 地址尝试 HTTPS。只有特定 TLS 不可用错误允许回退 HTTP；证书、DNS 和通用网络错误不会降级。该策略不改写页面自行发起的 CEF 子资源。
-2. **CEF 子资源目录拦截**：`RexPrivacyEngine.cpp` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目。`OnBeforeResourceLoad` 在 IO 线程分类请求，命中时返回 `RV_CANCEL`，并把类别和域名作为 blocked event 回传。主框架导航永不在该层拦截；第一方未知时放行。
-3. **CEF Cookie 设置**：第三方 Cookie 限制通过 RequestContext/profile 的 `profile.cookie_controls_mode` 全局偏好执行。`CanSendCookie` 与 `CanSaveCookie` 不逐请求阻断，因此单标签关闭盾牌不会关闭全局 Cookie 限制，盾牌的 Cookie 拦截计数通常也不会增加。
+1. **网站策略存储**：`SitePrivacyPolicy` 以 profile ID 与精确小写主机名为唯一作用域写入 SQLite。用户在盾牌中选择一次保护开关或级别后，所有已打开的同站标签立即同步，之后再次进入该网站继续复用；切换网站则恢复目标网站策略或空间默认级别。隐私窗口只在当前内存会话内应用，不写入普通 profile。
+2. **Swift 顶层导航策略**：`PrivacyURLPolicy` 在地址栏提交和 Rex 接管的弹窗导航时移除 `_hsenc`、`fbclid`、`gclid`、`utm_*` 等已知追踪参数，并对非本地 HTTP 地址尝试 HTTPS。只有特定 TLS 不可用错误允许回退 HTTP；证书、DNS 和通用网络错误不会降级。该策略不改写页面自行发起的 CEF 子资源。
+3. **CEF 子资源目录拦截**：`RexPrivacyEngine.cpp` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目。`OnBeforeResourceLoad` 在 IO 线程分类请求，命中时返回 `RV_CANCEL`，并把类别和域名作为 blocked event 回传。主框架导航永不在该层拦截；第一方未知时放行。
+4. **CEF Cookie 设置**：第三方 Cookie 限制通过 RequestContext/profile 的 `profile.cookie_controls_mode` 全局偏好执行。`CanSendCookie` 与 `CanSaveCookie` 不逐请求阻断，因此单网站关闭盾牌不会关闭全局 Cookie 限制，盾牌的 Cookie 拦截计数通常也不会增加。
 
 扩展声明的 DNR 由 Chromium 扩展运行时单独执行，不合并到 `RexPrivacyEngine`，也不受 Rex 盾牌级别解释为另一套近似规则。扩展自身的网络行为和权限应按其 manifest 与 Chromium 扩展安全模型评估。
 
@@ -38,7 +39,7 @@
 
 - 没有恶意网站检测、Safe Browsing、自定义规则、在线目录更新、EasyList 语法或元素隐藏。
 - “指纹保护”只阻止目录中已知指纹服务的网络请求，不会随机化 Canvas/WebGL/Audio 等浏览器指纹。
-- 没有完整 brave-core 或完整 PSL/eTLD+1 站点例外系统；当前目录匹配与启发式应视为有限覆盖。
+- 没有完整 brave-core 或 PSL/eTLD+1 站点分组；网站策略按精确主机名保存，目录匹配与第一方启发式仍应视为有限覆盖。
 
 ## 权限
 

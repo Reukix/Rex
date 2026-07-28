@@ -1,6 +1,41 @@
 {
   "releases": [
     {
+      "version": "0.9.5",
+      "build": 950,
+      "date": "2026-07-28",
+      "channel": "beta",
+      "summary": "隐私盾牌改为 Safari 式按网站持久化；扩展小型面板获得来源网页上下文，并移除在 CEF 远程视图上可能崩溃的 SwiftUI Popover 路径。",
+      "added": [
+        "按 profile 与主机名唯一保存的 SitePrivacyPolicy，保护开关和级别同步到所有已打开的同站标签",
+        "静态 default_popup 的来源网页上下文，使 chrome.tabs.query({active:true,currentWindow:true}) 返回用户点击扩展按钮前的 HTTP(S) 标签"
+      ],
+      "improved": [
+        "工具栏扩展列表和扩展自身 popup 统一由独立无边框 AppKit 浮窗承载，并继续跟随工具栏锚点与扩展内容尺寸",
+        "当前页是 rex-extension:// 时再次点击扩展按钮，继续使用最近有效的来源网页作为小型面板上下文",
+        "网站隐私级别不再改写工作空间默认级别，切换到其他网站时恢复目标网站策略或原默认值"
+      ],
+      "changed": [
+        "应用版本更新为 v0.9.5 build 950，User-Agent 产品串更新为 Rex/0.9.5"
+      ],
+      "fixed": [
+        "在 rex-extension 页面再次点击工具栏扩展按钮时，NSPopover 将子窗口附着到 CEF NSRemoteView 而概率性触发 AppKit 崩溃的问题",
+        "uBlock Origin Lite 等扩展 popup 因 active/currentWindow 查询不到来源网页，显示空站点且调整过滤模式不生效的问题",
+        "隐私盾牌保护开关和级别只保存在当前标签会话、同一网站新标签和重启后无法复用的问题"
+      ],
+      "removed": [
+        "扩展工具栏入口对 SwiftUI .popover 和 NSWindow.addChildWindow 的依赖",
+        "隐私盾牌级别修改对当前工作空间默认级别的隐式写入"
+      ],
+      "knownIssues": [
+        "Rex 小型面板不是 Chromium 原生 action popup；完整 activeTab 权限、无 popup 的 action.onClicked 和动态 action.setPopup 当前不支持",
+        "核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容",
+        "网站策略按精确主机名保存，尚未使用完整 PSL/eTLD+1 归并子域",
+        "Developer ID 签名、公证与应用自动更新尚未完成"
+      ],
+      "inProgress": []
+    },
+    {
       "version": "0.9.4",
       "build": 940,
       "date": "2026-07-28",

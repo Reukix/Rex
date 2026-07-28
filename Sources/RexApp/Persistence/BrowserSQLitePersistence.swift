@@ -30,7 +30,7 @@ enum BrowserDatabaseError: LocalizedError {
 /// SQLite-backed storage for window sessions and the small browser libraries
 /// that need querying independently from the visible tab list.
 actor BrowserSQLitePersistence {
-    private static let databaseSchemaVersion = 3
+    private static let databaseSchemaVersion = 4
     private static let legacyMigrationKey = "legacy_session_v1_migrated"
 
     private let databaseURL: URL
@@ -291,6 +291,40 @@ actor BrowserSQLitePersistence {
         try step(statement)
     }
 
+    func sitePrivacyPolicies(profileID: UUID) throws -> [SitePrivacyPolicy] {
+        try openIfNeeded()
+        let statement = try prepare("""
+            SELECT payload FROM site_privacy_policies
+            WHERE profile_id = ?
+            ORDER BY updated_at DESC
+            """)
+        defer { sqlite3_finalize(statement) }
+        try bind(profileID.uuidString, to: statement, at: 1)
+        return try decodeRows(statement, as: SitePrivacyPolicy.self)
+    }
+
+    func saveSitePrivacyPolicy(_ policy: SitePrivacyPolicy) throws {
+        try openIfNeeded()
+        let statement = try prepare("""
+            INSERT INTO site_privacy_policies(
+                policy_id, profile_id, host, updated_at, payload
+            ) VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(profile_id, host)
+            DO UPDATE SET
+                policy_id = excluded.policy_id,
+                updated_at = excluded.updated_at,
+                payload = excluded.payload
+            WHERE excluded.updated_at >= site_privacy_policies.updated_at
+            """)
+        defer { sqlite3_finalize(statement) }
+        try bind(policy.id.uuidString, to: statement, at: 1)
+        try bind(policy.profileID.uuidString, to: statement, at: 2)
+        try bind(policy.host.lowercased(), to: statement, at: 3)
+        try bind(policy.updatedAt.timeIntervalSince1970, to: statement, at: 4)
+        try bind(try encoder.encode(policy), to: statement, at: 5)
+        try step(statement)
+    }
+
     private func openIfNeeded() throws {
         guard database == nil else { return }
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -346,6 +380,16 @@ actor BrowserSQLitePersistence {
                     );
                     CREATE INDEX IF NOT EXISTS permissions_profile_updated
                         ON permissions(profile_id, updated_at DESC);
+                    CREATE TABLE IF NOT EXISTS site_privacy_policies(
+                        policy_id TEXT NOT NULL UNIQUE,
+                        profile_id TEXT NOT NULL,
+                        host TEXT NOT NULL,
+                        updated_at REAL NOT NULL,
+                        payload BLOB NOT NULL,
+                        PRIMARY KEY(profile_id, host)
+                    );
+                    CREATE INDEX IF NOT EXISTS site_privacy_policies_profile_updated
+                        ON site_privacy_policies(profile_id, updated_at DESC);
                     CREATE TABLE IF NOT EXISTS metadata(
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL

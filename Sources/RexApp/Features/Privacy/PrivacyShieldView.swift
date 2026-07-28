@@ -7,8 +7,13 @@ struct PrivacyShieldView: View {
     let report: PrivacyReport
 
     private var tab: BrowserTab? { store.currentTab }
-    private var protectionEnabled: Bool { tab?.privacyState.isEnabled ?? true }
-    private var level: PrivacyLevel { tab?.privacyState.level ?? .standard }
+    private var sitePolicy: SitePrivacyPolicy? { store.sitePrivacyPolicy(for: tab) }
+    private var protectionEnabled: Bool {
+        sitePolicy?.protectionEnabled ?? tab?.privacyState.isEnabled ?? true
+    }
+    private var level: PrivacyLevel {
+        sitePolicy?.level ?? tab?.privacyState.level ?? .standard
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -39,7 +44,7 @@ struct PrivacyShieldView: View {
                 )
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .accessibilityLabel("当前网站保护")
+                .accessibilityLabel("此网站的隐私保护")
             }
 
             Text("本页已阻止 \(report.totalBlocked) 项")
@@ -117,7 +122,7 @@ struct PrivacyShieldView: View {
 
             Text(
                 preferences.contentBlockingEnabled
-                    ? "广告与追踪拦截使用内置域名目录，仅针对已知服务的第三方请求；可在「设置 › 隐私与安全」中关闭。"
+                    ? "此网站的保护开关和级别会像 Safari 的网站设置一样保存，并同步到该网站的所有标签页。广告与追踪拦截使用内置域名目录。"
                     : "内容拦截已在设置中关闭，当前仅保留 Cookie 限制、HTTPS 升级与站点权限防护。"
             )
             .font(.caption2)

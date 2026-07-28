@@ -1,5 +1,5 @@
 {
-  "lastUpdatedVersion": "0.9.4",
+  "lastUpdatedVersion": "0.9.5",
   "categories": [
     {
       "id": "app-shell",
@@ -361,10 +361,10 @@
           "id": "privacy-shield-report",
           "name": "站点隐私盾牌报告",
           "status": "testing",
-          "testStatus": "pending",
+          "testStatus": "passed",
           "introducedIn": "0.1.0-alpha.1",
-          "updatedIn": "0.8.1",
-          "description": "展示按标签累计的保护状态、拦截分类、HTTPS 升级、参数清理和网站权限",
+          "updatedIn": "0.9.5",
+          "description": "展示按标签累计的保护状态、拦截分类、HTTPS 升级、参数清理和网站权限；保护开关与级别按 profile/主机名持久化并同步同站标签",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -391,7 +391,7 @@
           "limitations": [
             "域名目录为内置快照，在线更新仍待接入",
             "不执行 EasyList、自定义订阅、恶意网站检测或通用指纹随机化",
-            "第三方 Cookie 限制不会随单个标签页盾牌开关切换"
+            "第三方 Cookie 限制不会随单个网站的盾牌开关切换"
           ]
         },
         {
@@ -475,8 +475,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.9.4",
-          "description": "Rex 管理 Chrome Web Store 与本地扩展包，并提供列表、小型面板和扩展管理界面；安装、启停、更新与移除通过无监听端口的 --remote-debugging-pipe 即时同步，恢复的 HTTP(S) 页面等待精确对账后首次导航，同路径更新由持久 journal 保护，小型面板加载扩展自身静态 default_popup，扩展创建的包内页面统一映射为 rex-extension://",
+          "updatedIn": "0.9.5",
+          "description": "Rex 管理 Chrome Web Store 与本地扩展包，并提供列表、小型面板和扩展管理界面；安装、启停、更新与移除通过无监听端口的 --remote-debugging-pipe 即时同步。独立 AppKit 浮窗加载扩展自身静态 default_popup，并向其提供最近来源网页的 active/currentWindow 查询上下文；扩展创建的包内页面统一映射为 rex-extension://",
           "supportsPrivateWindow": false,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -485,7 +485,7 @@
           "limitations": [
             "安装、启用、停用、更新和移除会立即对账 Chromium 扩展集合；活跃普通页面立即重载一次，休眠页面恢复时重载一次，隐私窗口不运行扩展",
             "最终 Dist 包需通过通用 MV3 探针，在不刷新、不重复导航的首次文档上覆盖冷启动、热生命周期、service worker、content script、runtime messaging、chrome.storage.local、Chromium DNR、options 和静态 default_popup",
-            "Rex 小型面板不是 Chromium 原生 action popup；activeTab、chrome.tabs 当前窗口语义、无 popup 的 action.onClicked 和动态 action.setPopup 当前不支持",
+            "Rex 小型面板不是 Chromium 原生 action popup；静态 popup 仅获得受控的来源标签查询上下文，完整 activeTab 权限、无 popup 的 action.onClicked 和动态 action.setPopup 当前不支持",
             "核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容",
             "Chrome Web Store 扩展尚不自动更新，可使用相同链接或 ID 手动重新安装"
           ]

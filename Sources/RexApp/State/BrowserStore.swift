@@ -40,6 +40,7 @@ final class BrowserStore: ObservableObject {
     @Published private(set) var siteSecurityInfoByTabID: [UUID: SiteSecurityInfo] = [:]
     @Published private(set) var savedSplitCompositions: [SavedSplitComposition] = []
     @Published private(set) var permissions: [WebsitePermission] = []
+    @Published private(set) var sitePrivacyPolicies: [SitePrivacyPolicy] = []
     @Published private(set) var pendingPermissionPrompts: [WebsitePermissionPrompt] = []
     @Published var currentSpaceID: UUID
     @Published var selectedTabID: UUID
@@ -79,6 +80,7 @@ final class BrowserStore: ObservableObject {
     private var activeHTTPFallbackURLs: [UUID: URL] = [:]
     private var pageSetupTasks: [UUID: Task<Void, Never>] = [:]
     private var pageSuspensionTasks: [UUID: Task<Void, Never>] = [:]
+    private var deferredPageSuspensions: [UUID: (isSuspended: Bool, isFocused: Bool)] = [:]
     private var navigationCommandTasks: [UUID: Task<Void, Never>] = [:]
     private var downloadDirectoryURLsBySpace: [UUID: URL] = [:]
     private var securityScopedDownloadDirectoryURLsBySpace: [UUID: URL] = [:]
@@ -92,6 +94,7 @@ final class BrowserStore: ObservableObject {
     private var automaticSleepTask: Task<Void, Never>?
     private var engineEventTask: Task<Void, Never>?
     private var sessionRestorationTask: Task<Void, Never>?
+    private var isSitePrivacyPolicyReady = false
     private var didTearDownWindow = false
     private var preferenceCancellables = Set<AnyCancellable>()
     private var observedHTTPSUpgradeEnabled = BrowserPreferences.defaultHTTPSUpgradeEnabled
@@ -205,6 +208,7 @@ final class BrowserStore: ObservableObject {
         self.observedHTTPSUpgradeEnabled = preferences.httpsUpgradeEnabled
         self.observedBlockThirdPartyCookies = preferences.blockThirdPartyCookies
         self.newTabFavorites = profile.isPrivate ? [] : newTabFavoritesStore.favorites
+        self.isSitePrivacyPolicyReady = profile.isPrivate
 
         createEnginePages(for: configuredInitialTabs.map(\.id))
         let shouldPerformInitialRuntimeSync =
@@ -230,6 +234,13 @@ final class BrowserStore: ObservableObject {
                         }
                     }
                     guard !Task.isCancelled else { return }
+                    let storedPrivacyPolicies = try await databasePersistence
+                        .sitePrivacyPolicies(profileID: profile.id)
+                    guard !Task.isCancelled else { return }
+                    if let self {
+                        self.mergeLoadedSitePrivacyPolicies(storedPrivacyPolicies)
+                        self.finishSitePrivacyPolicyLoading()
+                    }
                     self?.finishSessionRestoration()
                     let storedHistory = try await databasePersistence.history()
                     guard !Task.isCancelled else { return }
@@ -320,6 +331,7 @@ final class BrowserStore: ObservableObject {
                     self?.synchronizeBookmarkFlags()
                 } catch {
                     guard !Task.isCancelled else { return }
+                    self?.finishSitePrivacyPolicyLoading()
                     self?.finishSessionRestoration()
                     self?.lastError = "会话恢复失败：\(error.localizedDescription)"
                 }
@@ -430,6 +442,7 @@ final class BrowserStore: ObservableObject {
         for task in pageTasks { task.cancel() }
         pageSetupTasks.removeAll()
         pageSuspensionTasks.removeAll()
+        deferredPageSuspensions.removeAll()
         navigationCommandTasks.removeAll()
         preferenceCancellables.removeAll()
         for url in securityScopedDownloadDirectoryURLsBySpace.values {
@@ -1005,6 +1018,7 @@ final class BrowserStore: ObservableObject {
         activeHTTPFallbackURLs.removeValue(forKey: tabID)
         pageSetupTasks.removeValue(forKey: tabID)?.cancel()
         pageSuspensionTasks.removeValue(forKey: tabID)?.cancel()
+        deferredPageSuspensions.removeValue(forKey: tabID)
         navigationCommandTasks.removeValue(forKey: tabID)?.cancel()
         activeDownloadTabIDsByDownloadID = activeDownloadTabIDsByDownloadID.filter { $0.value != tabID }
         activeMediaTabIDs.remove(tabID)
@@ -1917,29 +1931,149 @@ final class BrowserStore: ObservableObject {
 
     func setPrivacyProtectionEnabled(_ enabled: Bool, for tabID: UUID? = nil) {
         let targetID = tabID ?? selectedTabID
-        guard tab(withID: targetID) != nil else { return }
-        mutateTab(targetID) { $0.privacyState.isEnabled = enabled }
-        pushPrivacyPolicy(for: targetID)
+        guard let target = tab(withID: targetID) else { return }
+        guard let host = privacyPolicyHost(for: target.url) else {
+            mutateTab(targetID) { $0.privacyState.isEnabled = enabled }
+            pushPrivacyPolicy(for: targetID)
+            scheduleSave()
+            return
+        }
+
+        var policy = sitePrivacyPolicy(forHost: host, fallbackTab: target)
+        policy.protectionEnabled = enabled
+        policy.updatedAt = .now
+        updateSitePrivacyPolicy(policy)
         scheduleSave()
     }
 
     func setPrivacyLevel(_ level: PrivacyLevel, for tabID: UUID? = nil) {
         let targetID = tabID ?? selectedTabID
-        guard tab(withID: targetID) != nil else { return }
-        mutateTab(targetID) { tab in
-            tab.privacyState.level = level
-            // Strict/custom imply fingerprint protection on.
+        guard let target = tab(withID: targetID) else { return }
+        if let host = privacyPolicyHost(for: target.url) {
+            var policy = sitePrivacyPolicy(forHost: host, fallbackTab: target)
+            policy.level = level
             if level == .strict || level == .custom {
-                tab.privacyState.fingerprintProtectionEnabled = true
+                policy.fingerprintProtectionEnabled = true
             }
+            policy.updatedAt = .now
+            updateSitePrivacyPolicy(policy)
+        } else {
+            mutateTab(targetID) { tab in
+                tab.privacyState.level = level
+                if level == .strict || level == .custom {
+                    tab.privacyState.fingerprintProtectionEnabled = true
+                }
+            }
+            pushPrivacyPolicy(for: targetID)
         }
-        // Keep the active space default aligned with the shield control.
-        if tabID == nil || tabID == selectedTabID,
-           let spaceIndex = spaces.firstIndex(where: { $0.id == currentSpaceID }) {
-            spaces[spaceIndex].privacyLevel = level
-        }
-        pushPrivacyPolicy(for: targetID)
         scheduleSave()
+    }
+
+    func sitePrivacyPolicy(for tab: BrowserTab?) -> SitePrivacyPolicy? {
+        guard let tab, let host = privacyPolicyHost(for: tab.url) else { return nil }
+        return sitePrivacyPolicy(forHost: host, fallbackTab: tab)
+    }
+
+    private func sitePrivacyPolicy(
+        forHost host: String,
+        fallbackTab: BrowserTab
+    ) -> SitePrivacyPolicy {
+        if let stored = sitePrivacyPolicies.first(where: {
+            $0.profileID == profile.id && $0.host == host
+        }) {
+            return stored
+        }
+        return SitePrivacyPolicy(
+            profileID: profile.id,
+            host: host,
+            protectionEnabled: fallbackTab.privacyState.isEnabled,
+            level: fallbackTab.privacyState.level,
+            fingerprintProtectionEnabled:
+                fallbackTab.privacyState.fingerprintProtectionEnabled
+        )
+    }
+
+    private func defaultSitePrivacyPolicy(
+        forHost host: String,
+        spaceID: UUID
+    ) -> SitePrivacyPolicy {
+        let level = spaces.first(where: { $0.id == spaceID })?.privacyLevel ?? .standard
+        return SitePrivacyPolicy(
+            profileID: profile.id,
+            host: host,
+            level: level,
+            fingerprintProtectionEnabled: true
+        )
+    }
+
+    private func updateSitePrivacyPolicy(_ policy: SitePrivacyPolicy) {
+        guard !policy.host.isEmpty, policy.profileID == profile.id else { return }
+        sitePrivacyPolicies.removeAll {
+            $0.profileID == policy.profileID && $0.host == policy.host
+        }
+        sitePrivacyPolicies.append(policy)
+        sitePrivacyPolicies.sort { $0.updatedAt > $1.updatedAt }
+
+        let affectedTabIDs = tabs.compactMap { tab -> UUID? in
+            privacyPolicyHost(for: tab.url) == policy.host ? tab.id : nil
+        }
+        for tabID in affectedTabIDs {
+            apply(policy, to: tabID)
+        }
+        pushPrivacyPolicies(for: affectedTabIDs)
+        guard !profile.isPrivate else { return }
+        Task { [persistence] in
+            try? await persistence.saveSitePrivacyPolicy(policy)
+        }
+    }
+
+    private func mergeLoadedSitePrivacyPolicies(_ storedPolicies: [SitePrivacyPolicy]) {
+        var policiesByHost: [String: SitePrivacyPolicy] = [:]
+        for policy in storedPolicies + sitePrivacyPolicies
+        where !policy.host.isEmpty && policy.profileID == profile.id {
+            if let existing = policiesByHost[policy.host],
+               existing.updatedAt > policy.updatedAt {
+                continue
+            }
+            policiesByHost[policy.host] = policy
+        }
+        sitePrivacyPolicies = policiesByHost.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func apply(_ policy: SitePrivacyPolicy, to tabID: UUID) {
+        mutateTab(tabID) { tab in
+            tab.privacyState.isEnabled = policy.protectionEnabled
+            tab.privacyState.level = policy.level
+            tab.privacyState.fingerprintProtectionEnabled =
+                policy.fingerprintProtectionEnabled
+        }
+    }
+
+    @discardableResult
+    private func applySitePrivacyPolicy(for url: URL, to tabID: UUID) -> Bool {
+        guard let tab = tab(withID: tabID),
+              let host = privacyPolicyHost(for: url) else { return false }
+        let policy = sitePrivacyPolicies.first(where: {
+            $0.profileID == profile.id && $0.host == host
+        }) ?? defaultSitePrivacyPolicy(forHost: host, spaceID: tab.spaceID)
+        let state = tab.privacyState
+        let changed = state.isEnabled != policy.protectionEnabled
+            || state.level != policy.level
+            || state.fingerprintProtectionEnabled
+                != policy.fingerprintProtectionEnabled
+        guard changed else { return false }
+        apply(policy, to: tabID)
+        return true
+    }
+
+    private func privacyPolicyHost(for url: URL?) -> String? {
+        guard let url,
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host?.lowercased(),
+              !host.isEmpty else {
+            return nil
+        }
+        return host
     }
 
     func applyPrivacyPreferences() {
@@ -1963,7 +2097,8 @@ final class BrowserStore: ObservableObject {
         for tabID: UUID,
         blockThirdPartyCookies override: Bool? = nil
     ) {
-        guard let tab = tab(withID: tabID) else { return }
+        guard isSitePrivacyPolicyReady,
+              let tab = tab(withID: tabID) else { return }
         let state = tab.privacyState
         let blockThirdPartyCookies = override ?? preferences.blockThirdPartyCookies
         Task { [engine] in
@@ -2236,6 +2371,9 @@ final class BrowserStore: ObservableObject {
         tabID: UUID,
         allowHTTPSUpgrade: Bool = true
     ) -> PrivacyURLPolicyResult {
+        if applySitePrivacyPolicy(for: url, to: tabID) {
+            pushPrivacyPolicy(for: tabID)
+        }
         let state = tab(withID: tabID)?.privacyState ?? PrivacyState()
         let result = PrivacyURLPolicy.apply(
             to: url,
@@ -2713,6 +2851,22 @@ final class BrowserStore: ObservableObject {
         addressText = addressBarText(for: currentTab?.url)
     }
 
+    private func finishSitePrivacyPolicyLoading() {
+        guard !isSitePrivacyPolicyReady, !didTearDownWindow else { return }
+        isSitePrivacyPolicyReady = true
+        createEnginePages(for: tabs.map(\.id))
+        let deferredSuspensions = deferredPageSuspensions
+        deferredPageSuspensions.removeAll()
+        for tab in tabs {
+            guard let suspension = deferredSuspensions[tab.id] else { continue }
+            schedulePageSuspension(
+                tabID: tab.id,
+                isSuspended: suspension.isSuspended,
+                isFocused: suspension.isFocused
+            )
+        }
+    }
+
 
     private func synchronizeBookmarkFlags() {
         let bookmarkedURLs = Set(bookmarks.map(\.url))
@@ -2722,12 +2876,17 @@ final class BrowserStore: ObservableObject {
     }
 
     private func createEnginePages(for tabIDs: [UUID]) {
-        guard !didTearDownWindow else { return }
+        guard !didTearDownWindow, isSitePrivacyPolicyReady else { return }
         for tabID in tabIDs {
-            let tab = tab(withID: tabID)
-            let directoryURL = tab.flatMap { downloadDirectoryURL(for: $0.spaceID) }
-            let initialURL: URL? = tab.flatMap {
-                guard !BrowserStartPage.matches($0.url), let url = $0.url else { return nil }
+            guard var tab = tab(withID: tabID) else { continue }
+            if let url = tab.url {
+                applySitePrivacyPolicy(for: url, to: tabID)
+                guard let configuredTab = self.tab(withID: tabID) else { continue }
+                tab = configuredTab
+            }
+            let directoryURL = downloadDirectoryURL(for: tab.spaceID)
+            let initialURL: URL? = {
+                guard !BrowserStartPage.matches(tab.url), let url = tab.url else { return nil }
                 if let resource = RexExtensionResourceURL(rexURL: url) {
                     guard !profile.isPrivate,
                           extensionsStore.runnablePackage(
@@ -2737,8 +2896,8 @@ final class BrowserStore: ObservableObject {
                     }
                 }
                 return url
-            }
-            let privacy = tab?.privacyState ?? PrivacyState()
+            }()
+            let privacy = tab.privacyState
             let blockThirdPartyCookies = preferences.blockThirdPartyCookies
             pageSetupTasks[tabID]?.cancel()
             pageSetupTasks[tabID] = Task { @MainActor [weak self, engine, profile] in
@@ -2771,6 +2930,11 @@ final class BrowserStore: ObservableObject {
         isSuspended: Bool,
         isFocused: Bool
     ) {
+        guard isSitePrivacyPolicyReady else {
+            deferredPageSuspensions[tabID] = (isSuspended, isFocused)
+            return
+        }
+        deferredPageSuspensions.removeValue(forKey: tabID)
         pageSuspensionTasks[tabID]?.cancel()
         let setupTask = pageSetupTasks[tabID]
         pageSuspensionTasks[tabID] = Task { @MainActor [weak self, engine] in
@@ -2869,9 +3033,15 @@ final class BrowserStore: ObservableObject {
         if foreground, source.spaceID != currentSpaceID {
             switchSpace(to: source.spaceID)
         }
+        let destinationPolicy = privacyPolicyHost(for: visibleURL).map { host in
+            sitePrivacyPolicies.first(where: {
+                $0.profileID == profile.id && $0.host == host
+            }) ?? defaultSitePrivacyPolicy(forHost: host, spaceID: source.spaceID)
+        }
         let policyResult = PrivacyURLPolicy.apply(
             to: visibleURL,
-            isEnabled: source.privacyState.isEnabled,
+            isEnabled: destinationPolicy?.protectionEnabled
+                ?? source.privacyState.isEnabled,
             upgradeHTTPS: source.privacyState.httpsUpgradeEnabled
         )
         let resolvedURL = policyResult.url
@@ -2881,6 +3051,12 @@ final class BrowserStore: ObservableObject {
             spaceID: source.spaceID,
             groupID: source.groupID
         )
+        if let destinationPolicy {
+            popup.privacyState.isEnabled = destinationPolicy.protectionEnabled
+            popup.privacyState.level = destinationPolicy.level
+            popup.privacyState.fingerprintProtectionEnabled =
+                destinationPolicy.fingerprintProtectionEnabled
+        }
         popup.privacyState.httpsUpgradeCount = policyResult.didUpgradeHTTPS ? 1 : 0
         popup.privacyState.cleanedParameterCount = policyResult.removedParameterCount
         tabs.insert(popup, at: min(sourceIndex + 1, tabs.endIndex))

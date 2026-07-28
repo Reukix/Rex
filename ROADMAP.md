@@ -114,7 +114,7 @@
 - ✅ Swift Testing `128/128`、完整 CEF bridge 的 Xcode arm64 Debug/Release 构建、Release Validator、deep codesign、ZIP 解压、校验和与隔离 profile 重复启动通过。
 - ✅ 主 App 与五个 Helper 均为 `0.9.2 / 920`、arm64 only；App 为 `342M`（`349776 KiB`），ZIP 为 `142,320,000` bytes（`du` 为 `144M`），SHA-256 为 `c815a492297dac404b0d323eb2b6a628b26d58a352bc02ff9a5760605c2a898c`。
 - ✅ 删除 Rex 系统密码调用、`SystemPasswordsCoordinator` 与主可执行文件的 `AuthenticationServices` 依赖；打包门槛拒绝该主 executable 依赖或任何 `.systemextension`，并记录 `rex_password_integration=absent`。上游 CEF framework 仍保留自身链接。
-- ⚠️ Rex 小型面板不触发 Chromium 原生 action popup；stock CEF 150 Alloy 暂不支持 `activeTab`、`chrome.tabs` 当前窗口语义、无 popup 的 `action.onClicked` 或动态 `action.setPopup`。
+- ⚠️ Rex 小型面板不触发 Chromium 原生 action popup；v0.9.5 已为静态 popup 补充来源网页的 active/currentWindow 查询上下文，完整 `activeTab` 权限、无 popup 的 `action.onClicked` 与动态 `action.setPopup` 仍不支持。
 - 🚧 Developer ID 同团队签名、Hardened Runtime、公证与自动更新留待正式分发阶段。
 
 ## 已完成 — v0.9.3（build 930）
@@ -134,6 +134,13 @@
 - ✅ 扩展包启动校验降为每包一次完整扫描，单次 manifest 解析只读取一次 locale 字典，下载进度约每 80 ms 发布一次。
 - ✅ MV3 探针忽略隐藏 `about:blank` 扩展上下文，并以不刷新、不重复导航的首次文档作为冷启动验收对象。
 - ✅ 应用与打包版本推进到 `0.9.4 / 940`。
+
+## 已完成 — v0.9.5（build 950）
+
+- ✅ 隐私盾牌复用 Safari 分支的按网站策略方式：profile/host 唯一保存，保护开关与级别同步所有同站标签，切换网站不污染空间默认值。
+- ✅ 静态扩展 popup 获得最近来源 HTTP(S) 标签的 active/currentWindow 查询上下文，uBlock Origin Lite 等依赖当前网站的面板设置可写入真实站点。
+- ✅ 工具栏扩展列表与 popup 改为独立 AppKit 浮窗，移除 CEF 远程视图上 SwiftUI `.popover` / `addChildWindow` 的崩溃路径。
+- ✅ 版本推进到 `0.9.5 / 950`；Swift、CEF、Xcode Release 与安装包验证记录见发布说明。
 
 ## 已完成 — v0.7.0-beta.1
 
@@ -156,7 +163,7 @@
 - ⏳ 下载校验、危险文件提示和批量清理策略。
 - ⚠️ Chromium 扩展运行时已接入，但不承诺每个 Chrome Web Store 扩展或所有 Chrome API 均兼容，也不提供 Google 账号同步。
 
-## v0.9.4 → v1.0.0
+## v0.9.5 → v1.0.0
 
 - 更新、签名、公证、诊断、无障碍、低电量与兼容性收敛。
 - 安全审计、恢复/回退演练和稳定发布。

@@ -73,7 +73,7 @@ stateDiagram-v2
 
 ## 隐私盾牌
 
-按钮同时显示保护状态和该标签累计的拦截数量。面板第一屏回答“保护是否开启、拦截了什么、站点拥有什么权限”；保护开关和级别写入当前标签页策略，统计不会在每次导航时自动清零。第三方 Cookie 限制来自 profile 级全局设置，因此不随单个标签页盾牌开关切换。
+按钮同时显示保护状态和该标签累计的拦截数量。面板第一屏回答“保护是否开启、拦截了什么、站点拥有什么权限”；保护开关和级别按 profile 与主机名持久化，像 Safari 网站设置一样立即同步到所有已打开的同站标签，之后进入该网站时继续复用。统计仍按标签累计，不会在每次导航时自动清零。第三方 Cookie 限制来自 profile 级全局设置，因此不随单个网站盾牌开关切换。
 
 标准模式对第三方广告/追踪目录做匹配，并在默认指纹保护开启时阻止第三方已知指纹服务；严格模式追加社交目录；自定义模式扩大广告/追踪目录的第一方匹配，并对第三方请求启用有限路径启发式。面板不把这些能力表述为通用反指纹、恶意网站检测或 Safe Browsing。
 
@@ -91,7 +91,7 @@ Rex 扩展页分为「发现」与「已导入」。发现页展示有真实 Chr
 
 popup 面板跟随扩展内容的原生尺寸，并限制在宿主允许范围内；实测非广告 fixture 为 `280×113`，AdGuard 为 `320×600`，两者都使用同一通用容器。普通 Rex 起始页、侧栏、导航栏与分屏不因扩展交互改变布局，不允许裁剪网页、使用负偏移或以 Chrome 顶层窗口覆盖 Rex。未托管 Chrome extension popup/auxiliary window 的普通网页目标转交 Rex 后关闭辅助窗口；转交 `chrome.tabs.create` 目标时不得由临时 Chrome browser 和 Rex 标签重复加载同一主文档。
 
-每次热安装、启用、停用、更新或移除成功后，当前已加载的 HTTP(S) 页面自动重载一次，让内容脚本与 DNR 立即应用或撤销；`about:`、`rex-extension:` 等内部页不重载。扩展界面必须持续说明实际兼容边界：运行时同步使用不开放监听端口的 `--remote-debugging-pipe`，但 Rex 小型面板仍不是 Chromium 原生 action popup；stock CEF 150 Alloy 当前不提供 `activeTab`、`chrome.tabs` 当前窗口语义、无 popup 的 `action.onClicked` 或动态 `action.setPopup`。发布探针必须检查未刷新、未重复导航的首次文档，界面不得把该探针结果表述为所有 Chrome Web Store 扩展或全部 Chrome API 均已兼容。
+每次热安装、启用、停用、更新或移除成功后，当前已加载的 HTTP(S) 页面自动重载一次，让内容脚本与 DNR 立即应用或撤销；`about:`、`rex-extension:` 等内部页不重载。扩展界面必须持续说明实际兼容边界：运行时同步使用不开放监听端口的 `--remote-debugging-pipe`，但 Rex 小型面板仍不是 Chromium 原生 action popup；v0.9.5 只为静态 popup 补充来源网页的 active/currentWindow 查询上下文，完整 `activeTab` 权限、无 popup 的 `action.onClicked` 与动态 `action.setPopup` 仍不支持。发布探针必须检查未刷新、未重复导航的首次文档，界面不得把该探针结果表述为所有 Chrome Web Store 扩展或全部 Chrome API 均已兼容。
 
 ## 键盘与无障碍
 

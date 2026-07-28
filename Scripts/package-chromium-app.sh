@@ -4,8 +4,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="${1:-0.9.4}"
-BUILD_NUMBER="${2:-940}"
+VERSION="${1:-0.9.5}"
+BUILD_NUMBER="${2:-950}"
 CONFIGURATION="${3:-Release}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then

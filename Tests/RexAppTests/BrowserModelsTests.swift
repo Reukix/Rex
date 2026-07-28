@@ -108,6 +108,71 @@ private actor RecordingBrowserEngine: BrowserEngine {
     }
 }
 
+private struct RecordedPrivacyPolicyCommand {
+    let index: Int
+    let enabled: Bool
+    let level: PrivacyLevel
+    let fingerprintProtection: Bool
+}
+
+private struct RecordedLoadURLCommand {
+    let index: Int
+    let url: URL
+}
+
+private func firstPrivacyPolicyCommand(
+    for tabID: UUID,
+    in commands: [BrowserCommand]
+) -> RecordedPrivacyPolicyCommand? {
+    for (index, command) in commands.enumerated() {
+        guard case let .setPrivacyPolicy(
+            commandTabID,
+            enabled,
+            level,
+            fingerprintProtection,
+            _
+        ) = command,
+        commandTabID == tabID else {
+            continue
+        }
+        return RecordedPrivacyPolicyCommand(
+            index: index,
+            enabled: enabled,
+            level: level,
+            fingerprintProtection: fingerprintProtection
+        )
+    }
+    return nil
+}
+
+private func firstLoadURLCommand(
+    for tabID: UUID,
+    in commands: [BrowserCommand]
+) -> RecordedLoadURLCommand? {
+    for (index, command) in commands.enumerated() {
+        guard case let .loadURL(commandTabID, url) = command,
+              commandTabID == tabID else {
+            continue
+        }
+        return RecordedLoadURLCommand(index: index, url: url)
+    }
+    return nil
+}
+
+private func commandsThroughFirstLoad(
+    for tabID: UUID,
+    from engine: RecordingBrowserEngine
+) async -> [BrowserCommand] {
+    for _ in 0..<400 {
+        let commands = await engine.recordedCommands()
+        if firstLoadURLCommand(for: tabID, in: commands) != nil {
+            return commands
+        }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    return await engine.recordedCommands()
+}
+
 private actor ControlledBrowserEngine: BrowserEngine {
     private var commands: [BrowserCommand] = []
     private var continuation: AsyncStream<BrowserEvent>.Continuation?
@@ -380,6 +445,148 @@ private func testSnapshot(windowID: UUID = UUID(), title: String = "Example") ->
     )
 }
 
+@Test("Startup restore applies saved website privacy before first navigation")
+@MainActor
+func startupRestoreAppliesSavedPrivacyBeforeFirstNavigation() async throws {
+    let engine = RecordingBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+    )
+    let suiteName = "RexTests.StartupSitePrivacy.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
+    let windowID = UUID()
+    let snapshot = testSnapshot(windowID: windowID, title: "Privacy")
+    let restoredTab = try #require(snapshot.tabs.first)
+    try await persistence.save(snapshot)
+    try await persistence.saveSitePrivacyPolicy(SitePrivacyPolicy(
+        profileID: BrowserProfile.standard.id,
+        host: "example.com",
+        protectionEnabled: false,
+        level: .strict,
+        fingerprintProtectionEnabled: true
+    ))
+
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    let commands = await commandsThroughFirstLoad(for: restoredTab.id, from: engine)
+    let firstLoad = try #require(firstLoadURLCommand(for: restoredTab.id, in: commands))
+    let firstPolicy = try #require(firstPrivacyPolicyCommand(for: restoredTab.id, in: commands))
+
+    #expect(store.currentTab?.id == restoredTab.id)
+    #expect(firstLoad.url == restoredTab.url)
+    #expect(firstPolicy.index < firstLoad.index)
+    #expect(!firstPolicy.enabled)
+    #expect(firstPolicy.level == .strict)
+    #expect(firstPolicy.fingerprintProtection)
+}
+
+@Test("Duplicating a tab applies saved website privacy before first navigation")
+@MainActor
+func duplicateTabAppliesSavedPrivacyBeforeFirstNavigation() async throws {
+    let engine = RecordingBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+    )
+    let suiteName = "RexTests.DuplicateSitePrivacy.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
+    let windowID = UUID()
+    let snapshot = testSnapshot(windowID: windowID, title: "Duplicate")
+    try await persistence.save(snapshot)
+    try await persistence.saveSitePrivacyPolicy(SitePrivacyPolicy(
+        profileID: BrowserProfile.standard.id,
+        host: "example.com",
+        protectionEnabled: false,
+        level: .strict,
+        fingerprintProtectionEnabled: true
+    ))
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    let sourceTab = try #require(snapshot.tabs.first)
+    _ = await commandsThroughFirstLoad(for: sourceTab.id, from: engine)
+    for _ in 0..<400 where store.sitePrivacyPolicies.isEmpty {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(store.sitePrivacyPolicies.first?.level == .strict)
+
+    store.duplicateTab(sourceTab.id)
+    let duplicateTab = try #require(store.currentTab)
+    #expect(duplicateTab.id != sourceTab.id)
+    let commands = await commandsThroughFirstLoad(for: duplicateTab.id, from: engine)
+    let firstLoad = try #require(firstLoadURLCommand(for: duplicateTab.id, in: commands))
+    let firstPolicy = try #require(firstPrivacyPolicyCommand(for: duplicateTab.id, in: commands))
+
+    #expect(firstLoad.url == sourceTab.url)
+    #expect(firstPolicy.index < firstLoad.index)
+    #expect(!firstPolicy.enabled)
+    #expect(firstPolicy.level == .strict)
+    #expect(firstPolicy.fingerprintProtection)
+}
+
+@Test("Restoring a closed tab applies saved website privacy before first navigation")
+@MainActor
+func restoreClosedTabAppliesSavedPrivacyBeforeFirstNavigation() async throws {
+    let engine = RecordingBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+    )
+    let suiteName = "RexTests.RestoreClosedSitePrivacy.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
+    let windowID = UUID()
+    let snapshot = testSnapshot(windowID: windowID, title: "Restore")
+    try await persistence.save(snapshot)
+    try await persistence.saveSitePrivacyPolicy(SitePrivacyPolicy(
+        profileID: BrowserProfile.standard.id,
+        host: "example.com",
+        protectionEnabled: false,
+        level: .strict,
+        fingerprintProtectionEnabled: true
+    ))
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    let sourceTab = try #require(snapshot.tabs.first)
+    _ = await commandsThroughFirstLoad(for: sourceTab.id, from: engine)
+    for _ in 0..<400 where store.sitePrivacyPolicies.isEmpty {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(store.sitePrivacyPolicies.first?.level == .strict)
+
+    store.closeCurrentTab()
+    #expect(store.canRestoreClosedTab)
+    store.restoreClosedTab()
+    let restoredTab = try #require(store.currentTab)
+    #expect(restoredTab.id != sourceTab.id)
+    let commands = await commandsThroughFirstLoad(for: restoredTab.id, from: engine)
+    let firstLoad = try #require(firstLoadURLCommand(for: restoredTab.id, in: commands))
+    let firstPolicy = try #require(firstPrivacyPolicyCommand(for: restoredTab.id, in: commands))
+
+    #expect(firstLoad.url == sourceTab.url)
+    #expect(firstPolicy.index < firstLoad.index)
+    #expect(!firstPolicy.enabled)
+    #expect(firstPolicy.level == .strict)
+    #expect(firstPolicy.fingerprintProtection)
+}
+
 @Test("Split session clamps ratios")
 func splitRatioIsClamped() {
     let session = SplitViewSession(
@@ -545,6 +752,44 @@ func sqliteWindowSessionRoundTripAndIsolation() async throws {
     #expect(try await persistence.load(windowID: secondWindow) == second)
     #expect(try await persistence.loadAllWindows().map(\.id).contains(firstWindow))
     #expect(try await persistence.loadAllWindows().map(\.id).contains(secondWindow))
+}
+
+@Test("SQLite stores one privacy policy per profile and website")
+func sqliteSitePrivacyPolicyRoundTrip() async throws {
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let profileID = UUID()
+    let otherProfileID = UUID()
+    let original = SitePrivacyPolicy(
+        profileID: profileID,
+        host: "WWW.Example.COM",
+        protectionEnabled: false,
+        level: .strict,
+        fingerprintProtectionEnabled: true,
+        updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+    try await persistence.saveSitePrivacyPolicy(original)
+
+    var updated = original
+    updated.protectionEnabled = true
+    updated.level = .custom
+    updated.updatedAt = Date(timeIntervalSince1970: 1_800_000_100)
+    try await persistence.saveSitePrivacyPolicy(updated)
+    try await persistence.saveSitePrivacyPolicy(original)
+    try await persistence.saveSitePrivacyPolicy(SitePrivacyPolicy(
+        profileID: otherProfileID,
+        host: original.host,
+        protectionEnabled: false
+    ))
+
+    let policies = try await persistence.sitePrivacyPolicies(profileID: profileID)
+    #expect(policies.count == 1)
+    #expect(policies.first?.id == original.id)
+    #expect(policies.first?.host == "www.example.com")
+    #expect(policies.first?.protectionEnabled == true)
+    #expect(policies.first?.level == .custom)
 }
 
 @Test("SQLite imports the legacy JSON session only once")
@@ -1519,7 +1764,11 @@ func loadingEventsWithoutURLPreserveRestoredAddress() async throws {
     )
     #expect(store.isRestoringSession)
     await engine.waitForSubscriber()
-    for _ in 0..<100 where store.selectedTabID != snapshot.selectedTabID {
+    for _ in 0..<100 {
+        if store.selectedTabID == snapshot.selectedTabID,
+           !store.isRestoringSession {
+            break
+        }
         try? await Task.sleep(for: .milliseconds(5))
     }
     #expect(store.selectedTabID == snapshot.selectedTabID)
@@ -2052,27 +2301,67 @@ func privacyStateDecodesLegacyPayload() throws {
     #expect(state.resources.isEmpty)
 }
 
-@Test("Shield controls push Brave-style privacy policy into the engine")
+@Test("Shield controls save Safari-style website policy for every matching tab")
 @MainActor
 func shieldControlsPushPrivacyPolicy() async throws {
     let engine = ControlledBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+    )
+    let suiteName = "RexTests.SitePrivacy.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
     let store = BrowserStore(
         engine: engine,
-        databasePersistence: BrowserSQLitePersistence(
-            databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
-        )
+        databasePersistence: persistence,
+        preferences: preferences
     )
     await engine.waitForSubscriber()
     let tabID = store.selectedTabID
+    var initialPolicyIsReady = false
+    for _ in 0..<400 {
+        let commands = await engine.recordedCommands()
+        initialPolicyIsReady = !store.isRestoringSession && commands.contains { command in
+            guard case let .setPrivacyPolicy(commandTabID, _, _, _, _) = command else {
+                return false
+            }
+            return commandTabID == tabID
+        }
+        if initialPolicyIsReady { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(initialPolicyIsReady)
+    let matchingTabIDs = store.tabs.compactMap { tab in
+        tab.url?.host == "www.apple.com" ? tab.id : nil
+    }
+    #expect(matchingTabIDs.count == 2)
+    let originalSpaceLevel = store.currentSpace?.privacyLevel
 
     store.setPrivacyLevel(.strict)
     store.setPrivacyProtectionEnabled(false)
-    try? await Task.sleep(for: .milliseconds(20))
+    var savedPolicies: [SitePrivacyPolicy] = []
+    for _ in 0..<100 {
+        savedPolicies = try await persistence.sitePrivacyPolicies(
+            profileID: store.profile.id
+        )
+        if savedPolicies.first?.protectionEnabled == false { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(store.currentTab?.privacyState.level == .strict)
     #expect(store.currentTab?.privacyState.isEnabled == false)
     #expect(store.currentTab?.privacyState.fingerprintProtectionEnabled == true)
-    #expect(store.currentSpace?.privacyLevel == .strict)
+    #expect(store.currentSpace?.privacyLevel == originalSpaceLevel)
+    #expect(matchingTabIDs.allSatisfy {
+        store.tab(withID: $0)?.privacyState.level == .strict
+            && store.tab(withID: $0)?.privacyState.isEnabled == false
+    })
+    #expect(savedPolicies.count == 1)
+    #expect(savedPolicies.first?.host == "www.apple.com")
+    #expect(savedPolicies.first?.level == .strict)
+    #expect(savedPolicies.first?.protectionEnabled == false)
 
     let commands = await engine.recordedCommands()
     #expect(commands.contains(where: {

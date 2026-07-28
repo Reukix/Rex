@@ -303,7 +303,6 @@ private struct BrowserToolbar: View {
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
     @State private var compositionName = ""
-    @State private var isExtensionsPopoverPresented = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -315,60 +314,16 @@ private struct BrowserToolbar: View {
                 LiquidGlassIconButton(
                     systemName: "puzzlepiece.extension",
                     label: "扩展",
-                    isSelected: isExtensionsPopoverPresented || extensionActionPanel.isPresented
+                    isSelected: extensionActionPanel.isPresented
                 ) {
                     if extensionActionPanel.isPresented {
                         extensionActionPanel.dismiss()
-                    } else if isExtensionsPopoverPresented {
-                        isExtensionsPopoverPresented = false
                     } else {
-                        isExtensionsPopoverPresented = true
+                        presentExtensionsList()
                     }
                 }
                 .background {
                     RexExtensionActionPanelAnchor(controller: extensionActionPanel)
-                }
-                .popover(isPresented: $isExtensionsPopoverPresented, arrowEdge: .bottom) {
-                    RexExtensionsListPanel(
-                        packages: extensionsStore.extensions,
-                        onSelect: { package in
-                            isExtensionsPopoverPresented = false
-                            DispatchQueue.main.async {
-                                extensionActionPanel.present(
-                                    package: package,
-                                    store: store,
-                                    onBack: {
-                                        extensionActionPanel.dismiss()
-                                        DispatchQueue.main.async {
-                                            isExtensionsPopoverPresented = true
-                                        }
-                                    },
-                                    onManage: {
-                                        extensionActionPanel.dismiss()
-                                        store.isExtensionsPresented = true
-                                    },
-                                    onOpenOptions: {
-                                        extensionActionPanel.dismiss()
-                                        onOpenExtensionPage(package)
-                                    }
-                                )
-                            }
-                        },
-                        onOpenExtensionPage: { package in
-                            isExtensionsPopoverPresented = false
-                            onOpenExtensionPage(package)
-                        },
-                        onManage: {
-                            isExtensionsPopoverPresented = false
-                            DispatchQueue.main.async {
-                                store.isExtensionsPresented = true
-                            }
-                        },
-                        onClose: {
-                            isExtensionsPopoverPresented = false
-                        }
-                    )
-                    .environmentObject(store)
                 }
             }
 
@@ -665,6 +620,48 @@ private struct BrowserToolbar: View {
         case .pending, .internalPage, .unknown, nil: return .secondary
         }
     }
+
+    private func presentExtensionsList() {
+        extensionActionPanel.presentList(
+            packages: extensionsStore.extensions,
+            store: store,
+            onSelect: { package in
+                extensionActionPanel.dismiss()
+                DispatchQueue.main.async {
+                    presentExtensionAction(package)
+                }
+            },
+            onOpenExtensionPage: { package in
+                extensionActionPanel.dismiss()
+                onOpenExtensionPage(package)
+            },
+            onManage: {
+                extensionActionPanel.dismiss()
+                store.isExtensionsPresented = true
+            }
+        )
+    }
+
+    private func presentExtensionAction(_ package: BrowserExtensionPackage) {
+        extensionActionPanel.present(
+            package: package,
+            store: store,
+            onBack: {
+                extensionActionPanel.dismiss()
+                DispatchQueue.main.async {
+                    presentExtensionsList()
+                }
+            },
+            onManage: {
+                extensionActionPanel.dismiss()
+                store.isExtensionsPresented = true
+            },
+            onOpenOptions: {
+                extensionActionPanel.dismiss()
+                onOpenExtensionPage(package)
+            }
+        )
+    }
 }
 
 private struct RexExtensionsListPanel: View {
@@ -673,6 +670,16 @@ private struct RexExtensionsListPanel: View {
     let onOpenExtensionPage: (BrowserExtensionPackage) -> Void
     let onManage: () -> Void
     let onClose: () -> Void
+
+    static func preferredSize(for packages: [BrowserExtensionPackage]) -> CGSize {
+        guard !packages.isEmpty else {
+            return CGSize(width: 390, height: 350)
+        }
+        return CGSize(
+            width: 390,
+            height: min(560, max(246, 150 + CGFloat(packages.count) * 56))
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -757,6 +764,7 @@ private struct RexExtensionsListPanel: View {
         }
         .frame(width: 390)
         .frame(minHeight: packages.isEmpty ? 350 : 190)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -985,6 +993,27 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
     private var parentWindowObservers: [NSObjectProtocol] = []
     private var preferredSizesByPackageID: [String: CGSize] = [:]
     private var revealFallback: DispatchWorkItem?
+    private var sessionID: UUID?
+
+    func presentList(
+        packages: [BrowserExtensionPackage],
+        store: BrowserStore,
+        onSelect: @escaping (BrowserExtensionPackage) -> Void,
+        onOpenExtensionPage: @escaping (BrowserExtensionPackage) -> Void,
+        onManage: @escaping () -> Void
+    ) {
+        let size = RexExtensionsListPanel.preferredSize(for: packages)
+        let rootView = RexExtensionsListPanel(
+            packages: packages,
+            onSelect: onSelect,
+            onOpenExtensionPage: onOpenExtensionPage,
+            onManage: onManage,
+            onClose: { [weak self] in self?.dismiss() }
+        )
+        .environmentObject(store)
+        .frame(width: size.width, height: size.height)
+        present(rootView: AnyView(rootView), size: size, revealAfterLayout: false)
+    }
 
     func present(
         package: BrowserExtensionPackage,
@@ -993,18 +1022,52 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         onManage: @escaping () -> Void,
         onOpenOptions: @escaping () -> Void
     ) {
-        dismiss()
-        guard let anchorView, let parentWindow = anchorView.window else {
-            store.lastError = "扩展面板暂时无法定位到当前窗口。"
-            return
-        }
-
         let isRuntimePopup = package.canUseRuntimeResources
             && package.actionPopupURL != nil
         let initialSize = preferredSizesByPackageID[package.id]
             ?? RexRuntimeExtensionActionPanel.preferredSize(for: package)
+        let expectedSessionID = UUID()
+
+        let rootView = RexRuntimeExtensionActionPanel(
+            package: package,
+            onBack: onBack,
+            onManage: onManage,
+            onOpenOptions: onOpenOptions,
+            onPageClose: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.dismiss(sessionID: expectedSessionID)
+                }
+            },
+            onPanelSizeChange: { [weak self] size in
+                self?.applyPreferredSize(
+                    size,
+                    packageID: package.id,
+                    sessionID: expectedSessionID
+                )
+            }
+        )
+        .environmentObject(store)
+        present(
+            rootView: AnyView(rootView),
+            size: initialSize,
+            revealAfterLayout: isRuntimePopup,
+            sessionID: expectedSessionID
+        )
+    }
+
+    private func present(
+        rootView: AnyView,
+        size: CGSize,
+        revealAfterLayout: Bool,
+        sessionID preparedSessionID: UUID = UUID()
+    ) {
+        dismiss()
+        guard let anchorView, let parentWindow = anchorView.window else {
+            return
+        }
+
         let panel = RexExtensionPanel(
-            contentRect: NSRect(origin: .zero, size: initialSize),
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -1014,48 +1077,40 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
-        panel.alphaValue = isRuntimePopup ? 0 : 1
+        panel.alphaValue = revealAfterLayout ? 0 : 1
         panel.backgroundColor = .clear
-        panel.hasShadow = !isRuntimePopup
+        panel.hasShadow = !revealAfterLayout
         panel.collectionBehavior = [.fullScreenAuxiliary]
         panel.animationBehavior = .none
         panel.delegate = self
-        panel.level = parentWindow.level
+        panel.level = NSWindow.Level(rawValue: parentWindow.level.rawValue + 1)
 
-        let rootView = RexRuntimeExtensionActionPanel(
-            package: package,
-            onBack: onBack,
-            onManage: onManage,
-            onOpenOptions: onOpenOptions,
-            onPageClose: { [weak self] in
-                DispatchQueue.main.async {
-                    self?.dismiss()
-                }
-            },
-            onPanelSizeChange: { [weak self] size in
-                self?.applyPreferredSize(size, packageID: package.id)
-            }
-        )
-        .environmentObject(store)
-        let hostingController = NSHostingController(rootView: AnyView(rootView))
+        let hostingController = NSHostingController(rootView: rootView)
         panel.contentViewController = hostingController
 
         self.parentWindow = parentWindow
         self.panel = panel
         self.hostingController = hostingController
+        sessionID = preparedSessionID
         isPresented = true
 
         observeParentWindow(parentWindow)
-        positionPanel(size: initialSize)
-        parentWindow.addChildWindow(panel, ordered: .above)
-        panel.order(.above, relativeTo: parentWindow.windowNumber)
+        positionPanel(size: size)
         panel.makeKeyAndOrderFront(nil)
-        if isRuntimePopup {
+        if revealAfterLayout {
             scheduleRevealFallback(for: panel)
         }
     }
 
     func dismiss() {
+        dismiss(sessionID: nil)
+    }
+
+    private func dismiss(sessionID expectedSessionID: UUID?) {
+        if let expectedSessionID, sessionID != expectedSessionID {
+            return
+        }
+        sessionID = nil
         revealFallback?.cancel()
         revealFallback = nil
         guard let panel else {
@@ -1069,9 +1124,6 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         removeParentWindowObservers()
         panel.contentViewController = nil
         hostingController = nil
-        if panel.parent === parentWindow {
-            parentWindow?.removeChildWindow(panel)
-        }
         panel.orderOut(nil)
         panel.close()
         self.panel = nil
@@ -1086,9 +1138,7 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         removeParentWindowObservers()
         panel?.contentViewController = nil
         hostingController = nil
-        if panel?.parent === parentWindow, let panel {
-            parentWindow?.removeChildWindow(panel)
-        }
+        sessionID = nil
         panel = nil
         parentWindow = nil
         isPresented = false
@@ -1101,7 +1151,12 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         }
     }
 
-    private func applyPreferredSize(_ requestedSize: CGSize, packageID: String) {
+    private func applyPreferredSize(
+        _ requestedSize: CGSize,
+        packageID: String,
+        sessionID expectedSessionID: UUID
+    ) {
+        guard sessionID == expectedSessionID else { return }
         let size = normalizedPanelSize(requestedSize)
         preferredSizesByPackageID[packageID] = size
         resizePanel(to: size)

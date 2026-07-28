@@ -1,5 +1,31 @@
 # 更新日志
 
+## 0.9.5 (build 950) — 2026-07-28
+
+### Safari 式网站隐私策略
+
+- 隐私盾牌复用 Safari 分支的站点策略方式：`SitePrivacyPolicy` 以 profile 与小写主机名为唯一作用域写入 SQLite，保护开关、级别与指纹保护设置会立即同步到所有已打开的同站标签，并在重启后复用。
+- 从一个网站导航到另一个网站时应用目标网站已保存策略；没有例外时使用该空间原本的默认级别。修改网站策略不再隐式改写空间默认级别，避免一个站点的选择扩散到之后访问的新网站。
+- 拦截资源和计数仍按标签会话累计；第三方 Cookie 仍是 CEF profile 级全局限制，不伪装成可按网站独立切换的能力。
+
+### 扩展小型面板
+
+- 静态 `default_popup` 主文档加载时，从受控 surface ID 解析用户点击扩展按钮前的来源 HTTP(S) 标签，并为 `chrome.tabs.query({active:true,currentWindow:true})` 提供该只读上下文。当前可见页是 `rex-extension://` 时仍沿用最近有效来源网页。
+- 修复 uBlock Origin Lite 等扩展在小面板中拿不到当前网站、面板显示空站点且修改过滤级别不生效的问题；实现位于通用 Chromium popup 桥，不包含扩展名称或专用业务逻辑。
+- `chrome.tabs.getCurrent()` 保持 action popup 的空结果语义。完整 `activeTab` 权限、无静态 popup 的 `action.onClicked` 与动态 `action.setPopup` 仍不支持。
+
+### CEF/AppKit 稳定性
+
+- 工具栏扩展列表与扩展 popup 从 SwiftUI `.popover` 改为独立无边框 AppKit `NSPanel`；浮窗跟随工具栏锚点、父窗口移动和扩展内容尺寸，但不再调用 `NSWindow.addChildWindow`。
+- 修复在 `rex-extension` 页面再次点击扩展按钮时，`NSPopover` 尝试把窗口附着到 CEF `NSRemoteView`，进而在 `NSRemoteView containingWindowWillOrderOnScreen` 路径概率性崩溃的问题。
+- 面板会话增加 generation/UUID 校验，忽略已经关闭或切换后的旧尺寸与关闭回调。
+
+### 版本与构建
+
+- 应用、Xcode 工程、打包默认值与 Chromium User-Agent 推进到 `v0.9.5` build `950` / `Rex/0.9.5`。
+- Swift Testing `144/144`、Release Notes Validator（28 个功能 ID）、CEF bridge arm64 Release、完整 Xcode Release、主 App与五个 Helper 的 `0.9.5 / 950` 版本和 arm64 架构、deep/strict codesign、ZIP 解压及 SHA 清单均通过。
+- 产物：`Dist/Rex.app`（`342M` / `350452 KiB`）与 `Dist/Rex-v0.9.5-macos-arm64-chromium.zip`（`142,514,613` bytes，`147736 KiB` / `144M`）；ZIP SHA-256：`86b3f4654cb82cc9db5a2ceca431d822ba773acfee6dd5037a4dea843c5c7c4d`。详情见 [v0.9.5 发布说明](Documentation/Releases/v0.9.5.md)。
+
 ## 0.9.4 (build 940) — 2026-07-28
 
 ### 扩展热生命周期

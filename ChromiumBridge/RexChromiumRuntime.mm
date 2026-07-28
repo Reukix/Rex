@@ -2052,6 +2052,8 @@ class RexDevToolsClient final : public CefClient,
 - (void)browser:(CefRefPtr<CefBrowser>)browser
     preferredContentSizeDidChange:(NSSize)size
                             tabID:(NSString *)tabID;
+- (nullable NSDictionary<NSString *, id> *)
+    extensionActionContextForSurfaceTabID:(NSString *)tabID;
 - (void)registerAuxiliaryChromeBrowser:(CefRefPtr<CefBrowser>)browser
                            sourceTabID:(NSString *)sourceTabID;
 - (void)auxiliaryChromeBrowserDidClose:(CefRefPtr<CefBrowser>)browser;
@@ -2531,7 +2533,7 @@ struct RexPendingPermission {
   CefString(&settings.root_cache_path) = RexUTF8(rootPath);
   CefString(&settings.cache_path) = RexUTF8(profilePath);
   CefString(&settings.locale) = RexUTF8(locale.length ? locale : @"zh-CN");
-  CefString(&settings.user_agent_product) = "Rex/0.9.4";
+  CefString(&settings.user_agent_product) = "Rex/0.9.5";
   const BOOL extensionPipeEnabled = YES;
 
   std::vector<std::string> chromiumExtensionPaths;
@@ -2639,8 +2641,20 @@ struct RexPendingPermission {
       effectiveInitialURL = @"about:blank";
     }
     const std::string url = RexUTF8(effectiveInitialURL);
+    CefRefPtr<CefDictionaryValue> extraInfo;
+    NSDictionary<NSString *, id> *extensionActionContext =
+        [self extensionActionContextForSurfaceTabID:tabID];
+    if (extensionActionContext) {
+      extraInfo = CefDictionaryValue::Create();
+      extraInfo->SetString(
+          "rexExtensionActionURL",
+          RexUTF8(static_cast<NSString *>(extensionActionContext[@"url"])));
+      extraInfo->SetString(
+          "rexExtensionActionTitle",
+          RexUTF8(static_cast<NSString *>(extensionActionContext[@"title"])));
+    }
     CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
-        windowInfo, client, url, browserSettings, nullptr, requestContext);
+        windowInfo, client, url, browserSettings, extraInfo, requestContext);
     if (!browser) {
       self->_pendingTabs.erase(key);
       [self emitEvent:RexEvent(@"error", tabID,
@@ -3326,6 +3340,52 @@ struct RexPendingPermission {
   RexChromiumBrowserPreferredSizeHandler handler =
       view.preferredSizeDidChangeHandler;
   if (handler) handler(size);
+}
+
+- (nullable NSDictionary<NSString *, id> *)
+    extensionActionContextForSurfaceTabID:(NSString *)tabID {
+  CEF_REQUIRE_UI_THREAD();
+  NSArray<NSString *> *components = [tabID componentsSeparatedByString:@":"];
+  NSUUID *sourceTabUUID = components.count == 4 &&
+                                 ![components[1] isEqualToString:@"none"]
+      ? [[NSUUID alloc] initWithUUIDString:components[1]]
+      : nil;
+  if (components.count != 4 ||
+      ![components[0] isEqualToString:@"rex-extension-surface"] ||
+      sourceTabUUID == nil) {
+    return nil;
+  }
+
+  NSString *sourceTabID = sourceTabUUID.UUIDString;
+  if ([_privateTabs[sourceTabID] boolValue]) return nil;
+  CefRefPtr<CefBrowser> sourceBrowser = [self browserForTabID:sourceTabID];
+  CefRefPtr<CefFrame> sourceFrame =
+      sourceBrowser ? sourceBrowser->GetMainFrame() : nullptr;
+  if (!sourceFrame || !sourceFrame->IsValid()) return nil;
+
+  NSString *sourceURL = RexNSString(sourceFrame->GetURL());
+  NSURLComponents *url = [NSURLComponents componentsWithString:sourceURL];
+  NSString *scheme = url.scheme.lowercaseString;
+  if (![scheme isEqualToString:@"http"] &&
+      ![scheme isEqualToString:@"https"]) {
+    return nil;
+  }
+  CefRefPtr<CefNavigationEntry> sourceEntry = sourceBrowser->GetHost()
+      ? sourceBrowser->GetHost()->GetVisibleNavigationEntry()
+      : nullptr;
+  NSString *sourceTitle = sourceURL;
+  if (sourceEntry && sourceEntry->IsValid()) {
+    NSString *visibleTitle = RexNSString(sourceEntry->GetTitle());
+    if (visibleTitle.length) sourceTitle = visibleTitle;
+  }
+  return @{
+    @"url": sourceURL,
+    @"title": sourceTitle,
+    @"active": @YES,
+    @"highlighted": @YES,
+    @"incognito": @NO,
+    @"pinned": @NO
+  };
 }
 
 - (void)browser:(CefRefPtr<CefBrowser>)browser

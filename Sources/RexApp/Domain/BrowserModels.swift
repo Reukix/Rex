@@ -188,6 +188,36 @@ struct PrivacyState: Codable, Hashable, Sendable {
     }
 }
 
+/// Safari-style website privacy exception: the user chooses protection once
+/// for a host and every tab for that host receives the same policy.
+struct SitePrivacyPolicy: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
+    let profileID: UUID
+    var host: String
+    var protectionEnabled: Bool
+    var level: PrivacyLevel
+    var fingerprintProtectionEnabled: Bool
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        profileID: UUID,
+        host: String,
+        protectionEnabled: Bool = true,
+        level: PrivacyLevel = .standard,
+        fingerprintProtectionEnabled: Bool = true,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.profileID = profileID
+        self.host = host.lowercased()
+        self.protectionEnabled = protectionEnabled
+        self.level = level
+        self.fingerprintProtectionEnabled = fingerprintProtectionEnabled
+        self.updatedAt = updatedAt
+    }
+}
+
 struct BrowserTab: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     var url: URL?
