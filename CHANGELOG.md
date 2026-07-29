@@ -1,6 +1,109 @@
 # 更新日志
 
-## 0.9.5 (build 950) — 2026-07-28
+## 0.9.7 (build 970) — 2026-07-30
+
+### Rex 外壳与 Chromium 权威后端
+
+- 用户可见的浏览器外壳和扩展管理界面统一由 Rex SwiftUI/AppKit 实现；Chromium 继续负责网页渲染、导航生命周期、扩展执行、权限和配置状态，并作为这些状态的唯一事实来源。
+- `rex://extensions` 改为 Rex 自有的发现、已安装和扩展详情页面，不再直接显示 Chromium 原生扩展 WebUI。旧 `chrome://extensions` 路由在应用边界迁移为 `rex://extensions`。
+- `chrome://extensions` 只保留为不可见、受控的 `chrome.developerPrivate` API 执行上下文；普通可见 browser client 拒绝全部 `chrome:` 导航，用户不会看到 Chrome 标签栏、地址栏或扩展管理页面。
+- Chromium 提交的 URL 只作为 Rex 导航栏的可见状态，不再由 SwiftUI browser surface 回写为第二次 `loadURL`；点击链接、重定向和站内导航不会再被同地址 `Reload` 打断或让导航栏重复刷新。
+- 已创建但尚未挂载可见 NSView 的 Chromium 标签会保留显式导航命令，页面出现后按顺序执行，不再依赖 SwiftUI 状态回写补发地址。
+- 新主框架请求在 `OnBeforeBrowse` 即获得导航代次，不再依赖 Chromium 聚合 loading 状态从 false 切到 true；前一页仍在加载时提交新地址也能接受真实提交、结束 pending 并恢复刷新按钮。
+
+### 扩展权限配置
+
+- 扩展详情提供“点击扩展时”“指定网站”“所有网站”三态网站访问设置，以及“允许运行用户脚本”和“允许访问文件网址”开关。
+- “指定网站”不再只是状态展示：全站型扩展可添加或移除具体网站，有限 host 声明扩展可逐站授权或撤销；操作调用 Chromium 原生 `addHostPermission` / `removeHostPermission`。
+- 所有设置均提交给 Chromium 原生扩展管理 API；更新完成后立即读回 Chromium 的实际配置，Rex 不用本地目录或目标值假定设置已经生效。
+- Chromium API 不可用、返回数据无效或写入失败时保留明确错误和重试入口，并再次读取 Chromium 权威状态，不把失败状态显示为成功。
+- 扩展详情的启用开关和状态优先显示 Chromium 读回值；Rex 本地包状态只在尚未取得 Chromium 配置时作为回退。
+
+### 扩展生命周期与冷启动
+
+- 持久扩展从停用切回启用时，先由 Chromium `management.setEnabled` 启用，再执行 `developerPrivate.reload` 重新读取受管目录；禁用期间替换的同版本 JS/CSS 即使跨 Rex 重启也不会继续运行旧副本。
+- 扩展事务只有在原生操作成功、最终 Chromium 注册表验证通过且受管包仍匹配本次事务开始时的指纹快照后才提交。事务期间再次换盘会失败并保留下一代 reload 机会，不会把尚未被 Chromium 消费的版本记为已加载。
+- 冷启动导航屏障使用的临时 `about:blank` 会按标签持续标记到真实地址提交；即使屏障已释放，延迟到达的占位地址和标题也不会进入 Rex 可见导航状态或覆盖持久化恢复 URL。
+- 正常退出改为先关闭全部 Chromium browser 并停止 `NSApplication` 主循环，再由显式 SwiftUI 入口排空外部消息泵并调用 `CefShutdown()`；不再从 `applicationWillTerminate` 的 `terminate:` 调用栈内关闭 CEF。
+- 关闭 Chromium 前先等待全部活动标准窗口的最新会话快照落入 SQLite，跳过隐私窗口；单窗口失败继续处理其他窗口，整体超过 5 秒则记录日志并继续退出，避免修复 CEF 卡死时引入最后 350ms 标签或布局状态丢失。
+- 内部扩展控制 DevTools pipe 会在排空关闭任务前断开，固定 fd 3/4 保留到 `CefShutdown()` 返回后才释放，避免关闭过程中的描述符复用。
+
+### Chromium 导航状态
+
+- 主框架每次非重定向导航开始时建立新的导航代次，服务器重定向继续归入同一代次。即使上一页面仍在加载、Chromium 的聚合加载状态没有再次产生 `loading=true`，新提交地址及其最终重定向仍会被接受并正确结束导航栏加载状态。
+- pending 地址会先核对 Chromium 的实际地址变化，再拒绝同代次的旧页面回调；这为仍报告旧代次的边界事件保留收敛路径，不再让地址栏永久显示停止按钮。
+
+### 兼容性边界
+
+- 扩展 popup/options 等包内页面仍在 Chromium 的 `chrome-extension://` 安全源中执行，对外显示为 `rex-extension://`；service worker、content script、DNR、消息与 storage 继续由 Chromium 实现。
+- 静态 popup 的 current/lastFocused 标签映射只把 Chromium tab ID 交给 renderer，再调用 Chromium `tabs.get` 取得权限裁剪后的 Tab；Rex 不注入来源 URL 或标题，也不会绕过扩展的 `tabs`/host permission。
+- 已覆盖的站点访问、用户脚本和扩展运行时子集不等于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容。完整 `activeTab`、无静态 popup 的 `action.onClicked` 和动态 `action.setPopup` 仍不承诺支持。
+- iCloud Passwords 的扩展包可以加载，但 Apple native host 仍受 manifest 注册、正式签名身份和 managed entitlement 限制，不能标记为可用。
+
+### 版本与交付状态
+
+- 版本推进到 `v0.9.7` build `970`；这是 ad-hoc 本地 Beta 基线，不是 Developer ID 正式分发候选。
+- Developer ID 同团队签名、Hardened Runtime、公证、Gatekeeper、应用更新和失败回退均仍未完成。
+- 产物：`Dist/Rex.app`（`343M` / `351344 KiB`）与 `Dist/Rex-v0.9.7-macos-arm64-chromium.zip`（`142,723,427` bytes，`147740 KiB` / `144M`）；ZIP SHA-256：`0940bab0c6541b39b85a26668096dfbd738ae1dc5c62360a8a5a0ab7f45480f3`。ZIP 解压、`0.9.7 / 970`、全部 11 个 Mach-O 的 arm64、deep/strict codesign 和 SHA 清单均通过；本次未生成 DMG。详情见 [v0.9.7 发布说明](Documentation/Releases/v0.9.7.md)。
+
+## 0.9.6 (build 962) — 2026-07-30
+
+### Chromium 导航状态
+
+- 保持现有 Rex 导航栏设计，但加载、进度、前进后退和刷新/停止命令改为直接读取 Chromium 的实时导航状态；`BrowserTab` 中的加载字段只作为旧会话兼容镜像，不再参与 UI 或命令决策。
+- CEF 主框架每次开始加载时分配单调递增的导航代次，并把代次附加到地址、加载、进度、标题和失败事件；Swift 入口在主线程按原始顺序同步消费，旧代次回调不会覆盖新导航。
+- 待处理地址不再要求 Chromium 的最终 URL 与提交 URL 完全相等。同一导航代次内的 301/302、HSTS、登录跳转和 URL 规范化会接受 Chromium 最终地址与 `isLoading=false`，修复网页已显示但导航栏永久保持停止按钮和加载动画的问题。
+- 会话恢复只保留 URL、标题等恢复目标，启动时清除持久化的 loading、进度、前进后退和导航代次，避免上次运行状态冒充当前 Chromium 状态。
+
+### Chromium 原生扩展管理页
+
+- `rex://extensions` 继续映射 Chromium 原生 `chrome://extensions/`，并保留详情路径与查询参数，不引入 Rex 自制替代页面。
+- Chrome runtime 按 Rex 宿主的真实初始尺寸创建完整 `CefWindow`，窗口内使用填充布局；不再从 Chromium 窗口拆出并重挂载 browser view。完整 Chromium 窗口改为 Rex 内容窗口的无边框原生子窗口，并随内容区同步位置与大小，消除 macOS 标题栏非客户区造成的绘制位置与鼠标命中坐标偏移。
+- Chromium 子窗口保持 key 状态以接收原生键盘事件；Rex 内容窗口恢复 main-window 身份，使应用菜单、sheet 与工具栏扩展面板继续以 Rex 主窗口为层级基准。
+
+### 当前标签身份与扩展消息
+
+- 普通非隐私 HTTP(S) 页面改由 Chrome runtime 承载，使扩展内容脚本、service worker 与消息 sender 获得 Chromium 真实 tab、window、frame 和 document identity。
+- 静态扩展 popup 查询 `{active:true,currentWindow:true}` 或 `{active:true,lastFocusedWindow:true}` 时，使用 CEF 明确定义为扩展 `tabId` 的 `CefBrowser::GetIdentifier()` 精确匹配 Chromium 实际标签；相同 URL/标题不再参与猜测，来源已关闭时返回空数组。
+- MV3 探针新增 action popup current/lastFocused 同一 identity 校验，并把其 `id/windowId` 与同一文档的内容脚本 sender 直接比较，同时记录 frame 与 document identity。
+- service worker 通过 `chrome.tabs.sendMessage(tabId, ..., {frameId})` 回传到来源内容脚本，补齐此前只有 content script 到 worker 的单向消息覆盖。
+- popup 通知 background worker 后，再执行 Tampermonkey 同款 `{active:true,lastFocusedWindow:true}` 查询；探针要求 worker、popup 和内容脚本 sender 的 `tab.id/windowId` 完全一致。
+
+### 扩展冷启动恢复
+
+- Browser process 继续移除外部注入的 `--load-extension`，同时停用 CDP `Extensions.loadUnpacked` 临时安装路径。Chromium 会在启动时清理带 `INSTALLED_VIA_CDP` 标记的记录；现在路径真正缺失时改由隐藏的原生扩展 WebUI 调用 `chrome.developerPrivate.loadUnpacked`，写入可跨启动恢复的 unpacked 记录。
+- 同 ID 更新改用 `chrome.developerPrivate.reload`，启停使用 `chrome.management.setEnabled`，只有明确移除才卸载，避免更新或停用清空扩展存储、权限和安装状态。
+- 修复 Tampermonkey 等扩展在每次 Rex 启动时被重新安装、重复收到 `runtime.onInstalled` 并打开“安装成功”页面的问题。旧 CDP 记录升级后仅迁移一次。
+- MV3 回归新增连续两次启用态重启：每次必须收到 `runtime.onStartup` 和 worker 启动证据，同时拒绝任何 `runtime.onInstalled` 与 onboarding 请求，并验证持久 `chrome.storage.local` UUID 不变。
+
+### 已知兼容性边界
+
+- iCloud Passwords 的扩展包和权限可以加载，但 Apple 原生连接在当前 ad-hoc ZIP 中仍不可用。已安装列表显示橙色完整限制说明，工具栏显示“Apple 原生连接受限”，action 面板也给出同一限制，不会把该状态写成扩展运行时失败或误导为完整可用。
+- 系统原始 `com.apple.passwordmanager` manifest 只注册在 Chrome 专用目录；Apple helper 的 Parent Launch Constraints 又要求获批的 `com.apple.developer.web-browser.public-key-credential` entitlement，或名单内的 Bundle ID + Team ID。当前 ad-hoc `com.rex.browser` 缺 Developer ID 和该 entitlement，也不在 helper 名单中。仅复制 manifest 无法绕过签名约束，本版本不复制、重签 helper，也不伪装受支持浏览器身份。
+- Tampermonkey 5.5.0 已确认授予 `userScripts`、`scripting` 和 `<all_urls>`，`withholding_permissions=false` 且 service worker 已启动；但当前 profile 未安装最小测试用户脚本，因此不能把配置状态外推为用户脚本端到端注入已通过。
+- 真实 tab identity 和定向消息通过不等同于完整 `activeTab` 权限授予。无静态 popup 的 `action.onClicked`、动态 `action.setPopup` 以及未列入能力矩阵的 Chrome API 仍不承诺支持。
+- `chrome.tabs.create` 可把目标 URL 转交为可见 Rex 标签，但 Chromium 临时 WebContents 随后关闭；回调中的临时 `tab.id` 不保证可继续用于 `tabs.get/update/sendMessage`。可靠接管需要跨 Swift/CEF 的完整 browser 生命周期改造，本版不提供近似兼容。
+
+### 版本、验证与产物
+
+- 应用、结构化发布数据、Xcode 工程与打包版本推进到 `v0.9.6` build `962`。
+- 最终源码上的 CEF bridge arm64 Release、完整 Xcode Release、iCloud 限制状态单元测试、JS 语法检查、`git diff --check` 和 Release Notes Validator（v0.9.6 build 962，28 个功能 ID）通过。原生扩展页实机点击返回与 Tampermonkey“详情”均准确命中目标。
+- Swift 全量集合 `150/150` 通过，新增旧导航终态隔离、重定向完成和刷新/停止命令回归；MV3 fixture/验证器语法检查与 `--self-test` 通过。隔离 Profile 的首次旧记录迁移及随后连续两次正常重启均确认 `runtime.onStartup` 恰好一次、`runtime.onInstalled` 和新增 onboarding 请求为零，安装/更新时间不变；Tampermonkey 最小用户脚本端到端注入仍需单独实测。
+- App：`Dist/Rex.app`（`342M` / `350700 KiB`）；ZIP：`Dist/Rex-v0.9.6-macos-arm64-chromium.zip`（`142,580,072` bytes，`147596 KiB` / `144M`）。
+- ZIP SHA-256：`4beebc68785310c9d3def7eb4352dbd14ef07ca6d60bd25100c2cbc4bab89ecc`。ZIP 解压、主 App/CEF/五个 Helper 的 arm64 与 `0.9.6 / 962`、deep/strict codesign 和 SHA 清单均通过；本次未生成 DMG。详情见 [v0.9.6 发布说明](Documentation/Releases/v0.9.6.md)。
+
+## 0.9.5 (build 952) — 2026-07-28
+
+### 网页加载兼容性
+
+- 内部扩展生命周期仍通过不开放监听端口的 DevTools pipe 管理，但不再向网页暴露 `navigator.webdriver=true`；同时恢复 Chromium 标准 User-Agent，避免 `itdog.cn` 等站点的反自动化脚本进入高 CPU 死循环并永久白屏。
+- 移除 CEF 启动与子进程中的 `--no-proxy-server` 强制参数，网页重新遵循 macOS 系统代理配置。
+- 地址提交若早于站点隐私策略加载完成，会在页面创建和策略应用后按顺序补发导航，不再把首次 `loadURL` 丢给尚不存在的 CEF 页面。
+- 扩展启动对账失败会继续报告运行时错误，但在没有补偿事务时释放网页导航屏障，不再让恢复页和新地址永久停在 `about:blank`。
+
+### Rex 扩展入口
+
+- 工具栏扩展列表改为深靛蓝高对比度实体面板，强化标题、扩展状态、行项目、更多菜单与管理入口在浅色网页上方的可读性；扩展自身的 Chromium popup、设置与管理行为保持不变。
 
 ### Safari 式网站隐私策略
 
@@ -22,9 +125,9 @@
 
 ### 版本与构建
 
-- 应用、Xcode 工程、打包默认值与 Chromium User-Agent 推进到 `v0.9.5` build `950` / `Rex/0.9.5`。
-- Swift Testing `144/144`、Release Notes Validator（28 个功能 ID）、CEF bridge arm64 Release、完整 Xcode Release、主 App与五个 Helper 的 `0.9.5 / 950` 版本和 arm64 架构、deep/strict codesign、ZIP 解压及 SHA 清单均通过。
-- 产物：`Dist/Rex.app`（`342M` / `350452 KiB`）与 `Dist/Rex-v0.9.5-macos-arm64-chromium.zip`（`142,514,613` bytes，`147736 KiB` / `144M`）；ZIP SHA-256：`86b3f4654cb82cc9db5a2ceca431d822ba773acfee6dd5037a4dea843c5c7c4d`。详情见 [v0.9.5 发布说明](Documentation/Releases/v0.9.5.md)。
+- 应用、Xcode 工程与打包默认值推进到 `v0.9.5` build `952`；网页恢复 Chromium 标准 User-Agent。
+- Swift Testing `144/144`、Release Notes Validator（28 个功能 ID）、CEF bridge arm64 Release、完整 Xcode Release、主 App与五个 Helper 的 `0.9.5 / 952` 版本和 arm64 架构、deep/strict codesign、ZIP 解压及 SHA 清单均通过。
+- 产物：`Dist/Rex.app`（`342M` / `350588 KiB`）、`Dist/Rex-v0.9.5-macos-arm64-chromium.zip`（`142,539,578` bytes，`147576 KiB` / `144M`）和预发布 DMG（`160,241,220` bytes，`156488 KiB` / `153M`）；ZIP SHA-256：`380442d0413b084df39ccd318c6c4e9e4c64bd6fd18edcd17f29bd1858025b20`，DMG SHA-256：`8ccb78088fadba83a0eabd6e983494e5213ed54bf137bb19aca572c745a13d4b`。详情见 [v0.9.5 发布说明](Documentation/Releases/v0.9.5.md)。
 
 ## 0.9.4 (build 940) — 2026-07-28
 

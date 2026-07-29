@@ -20,6 +20,25 @@
   const runtimeId = chrome.runtime.id;
   const version = chrome.runtime.getManifest().version;
 
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "probe-worker-to-content") {
+      return false;
+    }
+    const matchesDocument =
+      message.phaseToken === phaseToken && message.documentId === documentId;
+    root.dataset.rexMv3WorkerToContent = matchesDocument
+      ? "acknowledged"
+      : "mismatched";
+    sendResponse({
+      ok: matchesDocument,
+      source: "content-script",
+      runtimeId,
+      documentId,
+      frameURL: location.href
+    });
+    return false;
+  });
+
   async function postReport(fields) {
     const response = await fetch(reportURL, {
       method: "POST",
@@ -88,7 +107,8 @@
       workerResponse.source === "service-worker" &&
       workerResponse.extensionId === runtimeId &&
       workerResponse.version === version &&
-      workerResponse.reportDelivered === true;
+      workerResponse.reportDelivered === true &&
+      workerResponse.workerToContent?.ok === true;
     root.dataset.rexMv3ContentScriptInjectionCount = String(injectionCount);
     root.dataset.rexMv3RuntimeMessage = workerAck
       ? "acknowledged"
@@ -102,6 +122,8 @@
       workerError: workerError || workerResponse?.error || "",
       workerRuntimeId: workerResponse?.extensionId ?? "",
       workerVersion: workerResponse?.version ?? "",
+      workerToContentAck: workerResponse?.workerToContent?.ok === true,
+      senderTab: workerResponse?.senderTab ?? null,
       lifetimeInjectionCount,
       dnr: {
         pageSignal: root.dataset.rexProbeDnr ?? "pending"

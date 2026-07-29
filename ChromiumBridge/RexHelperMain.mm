@@ -14,8 +14,7 @@
 namespace {
 
 struct RexExtensionActionContext {
-  std::string url;
-  std::string title;
+  int tab_id = 0;
 };
 
 class RexHelperApp final : public CefApp, public CefRenderProcessHandler {
@@ -28,13 +27,12 @@ class RexHelperApp final : public CefApp, public CefRenderProcessHandler {
       CefRefPtr<CefBrowser> browser,
       CefRefPtr<CefDictionaryValue> extra_info) override {
     if (!browser || !extra_info ||
-        !extra_info->HasKey("rexExtensionActionURL")) {
+        !extra_info->HasKey("rexExtensionActionTabID")) {
       return;
     }
     RexExtensionActionContext context;
-    context.url = extra_info->GetString("rexExtensionActionURL");
-    context.title = extra_info->GetString("rexExtensionActionTitle");
-    if (!context.url.empty()) {
+    context.tab_id = extra_info->GetInt("rexExtensionActionTabID");
+    if (context.tab_id > 0) {
       extension_action_contexts_[browser->GetIdentifier()] =
           std::move(context);
     }
@@ -55,13 +53,10 @@ class RexHelperApp final : public CefApp, public CefRenderProcessHandler {
         extension_action_contexts_.find(browser->GetIdentifier());
     if (entry == extension_action_contexts_.end()) return;
 
+    // Only bridge Chromium's numeric tab identity. tabs.get() below supplies
+    // the permission-filtered Tab object, so Rex never injects URL or title.
     CefRefPtr<CefDictionaryValue> source = CefDictionaryValue::Create();
-    source->SetString("url", entry->second.url);
-    source->SetString("title", entry->second.title);
-    source->SetBool("active", true);
-    source->SetBool("highlighted", true);
-    source->SetBool("incognito", false);
-    source->SetBool("pinned", false);
+    source->SetInt("id", entry->second.tab_id);
     CefRefPtr<CefValue> source_value = CefValue::Create();
     source_value->SetDictionary(source);
     const std::string source_json =
@@ -80,15 +75,42 @@ class RexHelperApp final : public CefApp, public CefRenderProcessHandler {
         "const tabs = namespace && namespace.tabs;"
         "if (!tabs || typeof tabs.query !== 'function') continue;"
         "const originalQuery = tabs.query.bind(tabs);"
+        "const originalGet = typeof tabs.get === 'function'"
+        " ? tabs.get.bind(tabs) : null;"
+        "const sourceResult = originalTab => {"
+        "const original = Array.isArray(originalTab)"
+        " ? originalTab.find(tab => tab && tab.id === source.id)"
+        " : originalTab;"
+        "if (!original || original.id !== source.id"
+        " || !Number.isInteger(original.windowId)) return [];"
+        "return [Object.freeze(Object.assign({}, original,"
+        " {active: true, highlighted: true}))];"
+        "};"
+        "const requestSource = callback => {"
+        "if (originalGet) return originalGet(source.id, callback);"
+        "return originalQuery({}, callback);"
+        "};"
+        "const requestSourcePromise = () => originalGet"
+        " ? originalGet(source.id) : originalQuery({});"
         "const actionQuery = (queryInfo, callback) => {"
         "const useSource = queryInfo && queryInfo.active === true"
-        " && queryInfo.currentWindow === true;"
+        " && (queryInfo.currentWindow === true"
+        " || queryInfo.lastFocusedWindow === true);"
         "if (!useSource) return originalQuery(queryInfo, callback);"
-        "const result = [source];"
         "if (typeof callback === 'function') {"
-        "queueMicrotask(() => callback(result)); return;"
+        "try {"
+        "return requestSource(originalTab => {"
+        "const result = sourceResult(originalTab);"
+        "queueMicrotask(() => callback(result));"
+        "});"
+        "} catch {"
+        "queueMicrotask(() => callback(sourceResult())); return;"
         "}"
-        "return Promise.resolve(result);"
+        "}"
+        "try {"
+        "return Promise.resolve(requestSourcePromise())"
+        ".then(sourceResult, () => sourceResult());"
+        "} catch { return Promise.resolve(sourceResult()); }"
         "};"
         "try {"
         "Object.defineProperty(tabs, 'query', {"

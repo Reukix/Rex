@@ -349,8 +349,8 @@ private struct BrowserToolbar: View {
                 isDisabled: store.navigationStates[store.selectedTabID]?.canGoForward != true
             ) { store.goForward() }
             LiquidGlassIconButton(
-                systemName: store.currentTab?.isLoading == true ? "xmark" : "arrow.clockwise",
-                label: store.currentTab?.isLoading == true ? "停止加载" : "重新加载"
+                systemName: store.isCurrentPageLoading ? "xmark" : "arrow.clockwise",
+                label: store.isCurrentPageLoading ? "停止加载" : "重新加载"
             ) { store.reloadOrStop() }
 
             HStack(spacing: 8) {
@@ -377,7 +377,7 @@ private struct BrowserToolbar: View {
                     .onSubmit { store.submitAddress() }
                     .accessibilityLabel("地址和搜索")
 
-                if store.currentTab?.isLoading == true {
+                if store.isCurrentPageLoading {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -673,133 +673,251 @@ private struct RexExtensionsListPanel: View {
 
     static func preferredSize(for packages: [BrowserExtensionPackage]) -> CGSize {
         guard !packages.isEmpty else {
-            return CGSize(width: 390, height: 350)
+            return CGSize(width: 360, height: 320)
         }
         return CGSize(
-            width: 390,
-            height: min(560, max(246, 150 + CGFloat(packages.count) * 56))
+            width: 360,
+            height: min(520, max(252, 184 + CGFloat(packages.count) * 68))
         )
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("扩展程序")
-                    .font(.system(size: 21, weight: .bold))
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.accentColor.opacity(0.95),
+                                        Color.indigo.opacity(0.78)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                        Image(systemName: "puzzlepiece.extension.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .frame(width: 40, height: 40)
+                    .shadow(color: Color.accentColor.opacity(0.24), radius: 8, y: 3)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Rex 扩展")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Text(packages.isEmpty ? "打造你的浏览体验" : "\(packages.count) 个扩展已就绪")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.66))
+                    }
+
+                    Spacer()
+
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .frame(width: 30, height: 30)
+                            .background(Color.white.opacity(0.1), in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("关闭")
+                    .accessibilityLabel("关闭扩展程序")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 15)
+                .padding(.bottom, 13)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(height: 0.75)
+
+                if packages.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "sparkles.rectangle.stack")
+                            .font(.system(size: 30, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 64, height: 64)
+                            .background(Color.accentColor.opacity(0.12), in: Circle())
+                        Text("还没有扩展")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Text("从扩展管理中安装工具，让 Rex 更符合你的使用方式。")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 230)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.vertical, 18)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("快捷访问")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.72))
+                            Spacer()
+                            Text("点击打开扩展面板")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.4))
+                        }
+                        .padding(.horizontal, 3)
+
+                        ScrollView {
+                            LazyVStack(spacing: 7) {
+                                ForEach(packages) { package in
+                                    RexExtensionListRow(
+                                        package: package,
+                                        onSelect: { onSelect(package) },
+                                        onOpenSettings: {
+                                            onOpenExtensionPage(package)
+                                        },
+                                        onManage: onManage
+                                    )
+                                }
+                            }
+                            .padding(.vertical, 1)
+                        }
+                        .scrollIndicators(.hidden)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 11)
+                    .padding(.bottom, 10)
+                }
+
+                Button(action: onManage) {
+                    HStack(spacing: 11) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 30, height: 30)
+                            .background(Color.accentColor.opacity(0.12), in: Circle())
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("扩展管理")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                            Text("安装、停用与更新")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.56))
+                        }
+
+                        Spacer()
+
+                        Text("\(packages.count)")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Color.accentColor)
+                            .monospacedDigit()
+                            .padding(.horizontal, 8)
+                            .frame(height: 22)
+                            .background(Color.accentColor.opacity(0.1), in: Capsule())
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.46))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 48)
+                    .background(
+                        Color.white.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.75)
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .help("关闭")
-                .accessibilityLabel("关闭扩展程序")
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 16)
-            .padding(.bottom, 14)
-
-            Divider()
-
-            if packages.isEmpty {
-                ContentUnavailableView(
-                    "尚未安装扩展",
-                    systemImage: "puzzlepiece.extension",
-                    description: Text("可在扩展管理中安装受 Rex 支持的扩展。")
+        .background {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "17233F"),
+                            Color(hex: "202A52"),
+                            Color(hex: "291F4D")
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
-                .frame(height: 250)
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("已安装")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(packages) { package in
-                                RexExtensionListRow(
-                                    package: package,
-                                    onSelect: { onSelect(package) },
-                                    onOpenSettings: {
-                                        onOpenExtensionPage(package)
-                                    },
-                                    onManage: onManage
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 8)
-                    }
-                    .frame(maxHeight: 430)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color(hex: "4F7DFF").opacity(0.2),
+                                    .clear
+                                ],
+                                center: .topLeading,
+                                startRadius: 0,
+                                endRadius: 280
+                            )
+                        )
                 }
-            }
-
-            Divider()
-
-            Button(action: onManage) {
-                HStack(spacing: 12) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 24)
-                    Text("管理扩展程序")
-                        .font(.system(size: 13, weight: .medium))
-                    Spacer()
-                    Text("\(packages.count)")
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
                 }
-                .padding(.horizontal, 18)
-                .frame(height: 48)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+                .shadow(color: Color.black.opacity(0.34), radius: 22, y: 10)
         }
-        .frame(width: 390)
-        .frame(minHeight: packages.isEmpty ? 350 : 190)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(width: 360)
+        .frame(minHeight: packages.isEmpty ? 320 : 252)
     }
 }
 
 private struct RexExtensionListRow: View {
+    @State private var isHovered = false
+
     let package: BrowserExtensionPackage
     let onSelect: () -> Void
     let onOpenSettings: () -> Void
     let onManage: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Button(action: onSelect) {
-                HStack(spacing: 12) {
-                    RexExtensionPanelIcon(package: package, size: 34)
+                HStack(spacing: 11) {
+                    RexExtensionPanelIcon(package: package, size: 38)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(package.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.primary)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
                             .lineLimit(1)
 
-                        Text(packageStatus)
-                            .font(.system(size: 10))
-                            .foregroundStyle(package.isEnabled ? Color.secondary : Color.orange)
-                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(statusColor)
+                                .frame(width: 6, height: 6)
+                            Text(packageStatus)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(
+                                    package.isEnabled ? Color.white.opacity(0.62) : Color.orange
+                                )
+                                .lineLimit(1)
+                        }
                     }
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 6)
 
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(
+                            isHovered ? Color(hex: "8FB0FF") : Color.white.opacity(0.58)
+                        )
+                        .frame(width: 24, height: 24)
+                        .background(Color.white.opacity(0.08), in: Circle())
                 }
                 .padding(.leading, 10)
-                .frame(maxWidth: .infinity, minHeight: 54)
+                .frame(maxWidth: .infinity, minHeight: 59)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -807,7 +925,7 @@ private struct RexExtensionListRow: View {
 
             Menu {
                 Button(action: onSelect) {
-                    Label("打开控制面板", systemImage: "rectangle.on.rectangle")
+                    Label("打开扩展面板", systemImage: "rectangle.on.rectangle")
                 }
                 Button(action: onOpenSettings) {
                     Label("扩展设置", systemImage: "gearshape")
@@ -817,18 +935,45 @@ private struct RexExtensionListRow: View {
                     Label("管理扩展程序", systemImage: "puzzlepiece.extension")
                 }
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .help("\(package.name) 的更多操作")
             .accessibilityLabel("\(package.name) 的更多操作")
         }
-        .padding(.trailing, 4)
-        .background(Color.primary.opacity(0.001), in: RoundedRectangle(cornerRadius: 7))
+        .padding(.trailing, 7)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    isHovered
+                        ? Color(hex: "557EFF").opacity(0.22)
+                        : Color.white.opacity(0.07)
+                )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    isHovered
+                        ? Color(hex: "8FB0FF").opacity(0.48)
+                        : Color.white.opacity(0.11),
+                    lineWidth: 0.75
+                )
+        }
+        .scaleEffect(isHovered ? 1.006 : 1)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private var statusColor: Color {
+        if !package.isEnabled { return .orange }
+        if package.appleNativeConnectionLimitation != nil { return .orange }
+        if package.runtimeStatus != .ready { return .yellow }
+        return .green
     }
 
     private var packageStatus: String {
@@ -837,6 +982,9 @@ private struct RexExtensionListRow: View {
         }
         if package.runtimeStatus != .ready {
             return package.runtimeStatus.displayName
+        }
+        if package.appleNativeConnectionLimitation != nil {
+            return "Apple 原生连接受限"
         }
         return package.permissionSummary
     }
@@ -852,6 +1000,7 @@ private struct RexRuntimeExtensionActionPanel: View {
 
     static func preferredSize(for package: BrowserExtensionPackage) -> CGSize {
         guard package.canUseRuntimeResources,
+              package.appleNativeConnectionLimitation == nil,
               package.actionPopupURL != nil else {
             return CGSize(width: 390, height: 260)
         }
@@ -860,6 +1009,7 @@ private struct RexRuntimeExtensionActionPanel: View {
 
     private var canRunPopupPage: Bool {
         guard package.canUseRuntimeResources,
+              package.appleNativeConnectionLimitation == nil,
               package.actionPopupURL != nil else { return false }
         return true
     }
@@ -939,6 +1089,9 @@ private struct RexRuntimeExtensionActionPanel: View {
         if package.runtimeStatus != .ready {
             return package.runtimeStatus.displayName
         }
+        if package.appleNativeConnectionLimitation != nil {
+            return "iCloud Passwords 原生连接受限"
+        }
         if package.runtimeID.map(RexExtensionResourceURL.isValidRuntimeID) != true {
             return "扩展尚未接入运行时"
         }
@@ -955,6 +1108,9 @@ private struct RexRuntimeExtensionActionPanel: View {
         if package.runtimeStatus != .ready {
             return package.statusDetail ?? "扩展运行时尚未准备完成。"
         }
+        if let limitation = package.appleNativeConnectionLimitation {
+            return limitation
+        }
         if package.runtimeID.map(RexExtensionResourceURL.isValidRuntimeID) != true {
             return "扩展缺少有效的 Chromium 运行时标识。"
         }
@@ -969,6 +1125,7 @@ private struct RexRuntimeExtensionActionPanel: View {
             return "pause.circle"
         }
         if package.runtimeStatus != .ready ||
+            package.appleNativeConnectionLimitation != nil ||
             package.runtimeID.map(RexExtensionResourceURL.isValidRuntimeID) != true {
             return "exclamationmark.triangle"
         }
@@ -990,6 +1147,7 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
     private weak var parentWindow: NSWindow?
     private var panel: NSPanel?
     private var hostingController: NSHostingController<AnyView>?
+    private var outsideMouseMonitor: Any?
     private var parentWindowObservers: [NSObjectProtocol] = []
     private var preferredSizesByPackageID: [String: CGSize] = [:]
     private var revealFallback: DispatchWorkItem?
@@ -1012,7 +1170,9 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         )
         .environmentObject(store)
         .frame(width: size.width, height: size.height)
-        present(rootView: AnyView(rootView), size: size, revealAfterLayout: false)
+        if !present(rootView: AnyView(rootView), size: size, revealAfterLayout: false) {
+            store.lastError = "扩展面板暂时无法在当前窗口中打开。"
+        }
     }
 
     func present(
@@ -1023,6 +1183,7 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         onOpenOptions: @escaping () -> Void
     ) {
         let isRuntimePopup = package.canUseRuntimeResources
+            && package.appleNativeConnectionLimitation == nil
             && package.actionPopupURL != nil
         let initialSize = preferredSizesByPackageID[package.id]
             ?? RexRuntimeExtensionActionPanel.preferredSize(for: package)
@@ -1047,12 +1208,14 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
             }
         )
         .environmentObject(store)
-        present(
+        if !present(
             rootView: AnyView(rootView),
             size: initialSize,
             revealAfterLayout: isRuntimePopup,
             sessionID: expectedSessionID
-        )
+        ) {
+            store.lastError = "扩展面板暂时无法在当前窗口中打开。"
+        }
     }
 
     private func present(
@@ -1060,10 +1223,10 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         size: CGSize,
         revealAfterLayout: Bool,
         sessionID preparedSessionID: UUID = UUID()
-    ) {
+    ) -> Bool {
         dismiss()
         guard let anchorView, let parentWindow = anchorView.window else {
-            return
+            return false
         }
 
         let panel = RexExtensionPanel(
@@ -1073,7 +1236,9 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.becomesKeyOnlyIfNeeded = false
+        // Palette buttons remain usable without taking key status from the
+        // Chromium child window. Text inputs can still request key status.
+        panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
@@ -1092,14 +1257,23 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         self.panel = panel
         self.hostingController = hostingController
         sessionID = preparedSessionID
-        isPresented = true
 
         observeParentWindow(parentWindow)
+        installOutsideMouseMonitor()
         positionPanel(size: size)
-        panel.makeKeyAndOrderFront(nil)
+#if REX_CEF
+        guard RexOrderAuxiliaryWindowFrontSafely(panel) else {
+            dismiss()
+            return false
+        }
+#else
+        panel.orderFront(nil)
+#endif
+        isPresented = true
         if revealAfterLayout {
             scheduleRevealFallback(for: panel)
         }
+        return true
     }
 
     func dismiss() {
@@ -1113,6 +1287,7 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         sessionID = nil
         revealFallback?.cancel()
         revealFallback = nil
+        removeOutsideMouseMonitor()
         guard let panel else {
             removeParentWindowObservers()
             hostingController = nil
@@ -1135,6 +1310,7 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
         guard notification.object as? NSPanel === panel else { return }
         revealFallback?.cancel()
         revealFallback = nil
+        removeOutsideMouseMonitor()
         removeParentWindowObservers()
         panel?.contentViewController = nil
         hostingController = nil
@@ -1249,6 +1425,29 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
                 }
             }
         )
+    }
+
+    private func installOutsideMouseMonitor() {
+        removeOutsideMouseMonitor()
+        outsideMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            guard let self else { return event }
+            MainActor.assumeIsolated {
+                guard let panel = self.panel, event.window !== panel else { return }
+                DispatchQueue.main.async { [weak self, weak panel] in
+                    guard let self, self.panel === panel else { return }
+                    self.dismiss()
+                }
+            }
+            return event
+        }
+    }
+
+    private func removeOutsideMouseMonitor() {
+        guard let outsideMouseMonitor else { return }
+        NSEvent.removeMonitor(outsideMouseMonitor)
+        self.outsideMouseMonitor = nil
     }
 
     private func removeParentWindowObservers() {

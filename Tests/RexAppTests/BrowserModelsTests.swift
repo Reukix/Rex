@@ -163,7 +163,7 @@ private func commandsThroughFirstLoad(
     for tabID: UUID,
     from engine: RecordingBrowserEngine
 ) async -> [BrowserCommand] {
-    for _ in 0..<400 {
+    for _ in 0..<1_000 {
         let commands = await engine.recordedCommands()
         if firstLoadURLCommand(for: tabID, in: commands) != nil {
             return commands
@@ -333,6 +333,167 @@ func closingWindowDuringRestoreDoesNotOverwriteSnapshot() async throws {
     let reloadedTabIDs = Set(reloadedSnapshot?.tabs.map(\.id) ?? [])
     #expect(reloadedSnapshot == persistedSnapshot)
     #expect(reloadedTabIDs.isDisjoint(with: placeholderTabIDs))
+}
+
+@Test("Application termination flushes the newest state for every standard window")
+@MainActor
+func applicationTerminationFlushesAllStandardWindowsAndSkipsPrivateWindows() async throws {
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.TerminationFlush.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let firstWindowID = UUID()
+    let secondWindowID = UUID()
+    let privateWindowID = UUID()
+    let firstStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: firstWindowID,
+        preferences: preferences
+    )
+    let secondStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: secondWindowID,
+        preferences: preferences
+    )
+    let privateStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: privateWindowID,
+        profile: .privateWindow(id: privateWindowID),
+        preferences: preferences
+    )
+    let registry = RexActiveWindowSessionRegistry()
+    registry.register(firstStore)
+    registry.register(secondStore)
+    registry.register(privateStore)
+
+    let firstURL = try #require(URL(string: "https://example.org/first-window"))
+    let secondURL = try #require(URL(string: "https://example.org/second-window"))
+    firstStore.addressText = firstURL.absoluteString
+    firstStore.submitAddress()
+    secondStore.addressText = secondURL.absoluteString
+    secondStore.submitAddress()
+    privateStore.addressText = "https://example.org/private-window"
+    privateStore.submitAddress()
+
+    // Do not wait for the ordinary 350 ms debounce: the termination barrier
+    // must persist these exact in-memory URLs immediately.
+    let report = await registry.flushStandardWindowSessionsForApplicationTermination()
+
+    #expect(report.savedWindowIDs == [firstWindowID, secondWindowID])
+    #expect(report.failedWindows.isEmpty)
+    #expect(report.skippedPrivateWindowIDs == [privateWindowID])
+    #expect(try await persistence.load(windowID: firstWindowID)?.tabs
+        .contains(where: { $0.url == firstURL }) == true)
+    #expect(try await persistence.load(windowID: secondWindowID)?.tabs
+        .contains(where: { $0.url == secondURL }) == true)
+    #expect(try await persistence.load(windowID: privateWindowID) == nil)
+
+    registry.unregister(firstStore)
+    registry.unregister(secondStore)
+    registry.unregister(privateStore)
+    firstStore.closeWindow()
+    secondStore.closeWindow()
+    privateStore.closeWindow()
+}
+
+@Test("Application termination waits for startup restoration before replacing its snapshot")
+@MainActor
+func applicationTerminationFlushWaitsForSessionRestoration() async throws {
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.TerminationRestore.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(true)
+    let windowID = UUID()
+    let restoredSnapshot = testSnapshot(windowID: windowID, title: "RestoredBeforeQuit")
+    try await persistence.save(restoredSnapshot)
+    let store = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: windowID,
+        preferences: preferences
+    )
+    let placeholderTabIDs = Set(store.tabs.map(\.id))
+    let registry = RexActiveWindowSessionRegistry()
+    registry.register(store)
+
+    #expect(store.isRestoringSession)
+    let report = await registry.flushStandardWindowSessionsForApplicationTermination()
+    let persisted = try #require(try await persistence.load(windowID: windowID))
+
+    #expect(report.savedWindowIDs == [windowID])
+    #expect(report.failedWindows.isEmpty)
+    #expect(persisted.tabs.first?.title == "RestoredBeforeQuit")
+    #expect(Set(persisted.tabs.map(\.id)).isDisjoint(with: placeholderTabIDs))
+
+    registry.unregister(store)
+    store.closeWindow()
+}
+
+@Test("A failed window write does not block the remaining termination barrier")
+@MainActor
+func applicationTerminationFlushReportsWriteFailure() async throws {
+    let blockedParent = FileManager.default.temporaryDirectory
+        .appending(path: "rex-termination-write-failure-\(UUID().uuidString)")
+    try Data("not a directory".utf8).write(to: blockedParent)
+    defer { try? FileManager.default.removeItem(at: blockedParent) }
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: blockedParent.appending(path: "Browser.sqlite"),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.TerminationWriteFailure.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let failingWindowID = try #require(UUID(
+        uuidString: "00000000-0000-0000-0000-000000000001"
+    ))
+    let savedWindowID = try #require(UUID(
+        uuidString: "00000000-0000-0000-0000-000000000002"
+    ))
+    let failingStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: failingWindowID,
+        preferences: preferences
+    )
+    let workingPersistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let savedStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: workingPersistence,
+        windowID: savedWindowID,
+        preferences: preferences
+    )
+    let registry = RexActiveWindowSessionRegistry()
+    registry.register(failingStore)
+    registry.register(savedStore)
+
+    let report = await registry.flushStandardWindowSessionsForApplicationTermination()
+
+    #expect(report.savedWindowIDs == [savedWindowID])
+    #expect(report.failedWindows[failingWindowID] != nil)
+    #expect(try await workingPersistence.load(windowID: savedWindowID) != nil)
+
+    registry.unregister(failingStore)
+    registry.unregister(savedStore)
+    failingStore.closeWindow()
+    savedStore.closeWindow()
 }
 
 @Test("Closing a secondary window deletes its persisted session after pending saves")
@@ -1733,11 +1894,22 @@ func addressSubmissionLoadsTheRequestedPage() async {
     store.addressText = "example.org/docs"
     store.submitAddress()
 
-    for _ in 0..<20 {
-        if !(await engine.loadURLs().isEmpty) { break }
-        try? await Task.sleep(for: .milliseconds(5))
+    let tabID = store.selectedTabID
+    let commands = await commandsThroughFirstLoad(for: tabID, from: engine)
+    let createIndex = commands.firstIndex { command in
+        guard case let .createPage(commandTabID, _) = command else { return false }
+        return commandTabID == tabID
     }
-    #expect(await engine.loadURLs().last == URL(string: "https://example.org/docs"))
+    let firstPolicy = firstPrivacyPolicyCommand(for: tabID, in: commands)
+    let firstLoad = firstLoadURLCommand(for: tabID, in: commands)
+
+    #expect(createIndex != nil)
+    #expect(firstPolicy != nil)
+    #expect(firstLoad?.url == URL(string: "https://example.org/docs"))
+    if let createIndex, let firstPolicy, let firstLoad {
+        #expect(createIndex < firstPolicy.index)
+        #expect(firstPolicy.index < firstLoad.index)
+    }
     #expect(store.currentTab?.url == URL(string: "https://example.org/docs"))
 }
 
@@ -2558,6 +2730,157 @@ func pendingNavigationIgnoresStaleEvents() async throws {
     #expect(store.currentTab?.url == URL(string: "https://example.org/"))
     #expect(store.currentTab?.title == "Example")
     #expect(store.addressText == "https://example.org/")
+    await engine.finish()
+}
+
+@Test("Pending navigation accepts Chromium redirects and rejects older generations")
+@MainActor
+func pendingNavigationAcceptsChromiumRedirectCompletion() async throws {
+    let engine = ControlledBrowserEngine()
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+        ),
+        profile: .privateWindow()
+    )
+    await engine.waitForSubscriber()
+    let tabID = store.selectedTabID
+    let previousURL = try #require(store.currentTab?.url)
+    let requestedURL = try #require(URL(string: "https://example.org/start"))
+    let redirectedURL = try #require(URL(string: "https://www.example.org/final"))
+
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: previousURL,
+            isLoading: false,
+            loadingProgress: 1,
+            navigationGeneration: 40
+        )
+    ))
+    for _ in 0..<10 { await Task.yield() }
+
+    store.addressText = requestedURL.absoluteString
+    store.submitAddress()
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: previousURL,
+            title: "Old page",
+            isLoading: false,
+            loadingProgress: 1,
+            navigationGeneration: 40
+        )
+    ))
+    await engine.emit(.titleChanged(tabID: tabID, title: "Old page"))
+    for _ in 0..<10 { await Task.yield() }
+
+    #expect(store.currentTab?.url == requestedURL)
+    #expect(store.currentTab?.title == "example.org")
+    #expect(store.addressText == requestedURL.absoluteString)
+
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: nil,
+            isLoading: true,
+            loadingProgress: 0.2,
+            navigationGeneration: 41
+        )
+    ))
+    for _ in 0..<10 { await Task.yield() }
+    #expect(store.isCurrentPageLoading)
+    #expect(store.currentTab?.isLoading == true)
+    #expect(store.currentTab?.url == requestedURL)
+
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: redirectedURL,
+            isLoading: false,
+            loadingProgress: 1,
+            navigationGeneration: 41
+        )
+    ))
+    await engine.emit(.titleChanged(tabID: tabID, title: "Final page"))
+    for _ in 0..<10 { await Task.yield() }
+
+    #expect(store.currentTab?.url == redirectedURL)
+    #expect(store.currentTab?.title == "Final page")
+    #expect(store.addressText == redirectedURL.absoluteString)
+    #expect(!store.isCurrentPageLoading)
+    #expect(store.currentTab?.isLoading == false)
+    #expect(store.navigationStates[tabID]?.isLoading == false)
+
+    store.reloadOrStop()
+    for _ in 0..<100 {
+        if await engine.recordedCommands().contains(.reload(tabID: tabID)) { break }
+        await Task.yield()
+    }
+    let commands = await engine.recordedCommands()
+    #expect(commands.contains(.reload(tabID: tabID)))
+    #expect(!commands.contains(.stop(tabID: tabID)))
+    await engine.finish()
+}
+
+@Test("A new address completes when Chromium remains in the same loading generation")
+@MainActor
+func pendingNavigationAcceptsSameGenerationReplacement() async throws {
+    let engine = ControlledBrowserEngine()
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+        ),
+        profile: .privateWindow()
+    )
+    await engine.waitForSubscriber()
+    let tabID = store.selectedTabID
+    let firstURL = try #require(URL(string: "https://first.example/loading"))
+    let requestedURL = try #require(URL(string: "https://second.example/start"))
+    let redirectedURL = try #require(URL(string: "https://second.example/final"))
+
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: firstURL,
+            title: "First",
+            isLoading: true,
+            loadingProgress: 0.4,
+            navigationGeneration: 40
+        )
+    ))
+    for _ in 0..<10 { await Task.yield() }
+
+    store.addressText = requestedURL.absoluteString
+    store.submitAddress()
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: requestedURL,
+            isLoading: true,
+            loadingProgress: 0.6,
+            navigationGeneration: 40
+        )
+    ))
+    await engine.emit(.navigationChanged(
+        tabID: tabID,
+        state: NavigationState(
+            url: redirectedURL,
+            isLoading: false,
+            loadingProgress: 1,
+            navigationGeneration: 40
+        )
+    ))
+    await engine.emit(.titleChanged(tabID: tabID, title: "Second final"))
+    for _ in 0..<10 { await Task.yield() }
+
+    #expect(store.currentTab?.url == redirectedURL)
+    #expect(store.currentTab?.title == "Second final")
+    #expect(store.addressText == redirectedURL.absoluteString)
+    #expect(!store.isCurrentPageLoading)
+    #expect(store.navigationStates[tabID]?.isLoading == false)
     await engine.finish()
 }
 

@@ -16,7 +16,9 @@ add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" libcef_dll_wrapper)
 add_library(RexChromiumBridge STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexChromiumRuntime.mm"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexChromiumRuntime.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexExtensionReconcilePolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexMessagePumpPolicy.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexNavigationPolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexPrivacyEngine.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexPrivacyEngine.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexThoriumFlags.cpp"
@@ -41,6 +43,25 @@ target_link_libraries(RexChromiumBridge PUBLIC
   "-framework CoreFoundation"
   "-lc++"
 )
+
+enable_testing()
+add_executable(RexNavigationPolicyTests
+  "${CMAKE_CURRENT_SOURCE_DIR}/../Tests/ChromiumBridge/RexNavigationPolicyTests.cpp"
+)
+target_include_directories(RexNavigationPolicyTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge"
+)
+target_compile_features(RexNavigationPolicyTests PRIVATE cxx_std_20)
+add_test(NAME RexNavigationPolicyTests COMMAND RexNavigationPolicyTests)
+
+add_executable(RexExtensionReconcilePolicyTests
+  "${CMAKE_CURRENT_SOURCE_DIR}/../Tests/ChromiumBridge/RexExtensionReconcilePolicyTests.cpp"
+)
+target_include_directories(RexExtensionReconcilePolicyTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge"
+)
+target_compile_features(RexExtensionReconcilePolicyTests PRIVATE cxx_std_20)
+add_test(NAME RexExtensionReconcilePolicyTests COMMAND RexExtensionReconcilePolicyTests)
 
 add_executable(RexCEFHelper MACOSX_BUNDLE
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexHelperMain.mm"

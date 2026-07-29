@@ -4,6 +4,210 @@ import CoreFoundation
 import CryptoKit
 import Foundation
 
+enum BrowserExtensionHostAccess: String, Codable, CaseIterable, Sendable {
+    case onClick = "ON_CLICK"
+    case onSpecificSites = "ON_SPECIFIC_SITES"
+    case onAllSites = "ON_ALL_SITES"
+
+    var displayName: String {
+        switch self {
+        case .onClick: "点击扩展时"
+        case .onSpecificSites: "指定网站"
+        case .onAllSites: "所有网站"
+        }
+    }
+}
+
+enum BrowserExtensionSitePattern {
+    static func normalizedPermissionPattern(from input: String) -> String? {
+        var candidate = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !candidate.isEmpty,
+              candidate.utf8.count <= 8_192,
+              candidate.rangeOfCharacter(from: .controlCharacters) == nil else {
+            return nil
+        }
+
+        let scheme: String
+        if let separator = candidate.range(of: "://") {
+            let requestedScheme = String(candidate[..<separator.lowerBound])
+            guard ["http", "https", "*"].contains(requestedScheme) else { return nil }
+            scheme = "\(requestedScheme)://"
+            candidate = String(candidate[separator.upperBound...])
+        } else {
+            scheme = "*://"
+        }
+
+        if candidate.hasSuffix("/*") {
+            candidate.removeLast(2)
+        } else if candidate.hasSuffix("/") {
+            candidate.removeLast()
+        }
+        guard !candidate.contains("/") else { return nil }
+
+        let includesSubdomains = candidate.hasPrefix("*.")
+        if includesSubdomains { candidate.removeFirst(2) }
+        guard candidate == "localhost" || isValidDNSHostname(candidate) else { return nil }
+        return "\(scheme)\(includesSubdomains ? "*." : "")\(candidate)/*"
+    }
+
+    private static func isValidDNSHostname(_ hostname: String) -> Bool {
+        guard hostname.utf8.count <= 253 else { return false }
+        let labels = hostname.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2 else { return false }
+
+        for label in labels {
+            guard !label.isEmpty, label.utf8.count <= 63,
+                  label.first?.isASCIILetterOrNumber == true,
+                  label.last?.isASCIILetterOrNumber == true,
+                  label.allSatisfy({
+                      $0.isASCIILetterOrNumber || $0 == "-"
+                  }) else {
+                return false
+            }
+        }
+
+        if labels.count == 4,
+           labels.allSatisfy({ $0.allSatisfy(\.isNumber) }) {
+            return labels.allSatisfy { label in
+                guard let component = Int(label) else { return false }
+                return component <= 255
+            }
+        }
+        return true
+    }
+}
+
+private extension Character {
+    var isASCIILetterOrNumber: Bool {
+        guard unicodeScalars.count == 1, let value = unicodeScalars.first?.value else {
+            return false
+        }
+        return (48...57).contains(value) || (97...122).contains(value)
+    }
+}
+
+struct BrowserExtensionSitePermissionUpdate: Equatable, Sendable {
+    let host: String
+    let isGranted: Bool
+
+    init?(host: String, isGranted: Bool) {
+        guard BrowserExtensionSitePattern.normalizedPermissionPattern(from: host) == host else {
+            return nil
+        }
+        self.host = host
+        self.isGranted = isGranted
+    }
+}
+
+struct BrowserExtensionRuntimeConfiguration: Equatable, Sendable {
+    struct Site: Equatable, Sendable, Identifiable {
+        let host: String
+        let isGranted: Bool
+
+        var id: String { host }
+    }
+
+    let extensionID: String
+    let isEnabled: Bool
+    let userMayModify: Bool
+    let hostAccess: BrowserExtensionHostAccess?
+    let hasAllHosts: Bool
+    let sites: [Site]
+    let userScriptsAvailable: Bool
+    let userScriptsAllowed: Bool
+    let fileAccessAvailable: Bool
+    let fileAccessAllowed: Bool
+    let incognitoAccessAvailable: Bool
+    let incognitoAccessAllowed: Bool
+
+    init?(_ payload: [String: Any]) {
+        guard let extensionID = payload["extensionID"] as? String,
+              RexExtensionResourceURL.isValidRuntimeID(extensionID),
+              let isEnabled = payload["isEnabled"] as? Bool,
+              let userMayModify = payload["userMayModify"] as? Bool,
+              let userScriptsAvailable = payload["userScriptsAvailable"] as? Bool,
+              let userScriptsAllowed = payload["userScriptsAllowed"] as? Bool,
+              let fileAccessAvailable = payload["fileAccessAvailable"] as? Bool,
+              let fileAccessAllowed = payload["fileAccessAllowed"] as? Bool,
+              let incognitoAccessAvailable = payload["incognitoAccessAvailable"] as? Bool,
+              let incognitoAccessAllowed = payload["incognitoAccessAllowed"] as? Bool
+        else {
+            return nil
+        }
+
+        let rawHostAccess = payload["hostAccess"] as? String
+        let hostAccess = rawHostAccess.flatMap(BrowserExtensionHostAccess.init(rawValue:))
+        guard rawHostAccess == nil || hostAccess != nil else { return nil }
+        let hasAllHosts: Bool
+        let rawSites: [[String: Any]]
+        if hostAccess != nil {
+            guard let reportedHasAllHosts = payload["hasAllHosts"] as? Bool,
+                  let reportedSites = payload["hosts"] as? [[String: Any]] else {
+                return nil
+            }
+            hasAllHosts = reportedHasAllHosts
+            rawSites = reportedSites
+        } else {
+            guard payload["hasAllHosts"] == nil, payload["hosts"] == nil else { return nil }
+            hasAllHosts = false
+            rawSites = []
+        }
+        let sites = rawSites.compactMap { value -> Site? in
+            guard let host = value["host"] as? String,
+                  !host.isEmpty,
+                  host.utf8.count <= 8_192,
+                  let isGranted = value["granted"] as? Bool else {
+                return nil
+            }
+            return Site(host: host, isGranted: isGranted)
+        }
+        guard sites.count == rawSites.count, sites.count <= 10_000 else { return nil }
+
+        self.extensionID = extensionID
+        self.isEnabled = isEnabled
+        self.userMayModify = userMayModify
+        self.hostAccess = hostAccess
+        self.hasAllHosts = hasAllHosts
+        self.sites = sites.sorted { $0.host.localizedStandardCompare($1.host) == .orderedAscending }
+        self.userScriptsAvailable = userScriptsAvailable
+        self.userScriptsAllowed = userScriptsAllowed
+        self.fileAccessAvailable = fileAccessAvailable
+        self.fileAccessAllowed = fileAccessAllowed
+        self.incognitoAccessAvailable = incognitoAccessAvailable
+        self.incognitoAccessAllowed = incognitoAccessAllowed
+    }
+}
+
+struct BrowserExtensionRuntimeConfigurationUpdate: Equatable, Sendable {
+    var hostAccess: BrowserExtensionHostAccess?
+    var sitePermission: BrowserExtensionSitePermissionUpdate?
+    var userScriptsAccess: Bool?
+    var fileAccess: Bool?
+    var incognitoAccess: Bool?
+
+    init(
+        hostAccess: BrowserExtensionHostAccess? = nil,
+        sitePermission: BrowserExtensionSitePermissionUpdate? = nil,
+        userScriptsAccess: Bool? = nil,
+        fileAccess: Bool? = nil,
+        incognitoAccess: Bool? = nil
+    ) {
+        self.hostAccess = hostAccess
+        self.sitePermission = sitePermission
+        self.userScriptsAccess = userScriptsAccess
+        self.fileAccess = fileAccess
+        self.incognitoAccess = incognitoAccess
+    }
+
+    var isEmpty: Bool {
+        hostAccess == nil
+            && sitePermission == nil
+            && userScriptsAccess == nil
+            && fileAccess == nil
+            && incognitoAccess == nil
+    }
+}
+
 struct BrowserExtensionRuntimeCapabilities: Equatable, Sendable {
     static let current = BrowserExtensionRuntimeCapabilities(
         supportsChromeWebStoreInstall: true,
@@ -12,7 +216,7 @@ struct BrowserExtensionRuntimeCapabilities: Equatable, Sendable {
         supportsManifestV3Execution: true,
         supportsExtensionOwnedPages: true,
         supportsNativeExtensionSurfaces: false,
-        supportsChromeTabContext: false,
+        supportsChromeTabContext: true,
         supportsExactDomainDNR: false
     )
 
@@ -26,11 +230,15 @@ struct BrowserExtensionRuntimeCapabilities: Equatable, Sendable {
     let supportsExactDomainDNR: Bool
 
     var limitationText: String {
-        "扩展包内页面由 Chromium 运行；安装、启停、更新与移除会立即同步。原生 action 与活动标签上下文暂不支持。"
+        "扩展包内页面由 Chromium 运行；安装、启停、更新与移除会立即同步。静态 popup 可使用真实活动标签上下文，但完整 activeTab 与原生 action 尚未支持。"
     }
 }
 
 struct BrowserExtensionPackage: Identifiable, Codable, Hashable, Sendable {
+    static let iCloudPasswordsExtensionID = "pejdijmoenmkgeppbflobdenhhabjlaj"
+    static let iCloudPasswordsNativeConnectionLimitation =
+        "扩展包已加载，但 iCloud Passwords 原生连接受 Apple 授权、Developer ID 和 native host 限制。"
+
     let id: String
     var name: String
     var version: String
@@ -60,6 +268,13 @@ struct BrowserExtensionPackage: Identifiable, Codable, Hashable, Sendable {
 
     var resolvedInstallationSource: InstallationSource {
         installationSource ?? .localUnpacked
+    }
+
+    var appleNativeConnectionLimitation: String? {
+        let identifiers = [runtimeID, storeID]
+            .compactMap { $0?.lowercased() }
+        guard identifiers.contains(Self.iCloudPasswordsExtensionID) else { return nil }
+        return Self.iCloudPasswordsNativeConnectionLimitation
     }
 
     enum RuntimeStatus: String, Codable, Sendable, CaseIterable {
@@ -142,6 +357,7 @@ final class BrowserExtensionsStore: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var catalogInstallStates: [String: BrowserExtensionCatalogInstallState] = [:]
     @Published private(set) var isRuntimeMutationInProgress = false
+    @Published private(set) var runtimeConfigurationRevision: UInt64 = 0
 
     let runtimeCapabilities = BrowserExtensionRuntimeCapabilities.current
 
@@ -265,6 +481,11 @@ final class BrowserExtensionsStore: ObservableObject {
         return true
     }
 
+    func announceRuntimeConfigurationChange(for runtimeID: String) {
+        guard RexExtensionResourceURL.isValidRuntimeID(runtimeID) else { return }
+        runtimeConfigurationRevision &+= 1
+    }
+
     func finishInitialRuntimeSync(succeeded: Bool) {
         if !succeeded {
             initialRuntimeSyncClaimed = false
@@ -307,6 +528,21 @@ final class BrowserExtensionsStore: ObservableObject {
         extensions.compactMap { package in
             guard package.isEnabled,
                   package.runtimeStatus == .ready || package.runtimeStatus == .pendingRuntime else {
+                return nil
+            }
+            return package.path.path
+        }
+    }
+
+    /// Every valid package owned by Rex, including packages disabled by the user.
+    /// Keeping this separate from `nativeRuleExtensionPaths` lets Chromium retain
+    /// extension storage and preferences while execution is disabled.
+    var managedRuntimeExtensionPaths: [String] {
+        extensions.compactMap { package in
+            guard package.removalRequestedAt == nil,
+                  package.runtimeStatus == .ready
+                    || package.runtimeStatus == .pendingRuntime
+                    || package.runtimeStatus == .disabled else {
                 return nil
             }
             return package.path.path

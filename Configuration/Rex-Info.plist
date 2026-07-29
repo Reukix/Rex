@@ -22,6 +22,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Rex 仅在您允许的网站请求时使用蓝牙连接安全密钥或附近设备。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Rex 仅在您允许的网站请求时使用摄像头。</string>
 	<key>NSMicrophoneUsageDescription</key>

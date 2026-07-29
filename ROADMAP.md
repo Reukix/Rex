@@ -1,6 +1,6 @@
 # Rex 路线图
 
-最后更新：2026-07-28
+最后更新：2026-07-30
 
 ## 已完成 — v0.1.0-alpha.1
 
@@ -67,6 +67,15 @@
 - ✅ 仅保留 CEF 150 同版本 Chromium DevTools 前端与 Swift 液态玻璃停靠宿主。
 - ✅ 功能层已移除；仅保留 Thorium 性能层与 Chrome 风格 DevTools。
 - ✅ 完整 Chromium 包 v0.6.0-beta.1 build 601（arm64 Debug ZIP）。
+
+
+## 已完成 — v0.7.0-beta.1
+
+- ✅ EasyList 网络规则引擎：内置 EasyList / EasyPrivacy / EasyList China，支持例外规则、domain/类型/第三方约束与 $document 整页豁免。
+- ✅ 设置「启用 EasyList 规则」开关，运行时即时生效；拦截统计回流隐私盾牌。
+- ✅ 性能层 rex-thorium-hybrid-v1.3：自适应 raster 线程、Metal ANGLE、低内存备用渲染进程策略、指标监视器降频采样。
+- ✅ 站点信息弹窗内证书 / 网站权限钻取详情页（证书链、PEM、权限修改）。
+- ✅ SwiftUI 打磨：悬停态、浅色模式自适应描边、稳定 favicon 后备色、统一弹窗宽度。
 
 ## 已完成 — v0.8.0-beta.1
 
@@ -135,23 +144,34 @@
 - ✅ MV3 探针忽略隐藏 `about:blank` 扩展上下文，并以不刷新、不重复导航的首次文档作为冷启动验收对象。
 - ✅ 应用与打包版本推进到 `0.9.4 / 940`。
 
-## 已完成 — v0.9.5（build 950）
+## 已完成 — v0.9.5（build 952）
 
 - ✅ 隐私盾牌复用 Safari 分支的按网站策略方式：profile/host 唯一保存，保护开关与级别同步所有同站标签，切换网站不污染空间默认值。
-- ✅ 静态扩展 popup 获得最近来源 HTTP(S) 标签的 active/currentWindow 查询上下文，uBlock Origin Lite 等依赖当前网站的面板设置可写入真实站点。
+- ✅ 静态扩展 popup 获得最近来源 HTTP(S) 页面的 URL/标题查询上下文；这是 Rex 提供的受控 `active/currentWindow` 元数据，不等同于 Chromium 真实 tab ID、`activeTab` 授权或站点脚本访问。
 - ✅ 工具栏扩展列表与 popup 改为独立 AppKit 浮窗，移除 CEF 远程视图上 SwiftUI `.popover` / `addChildWindow` 的崩溃路径。
-- ✅ 版本推进到 `0.9.5 / 950`；Swift、CEF、Xcode Release 与安装包验证记录见发布说明。
+- ✅ 版本推进到 `0.9.5 / 952`；Swift、CEF、Xcode Release 与安装包验证记录见发布说明。
 
-## 已完成 — v0.7.0-beta.1
+## 历史基线 — v0.9.6（build 962）
 
-- ✅ EasyList 网络规则引擎：内置 EasyList / EasyPrivacy / EasyList China，支持例外规则、domain/类型/第三方约束与 $document 整页豁免。
-- ✅ 设置「启用 EasyList 规则」开关，运行时即时生效；拦截统计回流隐私盾牌。
-- ✅ 性能层 rex-thorium-hybrid-v1.3：自适应 raster 线程、Metal ANGLE、低内存备用渲染进程策略、指标监视器降频采样。
-- ✅ 站点信息弹窗内证书 / 网站权限钻取详情页（证书链、PEM、权限修改）。
-- ✅ SwiftUI 打磨：悬停态、浅色模式自适应描边、稳定 favicon 后备色、统一弹窗宽度。
+- ✅ 普通 HTTP(S) 页面进入 Chromium 扩展运行时主链，扩展获得真实 tab/frame/document identity；扩展能力仍按 API 和样本分别记账。
+- ✅ 扩展持久安装、generation 对账、导航屏障和失败放行形成 build 962 历史基线；产物数据只保留在 v0.9.6 发布说明中。
+- ✅ iCloud Passwords 明确为平台受限：本地 ad-hoc Rex 不具备 Apple native host 所需的正式签名身份和 managed entitlement。
+
+## 当前基线 — v0.9.7（build 970，本地 Beta）
+
+- ✅ `rex://extensions` 改为 Rex SwiftUI/AppKit 自有管理界面；`chrome://extensions` 仅作为不可见、受控的 `chrome.developerPrivate` API 上下文。
+- ✅ 网站访问使用“点击扩展时”“指定网站”“所有网站”三态；用户脚本与文件网址设置写入 Chromium 后立即读回，UI 只显示权威返回值。
+- ✅ 冷启动复用 Chromium profile 的持久安装记录；回归拒绝重复 `runtime.onInstalled`、Tampermonkey onboarding 和安装成功页，并保持 storage identity。
+- ✅ 停用扩展重新启用时由 Chromium 显式 reload，覆盖禁用期间及跨 Rex 重启的同版本 JS/CSS 更新；原生操作、最终注册状态与事务指纹快照必须同时有效才提交。
+- ✅ 启动屏障释放后仍按标签隐藏临时 `about:blank`，直到真实恢复地址提交；Chromium 地址事件也不再被 SwiftUI surface 回写为同地址二次 reload。
+- ✅ build 970 最终产物为 `Dist/Rex.app`（`343M` / `351160 KiB`）与 `Dist/Rex-v0.9.7-macos-arm64-chromium.zip`（`142,675,732` bytes，`148092 KiB` / `145M`），ZIP SHA-256 为 `a9882360ebe8850bf0bdeb6dc7c586ab80eccde96e26a4fa1f8deee94e3d8280`；未生成 DMG。
+- ⚠️ 当前仍是 ad-hoc 本地 Beta。Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退全部未完成。
 
 ## 进行中 — v0.9.x
 
+- ⏳ **当前最高优先级：扩展兼容矩阵继续收敛。** Rex 管理页路由、Chromium 配置读回和连续冷启动回归已经完成；下一步补齐 Tampermonkey 最小用户脚本端到端注入，并扩大带版本与包哈希的真实扩展样本。
+- ⏳ 将 MV2/MV3、service worker、content script、runtime messaging、storage、DNR、`scripting`/`userScripts`、站点访问、action/current tab、options、native messaging 和其他 Chrome API 分项测试；每项只使用“已验证、部分支持、未通过、未验证、受限”结论。
+- ⏳ iCloud Passwords 的包/权限已加载，且通用真实 tab/frame 消息链路已进入探针；但系统 manifest 只注册在 Chrome 专用目录，Apple helper 的 Parent Launch Constraints 要求获批的浏览器 managed entitlement 或名单内的 Bundle ID + Team ID，当前 ad-hoc Rex 均不满足。未完成 Apple 正式接入前保持受限，不复制/重签 helper 或伪装受支持浏览器。
 - ⏳ 拦截域名目录的在线更新机制。
 - ⚠️ 完整 brave-core + Thorium 源码融合与自建 CEF 发行包。
 - ⚠️ DevTools 左侧、底部与独立窗口停靠模式。
@@ -163,7 +183,12 @@
 - ⏳ 下载校验、危险文件提示和批量清理策略。
 - ⚠️ Chromium 扩展运行时已接入，但不承诺每个 Chrome Web Store 扩展或所有 Chrome API 均兼容，也不提供 Google 账号同步。
 
-## v0.9.5 → v1.0.0
+## v0.9.7 → v1.0.0
 
-- 更新、签名、公证、诊断、无障碍、低电量与兼容性收敛。
-- 安全审计、恢复/回退演练和稳定发布。
+- **v0.9.7 build 970：** Rex 扩展管理 UI、Chromium 权威配置读回与冷启动恢复的本地 Beta 基线；正式分发工作包仍未完成。
+- **v0.9.7 正式分发门禁：** Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退；外部条件不足时保持阻塞，不把 ad-hoc 包改称正式候选。
+- **v0.9.8：** 签名隐私目录更新、PSL、危险下载、隐私落盘语义和安全决策。
+- **v0.9.9：** 文件选择、JavaScript 对话框、全屏、Renderer 恢复、默认浏览器、无障碍、诊断、扩展自动更新与更广样本回归。
+- **v1.0.0：** 功能冻结后的 RC 全矩阵、压力与恢复演练、安全审计和稳定发布。
+
+详细工作包、交付物和逐版退出条件见 [v0.9.7 至 v1.0.0 逐版本工作计划](Documentation/VersionPlan.md)。

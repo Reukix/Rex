@@ -125,9 +125,6 @@ void ForceDisablePaintRiskSwitches(CefRefPtr<CefCommandLine> command_line) {
 void ApplyBrowserProcessFlags(CefRefPtr<CefCommandLine> command_line) {
   if (!command_line) return;
 
-  // Baseline from Rex.
-  AppendIfMissing(command_line, "no-proxy-server");
-
   // Thorium-style graphics and compositor throughput on Apple Silicon.
   // Conservative subset: GPU raster + Canvas OOP + network/process policy.
   // Never re-enable zero-copy / RawDraw / native GPU memory buffer compositor.
@@ -136,6 +133,11 @@ void ApplyBrowserProcessFlags(CefRefPtr<CefCommandLine> command_line) {
   MergeCSVSwitch(command_line, "enable-features",
                  "CanvasOopRasterization,ParallelDownloading,"
                  "BackForwardCache,PartitionedCookies");
+  // Rex uses a private DevTools pipe to transact managed extensions, not to
+  // automate page content. Keep Blink from exposing that internal transport as
+  // navigator.webdriver, which otherwise trips anti-bot pages into debug loops.
+  MergeCSVSwitch(command_line, "disable-blink-features",
+                 "AutomationControlled");
   ForceDisablePaintRiskSwitches(command_line);
 
   // Networking / IO responsiveness (Thorium-inspired safe subset).
@@ -177,7 +179,6 @@ void ApplyBrowserProcessFlags(CefRefPtr<CefCommandLine> command_line) {
 
 void ApplyChildProcessFlags(CefRefPtr<CefCommandLine> command_line) {
   if (!command_line) return;
-  AppendIfMissing(command_line, "no-proxy-server");
   AppendIfMissing(command_line, "enable-gpu-rasterization");
   AppendIfMissing(command_line, "canvas-oop-rasterization");
   AppendIfMissing(command_line, "use-angle", "metal");

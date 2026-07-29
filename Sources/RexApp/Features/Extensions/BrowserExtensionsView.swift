@@ -2,6 +2,11 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum BrowserExtensionsPresentation: Equatable {
+    case sheet
+    case page
+}
+
 struct BrowserExtensionsView: View {
     private enum Section: String, CaseIterable, Identifiable {
         case discover
@@ -20,6 +25,8 @@ struct BrowserExtensionsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: BrowserStore
     @ObservedObject private var extensionsStore = BrowserExtensionsStore.shared
+    let presentation: BrowserExtensionsPresentation
+    let initialRuntimeID: String?
     @State private var selectedSection: Section = .discover
     @State private var selectedFilter: BrowserExtensionCatalogFilter = .recommended
     @State private var searchText = ""
@@ -27,9 +34,18 @@ struct BrowserExtensionsView: View {
     @State private var presentedError: String?
     @State private var isImporting = false
     @State private var selectedCatalogItem: BrowserExtensionCatalogItem?
+    @State private var selectedInstalledPackage: BrowserExtensionPackage?
     @State private var pendingRemoval: BrowserExtensionPackage?
     @State private var shouldImportAfterClosingDetails = false
     @State private var pendingRuntimePackageIDs = Set<String>()
+
+    init(
+        presentation: BrowserExtensionsPresentation = .sheet,
+        initialRuntimeID: String? = nil
+    ) {
+        self.presentation = presentation
+        self.initialRuntimeID = initialRuntimeID
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -110,9 +126,20 @@ struct BrowserExtensionsView: View {
                 }
             )
         }
+        .sheet(item: $selectedInstalledPackage, onDismiss: {
+            if presentation == .page,
+               RexExtensionsPage.detailRuntimeID(from: store.currentTab?.url) != nil {
+                store.openExtensionsPage()
+            }
+        }) { package in
+            BrowserExtensionRuntimeDetailView(packageID: package.id)
+                .environmentObject(store)
+        }
         .onAppear {
             if let error = extensionsStore.lastError { presentedError = error }
+            presentInitialRuntimeDetails()
         }
+        .onChange(of: initialRuntimeID) { _, _ in presentInitialRuntimeDetails() }
         .onChange(of: extensionsStore.lastError) { _, error in
             if let error { presentedError = error }
         }
@@ -136,6 +163,16 @@ struct BrowserExtensionsView: View {
 
             Spacer(minLength: 12)
 
+            if presentation == .sheet {
+                Button {
+                    store.openExtensionsPage()
+                    dismiss()
+                } label: {
+                    Label("在标签页中打开", systemImage: "rectangle.on.rectangle")
+                }
+                .buttonStyle(.bordered)
+            }
+
             Button {
                 isImporting = true
             } label: {
@@ -143,8 +180,10 @@ struct BrowserExtensionsView: View {
             }
             .buttonStyle(.borderedProminent)
 
-            Button("完成") { dismiss() }
-                .keyboardShortcut(.defaultAction)
+            if presentation == .sheet {
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -406,6 +445,13 @@ struct BrowserExtensionsView: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
 
+                if let limitation = package.appleNativeConnectionLimitation {
+                    Label(limitation, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if [.invalidManifest, .missingFiles].contains(package.runtimeStatus),
                    let detail = package.statusDetail {
                     Label(detail, systemImage: "exclamationmark.triangle.fill")
@@ -468,6 +514,14 @@ struct BrowserExtensionsView: View {
                     }
                     .buttonStyle(.bordered)
                     .help("在 Finder 中显示")
+
+                    Button {
+                        presentDetails(for: package)
+                    } label: {
+                        Label("详情", systemImage: "info.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("查看 Chromium 权限与运行状态")
 
                     Button(role: .destructive) {
                         pendingRemoval = package
@@ -749,6 +803,425 @@ struct BrowserExtensionsView: View {
                 presentedError = error.localizedDescription
             }
         }
+    }
+
+    private func presentInitialRuntimeDetails() {
+        guard let initialRuntimeID else { return }
+        guard let package = extensionsStore.extensions.first(where: {
+            $0.runtimeID == initialRuntimeID
+        }) else {
+            if presentation == .page {
+                store.openExtensionsPage()
+            }
+            return
+        }
+        guard selectedInstalledPackage?.runtimeID != initialRuntimeID else { return }
+        selectedSection = .installed
+        selectedInstalledPackage = package
+    }
+
+    private func presentDetails(for package: BrowserExtensionPackage) {
+        if presentation == .page,
+           let runtimeID = package.runtimeID,
+           let route = RexExtensionsPage.url(forRuntimeID: runtimeID) {
+            store.openExtensionsPage(route)
+        }
+        selectedInstalledPackage = package
+    }
+}
+
+private struct BrowserExtensionRuntimeDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: BrowserStore
+    @ObservedObject private var extensionsStore = BrowserExtensionsStore.shared
+    @State private var siteEditorRequest: BrowserExtensionSiteEditorRequest?
+
+    let packageID: String
+
+    private var package: BrowserExtensionPackage? {
+        extensionsStore.extensions.first { $0.id == packageID }
+    }
+
+    private var configurationRefreshID: String {
+        guard let package else {
+            return "missing:\(extensionsStore.runtimeConfigurationRevision)"
+        }
+        return [
+            package.runtimeID ?? package.id,
+            String(extensionsStore.runtimeConfigurationRevision)
+        ].joined(separator: ":")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            detailHeader
+            Divider()
+            Group {
+                if let package {
+                    detailContent(package)
+                } else {
+                    ContentUnavailableView("扩展已移除", systemImage: "puzzlepiece.extension")
+                }
+            }
+        }
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 480, idealHeight: 620)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .task(id: configurationRefreshID) {
+            guard let package else { return }
+            await store.refreshExtensionRuntimeConfiguration(for: package)
+        }
+        .sheet(item: $siteEditorRequest) { request in
+            BrowserExtensionSiteEditorView { host in
+                guard let package,
+                      let sitePermission = BrowserExtensionSitePermissionUpdate(
+                          host: host,
+                          isGranted: true
+                      ) else { return }
+                update(
+                    package,
+                    BrowserExtensionRuntimeConfigurationUpdate(
+                        hostAccess: request.updatesHostAccess ? .onSpecificSites : nil,
+                        sitePermission: sitePermission
+                    )
+                )
+            }
+        }
+    }
+
+    private var detailHeader: some View {
+        HStack(spacing: 12) {
+            if let package {
+                BrowserExtensionPackageIcon(package: package)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(package.name)
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("v\(package.version) · \(package.manifestLabel)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 12)
+            Button("完成") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private func detailContent(_ package: BrowserExtensionPackage) -> some View {
+        let configuration = store.extensionRuntimeConfiguration(for: package)
+        let isLoading = store.isLoadingExtensionRuntimeConfiguration(for: package)
+        let configurationError = store.extensionRuntimeConfigurationError(for: package)
+
+        Form {
+            Section("运行") {
+                Toggle(
+                    "启用扩展",
+                    isOn: Binding(
+                        get: {
+                            configuration?.isEnabled
+                                ?? extensionsStore.extensions.first(where: { $0.id == package.id })?.isEnabled
+                                ?? package.isEnabled
+                        },
+                        set: { enabled in
+                            Task { @MainActor in
+                                if await store.setExtensionEnabled(enabled, id: package.id),
+                                   let updatedPackage = extensionsStore.extensions.first(where: {
+                                       $0.id == package.id
+                                   }) {
+                                    await store.refreshExtensionRuntimeConfiguration(for: updatedPackage)
+                                }
+                            }
+                        }
+                    )
+                )
+                .disabled(isLoading || [.invalidManifest, .missingFiles].contains(package.runtimeStatus))
+
+                LabeledContent("Chromium 状态") {
+                    Text(
+                        configuration.map { $0.isEnabled ? "已启用" : "已停用" }
+                            ?? package.runtimeStatus.displayName
+                    )
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let configurationError {
+                Section("Chromium 权限") {
+                    Label(configurationError, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button {
+                        Task { await store.refreshExtensionRuntimeConfiguration(for: package) }
+                    } label: {
+                        Label("重新读取", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                }
+            }
+
+            if let configuration {
+                permissionsSection(package, configuration: configuration, isLoading: isLoading)
+            } else if isLoading {
+                Section("Chromium 权限") {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("正在读取…").foregroundStyle(.secondary)
+                    }
+                }
+            } else if configurationError == nil {
+                Section("Chromium 权限") {
+                    ContentUnavailableView(
+                        "无法读取扩展状态",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Chromium 扩展管理器暂不可用。")
+                    )
+                    Button {
+                        Task { await store.refreshExtensionRuntimeConfiguration(for: package) }
+                    } label: {
+                        Label("重试", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+
+            Section("扩展") {
+                if let optionsURL = package.optionsURL {
+                    Button {
+                        store.openExtensionPage(optionsURL, title: package.name)
+                        dismiss()
+                    } label: {
+                        Label("打开扩展选项", systemImage: "gearshape")
+                    }
+                }
+                Button {
+                    extensionsStore.revealInFinder(package.id)
+                } label: {
+                    Label("在 Finder 中显示", systemImage: "folder")
+                }
+                if let runtimeID = package.runtimeID {
+                    LabeledContent("Chromium ID", value: runtimeID)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func permissionsSection(
+        _ package: BrowserExtensionPackage,
+        configuration: BrowserExtensionRuntimeConfiguration,
+        isLoading: Bool
+    ) -> some View {
+        Section("网站访问") {
+            if let currentAccess = configuration.hostAccess {
+                Picker(
+                    "运行范围",
+                    selection: Binding(
+                        get: { currentAccess },
+                        set: { access in
+                            if access == .onSpecificSites,
+                               currentAccess != .onSpecificSites,
+                               configuration.hasAllHosts {
+                                siteEditorRequest = BrowserExtensionSiteEditorRequest(
+                                    updatesHostAccess: true
+                                )
+                            } else {
+                                update(
+                                    package,
+                                    BrowserExtensionRuntimeConfigurationUpdate(
+                                        hostAccess: access
+                                    )
+                                )
+                            }
+                        }
+                    )
+                ) {
+                    ForEach(BrowserExtensionHostAccess.allCases, id: \.self) { access in
+                        Text(access.displayName).tag(access)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(isLoading || !configuration.userMayModify)
+            }
+
+            if configuration.userScriptsAvailable {
+                Toggle(
+                    "允许运行用户脚本",
+                    isOn: Binding(
+                        get: { configuration.userScriptsAllowed },
+                        set: { allowed in
+                            update(
+                                package,
+                                BrowserExtensionRuntimeConfigurationUpdate(
+                                    userScriptsAccess: allowed
+                                )
+                            )
+                        }
+                    )
+                )
+                .disabled(isLoading || !configuration.userMayModify)
+            }
+
+            if configuration.fileAccessAvailable {
+                Toggle(
+                    "允许访问文件网址",
+                    isOn: Binding(
+                        get: { configuration.fileAccessAllowed },
+                        set: { allowed in
+                            update(
+                                package,
+                                BrowserExtensionRuntimeConfigurationUpdate(fileAccess: allowed)
+                            )
+                        }
+                    )
+                )
+                .disabled(isLoading || !configuration.userMayModify)
+            }
+        }
+
+        if configuration.hostAccess == .onSpecificSites,
+           configuration.hasAllHosts {
+            let grantedSites = configuration.sites.filter(\.isGranted)
+            Section("指定网站") {
+                ForEach(grantedSites.prefix(100)) { site in
+                    HStack(spacing: 10) {
+                        Text(site.host)
+                            .textSelection(.enabled)
+                        Spacer(minLength: 12)
+                        Button(role: .destructive) {
+                            setSitePermission(package, host: site.host, granted: false)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("移除此网站")
+                        .accessibilityLabel("移除 \(site.host)")
+                        .disabled(isLoading || !configuration.userMayModify)
+                    }
+                }
+
+                Button {
+                    siteEditorRequest = BrowserExtensionSiteEditorRequest(
+                        updatesHostAccess: false
+                    )
+                } label: {
+                    Label("添加网站", systemImage: "plus")
+                }
+                .disabled(isLoading || !configuration.userMayModify)
+            }
+        } else if !configuration.hasAllHosts,
+                  !configuration.sites.isEmpty {
+            Section("请求的网站") {
+                ForEach(configuration.sites.prefix(100)) { site in
+                    Toggle(
+                        site.host,
+                        isOn: Binding(
+                            get: { site.isGranted },
+                            set: { granted in
+                                setSitePermission(
+                                    package,
+                                    host: site.host,
+                                    granted: granted
+                                )
+                            }
+                        )
+                    )
+                    .disabled(isLoading || !configuration.userMayModify)
+                }
+            }
+        }
+
+        if let limitation = package.appleNativeConnectionLimitation {
+            Section("兼容性") {
+                Label(limitation, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func update(
+        _ package: BrowserExtensionPackage,
+        _ update: BrowserExtensionRuntimeConfigurationUpdate
+    ) {
+        Task { @MainActor in
+            _ = await store.updateExtensionRuntimeConfiguration(
+                for: package,
+                update: update
+            )
+        }
+    }
+
+    private func setSitePermission(
+        _ package: BrowserExtensionPackage,
+        host: String,
+        granted: Bool
+    ) {
+        guard let sitePermission = BrowserExtensionSitePermissionUpdate(
+            host: host,
+            isGranted: granted
+        ) else { return }
+        update(
+            package,
+            BrowserExtensionRuntimeConfigurationUpdate(
+                sitePermission: sitePermission
+            )
+        )
+    }
+}
+
+private struct BrowserExtensionSiteEditorRequest: Identifiable {
+    let id = UUID()
+    let updatesHostAccess: Bool
+}
+
+private struct BrowserExtensionSiteEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isInputFocused: Bool
+    @State private var input = ""
+
+    let onAdd: (String) -> Void
+
+    private var normalizedHost: String? {
+        BrowserExtensionSitePattern.normalizedPermissionPattern(from: input)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("添加网站")
+                .font(.system(size: 16, weight: .semibold))
+
+            TextField("example.com", text: $input)
+                .textFieldStyle(.roundedBorder)
+                .focused($isInputFocused)
+                .onSubmit(addSite)
+
+            if !input.isEmpty, normalizedHost == nil {
+                Label("网站格式无效", systemImage: "exclamationmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("取消", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(action: addSite) {
+                    Label("添加", systemImage: "plus")
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(normalizedHost == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear { isInputFocused = true }
+    }
+
+    private func addSite() {
+        guard let normalizedHost else { return }
+        onAdd(normalizedHost)
+        dismiss()
     }
 }
 

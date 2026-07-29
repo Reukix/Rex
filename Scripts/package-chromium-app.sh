@@ -4,8 +4,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="${1:-0.9.5}"
-BUILD_NUMBER="${2:-950}"
+VERSION="${1:-0.9.7}"
+BUILD_NUMBER="${2:-970}"
 CONFIGURATION="${3:-Release}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
@@ -54,9 +54,12 @@ echo "    build:   $BUILD_NUMBER"
 echo "    config:  $CONFIGURATION"
 
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$DERIVED_DATA/ModuleCache.noindex}"
+export SWIFTPM_MODULECACHE_OVERRIDE="${SWIFTPM_MODULECACHE_OVERRIDE:-$CLANG_MODULE_CACHE_PATH}"
+mkdir -p "$CLANG_MODULE_CACHE_PATH"
 
 echo "==> Validating release metadata"
-swift run RexReleaseValidator \
+swift run --disable-sandbox RexReleaseValidator \
   "$PROJECT_ROOT" \
   "$VALIDATION_DIR" \
   "$VERSION" \
@@ -112,6 +115,16 @@ verify_bundle_version() {
 }
 
 verify_bundle_version "$APP_PATH" "Rex.app"
+
+BLUETOOTH_USAGE_DESCRIPTION="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :NSBluetoothAlwaysUsageDescription' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+if [[ -z "$BLUETOOTH_USAGE_DESCRIPTION" ]]; then
+  echo "Rex.app must declare NSBluetoothAlwaysUsageDescription for Chromium Web Bluetooth and security-key requests." >&2
+  exit 9
+fi
 
 echo "==> Verifying Chromium runtime embedding"
 FRAMEWORKS="$APP_PATH/Contents/Frameworks"
@@ -217,10 +230,17 @@ SHA="$(/usr/bin/shasum -a 256 "$PUBLISH_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{prin
   echo "cef=150.0.14+g7c1aa68+chromium-150.0.7871.129"
   echo "cef_distribution=standard"
   echo "content_blocking=rex-curated-domain-catalog+chromium-extension-dnr"
-  echo "extension_runtime=chromium-browser-target-cdp-over-remote-debugging-pipe"
+  echo "extension_runtime=chromium-native-extension-api+browser-target-cdp-pipe"
+  echo "extension_install=developerPrivate.loadUnpacked-persistent-unpacked"
+  echo "extension_update=developerPrivate.reload"
+  echo "extension_enable_disable=management.setEnabled"
+  echo "extension_query_remove=browser-target-cdp-over-remote-debugging-pipe"
   echo "extension_lifecycle=hot-install-enable-disable-update-remove"
   echo "extension_startup_navigation=extension-ready-generation-barrier"
   echo "extension_page_reload=automatic-after-hot-runtime-change"
+  echo "cef_shutdown=after-nsapplication-run"
+  echo "extension_pipe_shutdown=before-cef-shutdown"
+  echo "extension_pipe_fd_release=after-cef-shutdown"
   echo "rex_password_integration=absent"
   echo "performance_layer=rex-thorium-hybrid-v1.3"
   echo "devtools=cef-chromium-devtools"

@@ -1,24 +1,121 @@
 {
   "releases": [
     {
+      "version": "0.9.7",
+      "build": 970,
+      "date": "2026-07-30",
+      "channel": "beta",
+      "summary": "确立 Rex 可见外壳与 Chromium 权威后端的职责边界：rex://extensions 改由 SwiftUI/AppKit 管理界面承载，扩展站点访问、用户脚本和文件网址权限均写入 Chromium 后读回确认。",
+      "added": [
+        "Rex 自有 rex://extensions 标签页与扩展详情界面，统一承载发现、安装、启停、移除、选项和运行时权限管理",
+        "网站访问三态：点击扩展时、指定网站、所有网站",
+        "允许运行用户脚本与允许访问文件网址开关，以及 Chromium 权威配置的失败、重试和读回状态",
+        "指定网站的原生增删与逐站授权，以及退出前多窗口会话持久化屏障"
+      ],
+      "improved": [
+        "网页渲染、导航生命周期、扩展执行、权限和配置状态继续由 Chromium 实现并作为唯一事实来源，Rex 只呈现和提交用户意图",
+        "每次扩展配置更新都通过隐藏的受控 Chromium 管理上下文调用原生 API，并以随后返回的 Chromium 状态刷新界面，不用 Rex 本地字段假定成功",
+        "具体网站权限调用 Chromium addHostPermission/removeHostPermission；失败后再次读取 Chromium 权威状态并保留原错误",
+        "旧 chrome://extensions 地址在应用边界迁移为 rex://extensions，用户不会看到 Chromium 的标签栏、地址栏或扩展管理 WebUI",
+        "扩展详情展示 Chromium 实际启用状态、运行范围、已请求网站、用户脚本和文件网址访问状态",
+        "静态 popup 只接收来源 tab ID，并通过 Chromium tabs.get 取得按扩展权限裁剪的 Tab；Rex 不注入来源 URL 或标题"
+      ],
+      "changed": [
+        "应用版本更新为 v0.9.7 build 970；这是本地 Beta 基线，不是 Developer ID 正式分发候选",
+        "chrome://extensions 仅保留为不可见、受控的 chrome.developerPrivate API 执行上下文，不再作为用户可见管理页面"
+      ],
+      "fixed": [
+        "用户可见 Chromium 扩展 WebUI 依赖独立原生窗口而产生的坐标、焦点和窗口层级耦合",
+        "扩展管理界面显示的站点访问或用户脚本状态可能只反映 Rex 元数据、无法证明 Chromium 已接受配置的问题",
+        "普通可见标签仍可通过历史记录或扩展导航进入 chrome://extensions 原生 WebUI 的边界漏洞",
+        "Rex 向扩展 popup 注入来源 URL 和标题、可能绕过 Chromium tabs 或 host permission 字段裁剪的问题",
+        "扩展停用期间发生同版本 JS/CSS 更新后，重新启用可能沿用旧运行副本的问题；现在由 Chromium 启用后显式 reload",
+        "原生 reload 报错可能被表面一致的注册表状态吞掉并误提交扩展替换的问题",
+        "扩展启动屏障的临时 about:blank 地址和标题覆盖真实会话 URL、导致后续冷启动恢复空白页的问题",
+        "前一页面仍在加载时提交新地址，Chromium 聚合加载状态未再次切换为 true，导致新地址及最终重定向沿用旧代次并被 Rex 拒绝、导航栏持续显示停止按钮的问题",
+        "CEF 从 applicationWillTerminate 的 terminate 调用栈内关闭时主进程卡死的问题；现在先持久化活动标准窗口、让 NSApplication.run 返回，再排空外部消息泵并关闭 CEF",
+        "退出前 350ms 内的标签、地址或布局变更可能尚未写入 SQLite，直接停止 AppKit 主循环时丢失的问题",
+        "地址栏直接输入合法 chrome://extensions 旧地址未迁移到 Rex 管理页的问题"
+      ],
+      "removed": [
+        "rex://extensions 对用户可见 chrome://extensions WebUI 的直接映射"
+      ],
+      "knownIssues": [
+        "iCloud Passwords 的扩展包可以加载，但 Apple native host 仍因 manifest 注册、Developer ID、Team ID 和 managed entitlement 条件不满足而不可用",
+        "Rex 小型面板不是 Chromium 原生 action popup；完整 activeTab、无静态 popup 的 action.onClicked 和动态 action.setPopup 尚未支持",
+        "已验证的 Chromium 扩展子集不能外推为所有 Chrome Web Store 扩展或全部 Chrome API 均兼容",
+        "Developer ID 同团队签名、Hardened Runtime、公证、Gatekeeper、应用更新和失败回退尚未完成"
+      ],
+      "inProgress": [
+        "补齐 Tampermonkey 最小用户脚本端到端注入，并扩大带版本与包哈希的真实扩展兼容矩阵",
+        "继续推进 Developer ID 正式分发、公证、更新和回退工作包"
+      ]
+    },
+    {
+      "version": "0.9.6",
+      "build": 962,
+      "date": "2026-07-30",
+      "channel": "beta",
+      "summary": "修复 Chromium 原生扩展管理页点击偏移、扩展 popup 活动标签身份、冷启动重复安装事件和重定向后导航栏持续加载；同时明确 iCloud Passwords 的平台限制。",
+      "added": [
+        "rex://extensions 到 chrome://extensions/ 的原生 WebUI 映射与路径、查询参数保留",
+        "MV3 action-popup-context 探针，核对 currentWindow 与 lastFocusedWindow 返回同一真实 tab ID/window ID",
+        "service worker 到指定内容脚本 frame 的 chrome.tabs.sendMessage 往返验证"
+      ],
+      "improved": [
+        "静态 default_popup 的 active/currentWindow 与 active/lastFocusedWindow 查询先读取 Chromium 实际标签，再叠加经过验证的 Rex 来源 URL/标题元数据",
+        "MV3 首文档探针记录 sender.tab 的 tab ID、window ID、frame ID，并验证 popup 与 background worker 查询都找到同一来源标签",
+        "连续两次冷启动必须收到 runtime.onStartup，且不得出现 runtime.onInstalled 或扩展 onboarding 页面；chrome.storage.local 持久 UUID 必须保持不变",
+        "扩展首次安装改用 Chromium 原生 developerPrivate.loadUnpacked，同 ID 更新使用原生 reload，启停使用 management.setEnabled",
+        "导航栏的加载、进度、前进后退和刷新/停止状态直接读取 Chromium 导航事件，BrowserTab 只保留会话兼容镜像",
+        "扩展兼容性文档按已验证、部分支持、未通过、未验证和受限分别记录，不再由核心探针外推全部 Chrome API"
+      ],
+      "changed": [
+        "应用版本更新为 v0.9.6 build 962；本次交付仅生成 Chromium arm64 ZIP，不生成 DMG"
+      ],
+      "fixed": [
+        "Chromium 原生扩展 WebUI 的 Chrome runtime 窗口带有标题栏非客户区，导致绘制位置与鼠标命中坐标产生固定垂直偏移的问题；原生 browser view 现保留在无边框子窗口中并与 Rex 页面宿主对齐",
+        "静态扩展 popup 只获得 URL/标题合成对象而丢失真实 tab ID/window ID，导致依赖当前标签身份和定向消息的扩展无法使用来源页面的问题",
+        "扩展探针只验证内容脚本到 service worker 单向消息，未覆盖 worker 到内容脚本指定 frame 回程的问题",
+        "CDP Extensions.loadUnpacked 记录会被 Chromium 在下次启动清理，使 Tampermonkey 每次启动都重新收到 runtime.onInstalled 并打开安装成功页面的问题；旧记录升级后只迁移一次",
+        "地址提交后用请求 URL 等值过滤全部 Chromium 回调，导致服务器重定向的最终 URL 和 isLoading=false 一起被丢弃、页面已完成但导航栏仍持续刷新的问题"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "iCloud Passwords 当前不可用：系统 com.apple.passwordmanager manifest 只注册在 Chrome 专用目录，Apple helper 的 Parent Launch Constraints 又要求获批的 com.apple.developer.web-browser.public-key-credential entitlement 或名单内的 Bundle ID + Team ID；当前 ad-hoc com.rex.browser 均不满足，仅复制 manifest 无效，也不得复制、重签 helper 或伪装受支持浏览器",
+        "Rex 小型面板仍不是 Chromium 原生 action popup；完整 activeTab 权限授予、无 popup 的 action.onClicked 和动态 action.setPopup 尚未支持",
+        "核心 MV3 探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容",
+        "Developer ID 签名、公证与应用自动更新尚未完成"
+      ],
+      "inProgress": [
+        "继续扩大 Tampermonkey、内容拦截、生产力和开发工具扩展的版本化实机兼容矩阵"
+      ]
+    },
+    {
       "version": "0.9.5",
-      "build": 950,
+      "build": 952,
       "date": "2026-07-28",
       "channel": "beta",
-      "summary": "隐私盾牌改为 Safari 式按网站持久化；扩展小型面板获得来源网页上下文，并移除在 CEF 远程视图上可能崩溃的 SwiftUI Popover 路径。",
+      "summary": "修复部分网站永久白屏与启动导航丢失；隐私盾牌改为 Safari 式按网站持久化，并以高对比度 Rex 面板承载扩展入口。",
       "added": [
         "按 profile 与主机名唯一保存的 SitePrivacyPolicy，保护开关和级别同步到所有已打开的同站标签",
         "静态 default_popup 的来源网页上下文，使 chrome.tabs.query({active:true,currentWindow:true}) 返回用户点击扩展按钮前的 HTTP(S) 标签"
       ],
       "improved": [
         "工具栏扩展列表和扩展自身 popup 统一由独立无边框 AppKit 浮窗承载，并继续跟随工具栏锚点与扩展内容尺寸",
+        "工具栏扩展列表改为深靛蓝高对比度 Rex 面板，强化文字、操作入口、边界与页面背景之间的视觉层级",
         "当前页是 rex-extension:// 时再次点击扩展按钮，继续使用最近有效的来源网页作为小型面板上下文",
-        "网站隐私级别不再改写工作空间默认级别，切换到其他网站时恢复目标网站策略或原默认值"
+        "网站隐私级别不再改写工作空间默认级别，切换到其他网站时恢复目标网站策略或原默认值",
+        "内部扩展管理继续使用无监听端口的 DevTools pipe，但网页恢复标准 Chromium User-Agent 与非自动化环境标记"
       ],
       "changed": [
-        "应用版本更新为 v0.9.5 build 950，User-Agent 产品串更新为 Rex/0.9.5"
+        "应用构建号更新为 v0.9.5 build 952；网页 User-Agent 使用标准 Chromium 产品标识，不再用 Rex 产品串替换 Chrome 版本段"
       ],
       "fixed": [
+        "内部扩展 DevTools pipe 令网页暴露 navigator.webdriver=true，叠加缺少 Chrome 版本段的 User-Agent 后触发反自动化脚本死循环并永久白屏的问题",
+        "CEF 被强制禁用系统代理，导致依赖系统网络代理的网页无法完成主文档加载的问题",
+        "站点隐私策略尚未完成加载时提交地址，loadURL 早于页面创建而被丢弃的问题",
+        "扩展启动对账失败后导航屏障永久停留，所有恢复页和新地址都卡在 about:blank 的问题",
         "在 rex-extension 页面再次点击工具栏扩展按钮时，NSPopover 将子窗口附着到 CEF NSRemoteView 而概率性触发 AppKit 崩溃的问题",
         "uBlock Origin Lite 等扩展 popup 因 active/currentWindow 查询不到来源网页，显示空站点且调整过滤模式不生效的问题",
         "隐私盾牌保护开关和级别只保存在当前标签会话、同一网站新标签和重启后无法复用的问题"

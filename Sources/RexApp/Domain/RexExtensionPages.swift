@@ -1,5 +1,129 @@
 import Foundation
 
+/// Rex-owned extension management route. Chromium's management WebUI is kept
+/// hidden and is used only as the privileged API execution context.
+enum RexExtensionsPage {
+    static let url = URL(string: "rex://extensions")!
+    static let title = "扩展程序"
+
+    static func matches(_ url: URL?) -> Bool {
+        url.flatMap(canonicalURL(from:)) != nil
+    }
+
+    static func canonicalURL(from url: URL) -> URL? {
+        guard let components = validatedComponents(
+            from: url,
+            expectedScheme: "rex",
+            expectedHost: "extensions"
+        ) else {
+            return nil
+        }
+        return components.url
+    }
+
+    static func url(forRuntimeID runtimeID: String) -> URL? {
+        guard RexExtensionResourceURL.isValidRuntimeID(runtimeID) else { return nil }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "id", value: runtimeID)]
+        return components?.url
+    }
+
+    static func detailRuntimeID(from url: URL?) -> String? {
+        guard let url,
+              let components = validatedComponents(
+                  from: url,
+                  expectedScheme: "rex",
+                  expectedHost: "extensions"
+              ) else {
+            return nil
+        }
+        let identifiers = (components.queryItems ?? [])
+            .filter { $0.name == "id" }
+            .compactMap(\.value)
+        guard identifiers.count == 1,
+              let identifier = identifiers.first,
+              RexExtensionResourceURL.isValidRuntimeID(identifier) else {
+            return nil
+        }
+        return identifier
+    }
+
+    static func userVisibleURL(from url: URL) -> URL? {
+        if url.scheme?.lowercased() == "chrome" {
+            guard var components = validatedComponents(
+                from: url,
+                expectedScheme: "chrome",
+                expectedHost: "extensions"
+            ) else {
+                return nil
+            }
+            components.scheme = "rex"
+            return components.url
+        }
+        if url.scheme?.lowercased() == "rex" {
+            return canonicalURL(from: url)
+        }
+        return url
+    }
+
+    private static func validatedComponents(
+        from url: URL,
+        expectedScheme: String,
+        expectedHost: String
+    ) -> URLComponents? {
+        guard var components = URLComponents(
+            url: url,
+            resolvingAgainstBaseURL: false
+        ),
+              components.scheme?.lowercased() == expectedScheme,
+              components.host?.lowercased() == expectedHost,
+              components.percentEncodedHost?.lowercased() == expectedHost,
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              isSafePath(components.percentEncodedPath),
+              isSafeOptionalComponent(components.percentEncodedQuery, maximumUTF8Count: 8_192),
+              isSafeOptionalComponent(components.percentEncodedFragment, maximumUTF8Count: 4_096)
+        else {
+            return nil
+        }
+
+        components.scheme = expectedScheme
+        components.host = expectedHost
+        if components.percentEncodedPath == "/" {
+            components.percentEncodedPath = ""
+        }
+        return components
+    }
+
+    private static func isSafePath(_ value: String) -> Bool {
+        guard value.utf8.count <= 8_192,
+              value.isEmpty || value.hasPrefix("/"),
+              !value.hasPrefix("//"),
+              let decoded = value.removingPercentEncoding,
+              !decoded.contains("\\"),
+              !decoded.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+        else {
+            return false
+        }
+        return decoded
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .allSatisfy { $0 != "." && $0 != ".." }
+    }
+
+    private static func isSafeOptionalComponent(
+        _ value: String?,
+        maximumUTF8Count: Int
+    ) -> Bool {
+        guard let value else { return true }
+        guard value.utf8.count <= maximumUTF8Count,
+              let decoded = value.removingPercentEncoding else {
+            return false
+        }
+        return !decoded.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    }
+}
+
 /// A user-visible Chromium extension resource URL.
 ///
 /// Rex stores and displays `rex-extension://` URLs. The equivalent

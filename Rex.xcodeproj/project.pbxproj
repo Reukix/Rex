@@ -39,6 +39,7 @@
 		D2C96A57D3053E40DFBF2C53 /* PrivacyShieldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F6DC07D472666EAD96CEB5 /* PrivacyShieldView.swift */; };
 		D728A97094EBD5B6AECE820A /* PermissionCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DD5C5C705944BE85DA3522A /* PermissionCenterView.swift */; };
 		E31F31608ED115F47805F22C /* BrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */; };
+		E3EC2DDF3E0EFA03144E6503 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57528450456FD0BBBA1F26E4 /* main.swift */; };
 		F1351477AC92CF0AF0D9AF2D /* BrowserContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD530993E63422B6A33B0018 /* BrowserContentView.swift */; };
 /* End PBXBuildFile section */
 
@@ -55,6 +56,7 @@
 		3F334CF97FFAF17870DEEA15 /* BrowserEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserEngine.swift; sourceTree = "<group>"; };
 		467CC0BCC8C69EA68F9C17CB /* Rex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EB07F70356B03CF1E5E2A9E /* BrowserSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSettingsView.swift; sourceTree = "<group>"; };
+		57528450456FD0BBBA1F26E4 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		57E7E7289E9786E8E36F8F76 /* BrowserExtensionCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExtensionCatalog.swift; sourceTree = "<group>"; };
 		5D57C2802D4FE267B2FC5345 /* BrowserModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserModels.swift; sourceTree = "<group>"; };
 		786D15CF71E9959216719BE8 /* BrowserSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSidebar.swift; sourceTree = "<group>"; };
@@ -84,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				921A3C669389C82AD6621E75 /* AppVersion.swift */,
+				57528450456FD0BBBA1F26E4 /* main.swift */,
 				927E3936775E7B5569F83267 /* RexApp.swift */,
 			);
 			path = Application;
@@ -430,6 +433,7 @@
 				A18C086C8F1AD42E713A4DB0 /* RexExtensionPageView.swift in Sources */,
 				A53FB520EAD4600EDB42E382 /* RexExtensionPages.swift in Sources */,
 				161D70C4E2715D2B958387EE /* SiteSecurityModels.swift in Sources */,
+				E3EC2DDF3E0EFA03144E6503 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -442,7 +446,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 950;
+				CURRENT_PROJECT_VERSION = 970;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -458,7 +462,7 @@
 					"$(PROJECT_DIR)/.build/rex-chromium",
 					"$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper",
 				);
-				MARKETING_VERSION = 0.9.5;
+				MARKETING_VERSION = 0.9.7;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -554,7 +558,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 950;
+				CURRENT_PROJECT_VERSION = 970;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -570,7 +574,7 @@
 					"$(PROJECT_DIR)/.build/rex-chromium",
 					"$(PROJECT_DIR)/.build/rex-chromium/libcef_dll_wrapper",
 				);
-				MARKETING_VERSION = 0.9.5;
+				MARKETING_VERSION = 0.9.7;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",

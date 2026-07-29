@@ -272,12 +272,36 @@ function standardPhases(baseVersion, updateVersion) {
       action: "Enable the probe extension in Rex."
     },
     {
+      name: "action-popup-context",
+      expectedState: "active",
+      expectedVersion: updateVersion,
+      catalog: "enabled",
+      requireActionPopup: true,
+      action:
+        "Keep the probe page selected and open the probe extension toolbar popup."
+    },
+    {
       name: "restart-enabled",
       expectedState: "active",
       expectedVersion: updateVersion,
       catalog: "enabled",
       requireWorkerBoot: true,
+      requireRuntimeStartup: true,
+      forbidOnInstalled: true,
+      forbidWorkerCreated: true,
       action: "Quit Rex normally, reopen it, and wait for session restoration."
+    },
+    {
+      name: "restart-enabled-again",
+      expectedState: "active",
+      expectedVersion: updateVersion,
+      catalog: "enabled",
+      requireWorkerBoot: true,
+      requireRuntimeStartup: true,
+      forbidOnInstalled: true,
+      forbidWorkerCreated: true,
+      action:
+        "Quit Rex normally, reopen it a second time, and wait for session restoration."
     },
     {
       name: "hot-remove",
@@ -362,6 +386,7 @@ class ProbeState {
       workerCreatedRequests: [],
       armedDocuments: new Set(),
       conflicts: [],
+      catalogSnapshot: null,
       lastPrintedSignature: ""
     };
     this.phases.push(phase);
@@ -511,6 +536,10 @@ class ProbeState {
       return;
     }
     this.catalogSnapshot = snapshot;
+    if (this.current && snapshot.observedAt >= this.current.startedAt) {
+      this.current.catalogSnapshot = snapshot;
+      this.current.lastActivityAt = Date.now();
+    }
     void this.log({
       type: "catalog",
       snapshot
@@ -622,6 +651,9 @@ class ProbeState {
         if (contentReport.workerAck !== true) {
           failures.push("content script did not receive a confirmed worker ack");
         }
+        if (contentReport.workerToContentAck !== true) {
+          failures.push("content script did not confirm worker tabs.sendMessage");
+        }
       }
       if (workerReport) {
         if (workerReport.runtimeId !== this.fixture.extensionId) {
@@ -634,11 +666,47 @@ class ProbeState {
             `worker version ${workerReport.version || "(empty)"} is not ${phase.expectedVersion}`
           );
         }
+        // The install phase intentionally opens an active tab before the
+        // reloaded probe reports, so lastFocusedWindow is expected to move.
         if (
           contentReport &&
           workerReport.injectionCount !== contentReport.injectionCount
         ) {
           failures.push("content and worker injection counts do not correlate");
+        }
+        const senderTab = workerReport.senderTab;
+        if (
+          !Number.isInteger(senderTab?.id) ||
+          senderTab.id < 0 ||
+          !Number.isInteger(senderTab?.windowId) ||
+          senderTab.windowId < 0 ||
+          !Number.isInteger(senderTab?.frameId) ||
+          senderTab.frameId < 0
+        ) {
+          failures.push(
+            "service worker sender did not include tab id/windowId/frameId"
+          );
+        }
+        if (workerReport.workerToContent?.ok !== true) {
+          failures.push(
+            `worker tabs.sendMessage did not reach the source content script${
+              workerReport.workerToContent?.error
+                ? `: ${workerReport.workerToContent.error}`
+                : ""
+            }`
+          );
+        }
+        if (workerReport.tabQueries?.senderListed !== true) {
+          failures.push("unrestricted worker tabs.query omitted sender.tab");
+        }
+        if (
+          Number.isInteger(senderTab?.id) &&
+          !phase.requireWorkerCreated &&
+          workerReport.tabQueries?.lastFocusedWindow?.id !== senderTab.id
+        ) {
+          failures.push(
+            "worker lastFocusedWindow did not resolve to the content sender tab"
+          );
         }
       }
       if (pageDNR[0] && pageDNR[0].dnr?.blocked !== true) {
@@ -652,7 +720,9 @@ class ProbeState {
       if (contentReport && workerReport && pageDNR[0]) {
         observations.push(
           `runtime ${contentReport.runtimeId} v${contentReport.version}, ` +
-            "one injection, worker ack, DNR blocked"
+            `tab ${workerReport.senderTab?.id ?? "?"}/frame ` +
+            `${workerReport.senderTab?.frameId ?? "?"}, worker round trip, ` +
+            "one injection, DNR blocked"
         );
       }
     } else {
@@ -681,6 +751,10 @@ class ProbeState {
       }
     }
 
+    const installedReports = reports.filter(
+      (report) => report.event === "runtime-installed"
+    );
+
     if (phase.requireWorkerCreated) {
       if (phase.workerCreatedRequests.length === 0) {
         waiting.push("waiting for immediate onInstalled chrome.tabs.create");
@@ -691,21 +765,42 @@ class ProbeState {
       } else {
         observations.push("onInstalled chrome.tabs.create loaded one page");
       }
-      const installedReports = reports.filter(
-        (report) => report.event === "runtime-installed"
-      );
       if (installedReports.length === 0) {
         waiting.push("waiting for runtime.onInstalled report");
+      } else if (installedReports.length > 1) {
+        failures.push(
+          `expected one runtime.onInstalled report, received ${installedReports.length}`
+        );
+      } else if (installedReports[0].reason !== "install") {
+        failures.push(
+          `initial runtime.onInstalled reason was ${installedReports[0].reason || "(empty)"}`
+        );
       } else if (
-        !installedReports.some(
-          (report) =>
-            report.createdTab?.requested === true &&
-            report.createdTab?.tabId > 0 &&
-            !report.createdTab?.error
-        )
+        installedReports[0].createdTab?.requested !== true ||
+        installedReports[0].createdTab?.tabId <= 0 ||
+        installedReports[0].createdTab?.error
       ) {
         failures.push("runtime.onInstalled did not confirm tabs.create success");
       }
+    }
+
+    if (phase.forbidWorkerCreated && phase.workerCreatedRequests.length > 0) {
+      failures.push(
+        `restart opened ${phase.workerCreatedRequests.length} onboarding page(s)`
+      );
+    }
+    if (phase.forbidOnInstalled && installedReports.length > 0) {
+      failures.push(
+        `restart emitted ${installedReports.length} runtime.onInstalled event(s)`
+      );
+    }
+    if (
+      phase.forbidWorkerCreated &&
+      phase.forbidOnInstalled &&
+      phase.workerCreatedRequests.length === 0 &&
+      installedReports.length === 0
+    ) {
+      observations.push("restart emitted no install lifecycle or onboarding page");
     }
 
     if (phase.requireWorkerBoot) {
@@ -717,10 +812,172 @@ class ProbeState {
       } else {
         observations.push("post-restart worker boot reported");
       }
+      const bootSentinel = bootReports[0]?.persistentStorageSentinel;
+      if (bootReports[0] && !bootSentinel) {
+        failures.push("worker boot did not report a persistent storage sentinel");
+      }
+      const priorSentinels = this.phases
+        .slice(0, phase.index)
+        .flatMap((candidate) => candidate.reports)
+        .filter((report) => report.event === "worker-boot")
+        .map((report) => report.persistentStorageSentinel)
+        .filter(Boolean);
+      if (
+        bootSentinel &&
+        priorSentinels.length > 0 &&
+        priorSentinels.some((sentinel) => sentinel !== bootSentinel)
+      ) {
+        failures.push("extension storage sentinel changed across reload/restart");
+      } else if (bootSentinel && priorSentinels.length > 0) {
+        observations.push("extension storage sentinel persisted");
+      }
+    }
+
+    if (phase.requireRuntimeStartup) {
+      const startupReports = reports.filter(
+        (report) => report.event === "runtime-startup"
+      );
+      if (startupReports.length === 0) {
+        waiting.push("waiting for runtime.onStartup after restart");
+      } else if (startupReports.length > 1) {
+        failures.push(
+          `expected one runtime.onStartup report, received ${startupReports.length}`
+        );
+      } else if (startupReports[0].lifecycle !== "startup") {
+        failures.push("runtime.onStartup report had an invalid lifecycle marker");
+      } else if (!startupReports[0].persistentStorageSentinel) {
+        failures.push("runtime.onStartup omitted the storage sentinel");
+      } else {
+        observations.push("runtime.onStartup reported after restart");
+      }
+    }
+
+    if (phase.requireActionPopup) {
+      const popupReports = reports.filter(
+        (report) =>
+          report.event === "surface-ready" &&
+          report.source === "popup" &&
+          report.documentId === documentId
+      );
+      if (popupReports.length === 0) {
+        waiting.push("waiting for the extension action popup context report");
+      } else if (popupReports.length > 1) {
+        failures.push(
+          `expected one action popup report, received ${popupReports.length}`
+        );
+      } else {
+        const popupReport = popupReports[0];
+        const context = popupReport.tabContext;
+        const workerContext = popupReport.workerTabContext;
+        const currentWindow = context?.currentWindow;
+        const lastFocusedWindow = context?.lastFocusedWindow;
+        const workerLastFocusedWindow = workerContext?.lastFocusedWindow;
+        const sourceTab = workerAcks[0]?.senderTab;
+        const isTabIdentity = (tab) =>
+          Number.isInteger(tab?.id) &&
+          tab.id >= 0 &&
+          Number.isInteger(tab?.windowId) &&
+          tab.windowId >= 0;
+        const isProbePage = (value) => {
+          try {
+            const url = new URL(value);
+            return (
+              url.protocol === "http:" &&
+              url.hostname === "127.0.0.1" &&
+              url.pathname === "/probe-page.html"
+            );
+          } catch {
+            return false;
+          }
+        };
+
+        if (popupReport.runtimeId !== this.fixture.extensionId) {
+          failures.push("action popup reported the wrong extension runtime ID");
+        }
+        if (popupReport.version !== phase.expectedVersion) {
+          failures.push(
+            `action popup version ${popupReport.version || "(empty)"} is not ${phase.expectedVersion}`
+          );
+        }
+        if (context?.ready !== true) {
+          failures.push(
+            `action popup current-tab context is not ready${
+              context?.error ? `: ${context.error}` : ""
+            }`
+          );
+        }
+        if (!isTabIdentity(currentWindow)) {
+          failures.push("currentWindow query did not retain tab id/windowId");
+        }
+        if (!isTabIdentity(lastFocusedWindow)) {
+          failures.push("lastFocusedWindow query did not retain tab id/windowId");
+        }
+        if (
+          !isProbePage(currentWindow?.url) ||
+          !isProbePage(lastFocusedWindow?.url)
+        ) {
+          failures.push(
+            "currentWindow/lastFocusedWindow did not resolve to the Rex probe page"
+          );
+        }
+        if (
+          context?.sameIdentity !== true ||
+          currentWindow?.id !== lastFocusedWindow?.id ||
+          currentWindow?.windowId !== lastFocusedWindow?.windowId
+        ) {
+          failures.push(
+            "currentWindow and lastFocusedWindow returned different tab identities"
+          );
+        }
+        if (
+          isTabIdentity(sourceTab) &&
+          (currentWindow?.id !== sourceTab.id ||
+            currentWindow?.windowId !== sourceTab.windowId ||
+            lastFocusedWindow?.id !== sourceTab.id ||
+            lastFocusedWindow?.windowId !== sourceTab.windowId)
+        ) {
+          failures.push(
+            "action popup resolved a different tab than the content-script sender"
+          );
+        }
+        if (context?.getCurrentTabId != null) {
+          failures.push("tabs.getCurrent unexpectedly identified the popup as a tab");
+        }
+        if (workerContext?.error) {
+          failures.push(
+            `service worker active-tab query failed: ${workerContext.error}`
+          );
+        }
+        if (!isTabIdentity(workerLastFocusedWindow)) {
+          failures.push(
+            "service worker lastFocusedWindow query lost tab identity"
+          );
+        }
+        if (
+          isTabIdentity(sourceTab) &&
+          (workerLastFocusedWindow?.id !== sourceTab.id ||
+            workerLastFocusedWindow?.windowId !== sourceTab.windowId)
+        ) {
+          failures.push(
+            "service worker active-tab query resolved a different tab than the popup source"
+          );
+        }
+        if (!isProbePage(workerLastFocusedWindow?.url)) {
+          failures.push(
+            "service worker lastFocusedWindow query did not resolve to the Rex probe page"
+          );
+        }
+        if (context?.ready === true) {
+          observations.push(
+            `action popup mapped both query modes to tab ${currentWindow.id} ` +
+              `in window ${currentWindow.windowId}; service worker agreed`
+          );
+        }
+      }
     }
 
     if (this.catalogEnabled) {
-      const snapshot = this.catalogSnapshot;
+      const snapshot = phase.catalogSnapshot;
       if (!snapshot || snapshot.observedAt < phase.startedAt) {
         waiting.push("waiting for a fresh catalog snapshot");
       } else if (snapshot.error) {
@@ -780,6 +1037,7 @@ class ProbeState {
       expectedState: phase.expectedState,
       expectedVersion: phase.expectedVersion,
       catalogExpectation: phase.catalog,
+      catalog: phase.catalogSnapshot,
       requireArm: phase.requireArm,
       startedAt: new Date(phase.startedAt).toISOString(),
       status: evaluation.status,
@@ -1463,6 +1721,40 @@ async function runSelfTest(options, fixture) {
     reportLog: "",
     catalogEnabled: false
   });
+  const catalogState = new ProbeState({
+    sessionId: randomUUID(),
+    fixture,
+    phases,
+    settleMs: options.settleMs,
+    reportLog: "",
+    catalogEnabled: true
+  });
+  const installCatalogPhase = catalogState.beginPhase("hot-install-v1", {
+    requireArm: false
+  });
+  catalogState.updateCatalog({
+    observedAt: Date.now(),
+    present: true,
+    isEnabled: true,
+    version: phases.find((phase) => phase.name === "hot-install-v1")
+      .expectedVersion
+  });
+  const updateCatalogPhase = catalogState.beginPhase("hot-update-v2", {
+    requireArm: false
+  });
+  catalogState.updateCatalog({
+    observedAt: Date.now(),
+    present: true,
+    isEnabled: true,
+    version: options.updateVersion
+  });
+  expect(
+    installCatalogPhase.catalogSnapshot?.version !==
+      updateCatalogPhase.catalogSnapshot?.version &&
+      catalogState.serializablePhase(installCatalogPhase, false).catalog
+        ?.version === installCatalogPhase.expectedVersion,
+    "Historical phase catalog snapshot changed after a later phase"
+  );
   const server = await startReportServer(state, {
     ...options,
     reportPort: 0
@@ -1489,7 +1781,9 @@ async function runSelfTest(options, fixture) {
       "Generated update package version is wrong"
     );
 
-    const active = state.beginPhase("hot-update-v2", { requireArm: false });
+    const active = state.beginPhase("action-popup-context", {
+      requireArm: false
+    });
     const pageResponse = await fetch(`${server.baseURL}/probe-page.html`);
     expect(pageResponse.ok, "Self-test page did not load");
     expect(
@@ -1524,7 +1818,47 @@ async function runSelfTest(options, fixture) {
       runtimeId: fixture.extensionId,
       version: options.updateVersion,
       injectionCount: 1,
-      workerAck: true
+      workerAck: true,
+      senderTab: {
+        id: 17,
+        windowId: 5,
+        frameId: 0,
+        documentId,
+        url: `${server.baseURL}/probe-page.html`,
+        title: "Rex MV3 Runtime Probe"
+      },
+      workerToContent: {
+        ok: true,
+        response: {
+          ok: true,
+          source: "content-script",
+          runtimeId: fixture.extensionId,
+          documentId
+        },
+        error: ""
+      },
+      tabQueries: {
+        currentWindow: {
+          id: 17,
+          windowId: 5,
+          url: `${server.baseURL}/probe-page.html`,
+          title: "Rex MV3 Runtime Probe"
+        },
+        lastFocusedWindow: {
+          id: 17,
+          windowId: 5,
+          url: `${server.baseURL}/probe-page.html`,
+          title: "Rex MV3 Runtime Probe"
+        },
+        senderListed: true,
+        senderMatch: {
+          id: 17,
+          windowId: 5,
+          url: `${server.baseURL}/probe-page.html`,
+          title: "Rex MV3 Runtime Probe"
+        },
+        error: ""
+      }
     });
     await postJSON(`${server.baseURL}/extension-report`, {
       ...reportBase,
@@ -1533,11 +1867,262 @@ async function runSelfTest(options, fixture) {
       runtimeId: fixture.extensionId,
       version: options.updateVersion,
       injectionCount: 1,
-      workerAck: true
+      workerAck: true,
+      workerToContentAck: true
+    });
+    await postJSON(`${server.baseURL}/extension-report`, {
+      ...reportBase,
+      event: "surface-ready",
+      source: "popup",
+      runtimeId: fixture.extensionId,
+      version: options.updateVersion,
+      workerAck: true,
+      surface: "popup",
+      tabContext: {
+        ready: true,
+        sameIdentity: true,
+        currentWindow: {
+          id: 17,
+          windowId: 5,
+          url: `${server.baseURL}/probe-page.html`,
+          title: "Rex MV3 Runtime Probe"
+        },
+        lastFocusedWindow: {
+          id: 17,
+          windowId: 5,
+          url: `${server.baseURL}/probe-page.html`,
+          title: "Rex MV3 Runtime Probe"
+        },
+        getCurrentTabId: null
+      },
+      workerTabContext: {
+        lastFocusedWindow: {
+          id: 17,
+          windowId: 5,
+          url: `${server.baseURL}/probe-page.html`,
+          title: "Rex MV3 Runtime Probe"
+        },
+        error: ""
+      }
     });
     expect(
       state.evaluate(active, { ignoreSettle: true }).status === "PASS",
       "Active self-report assertion did not pass"
+    );
+
+    const popupReport = active.reports.find(
+      (report) => report.event === "surface-ready" && report.source === "popup"
+    );
+    const sourceIdentity = popupReport.tabContext.currentWindow;
+    const duplicateIdentity = {
+      ...sourceIdentity,
+      id: sourceIdentity.id + 1
+    };
+    popupReport.tabContext.currentWindow = duplicateIdentity;
+    popupReport.tabContext.lastFocusedWindow = { ...duplicateIdentity };
+    const duplicateEvaluation = state.evaluate(active, {
+      ignoreSettle: true
+    });
+    expect(
+      duplicateEvaluation.status === "FAIL" &&
+        duplicateEvaluation.reasons.includes(
+          "action popup resolved a different tab than the content-script sender"
+        ),
+      "Popup accepted a same-URL/title tab with the wrong ID"
+    );
+    popupReport.tabContext.currentWindow = sourceIdentity;
+    popupReport.tabContext.lastFocusedWindow = { ...sourceIdentity };
+
+    popupReport.workerTabContext.lastFocusedWindow = duplicateIdentity;
+    const workerDuplicateEvaluation = state.evaluate(active, {
+      ignoreSettle: true
+    });
+    expect(
+      workerDuplicateEvaluation.status === "FAIL" &&
+        workerDuplicateEvaluation.reasons.includes(
+          "service worker active-tab query resolved a different tab than the popup source"
+        ),
+      "Popup accepted a service-worker query with the wrong tab ID"
+    );
+    popupReport.workerTabContext.lastFocusedWindow = { ...sourceIdentity };
+
+    const persistentStorageSentinel = randomUUID();
+    state.recordReport({
+      event: "worker-boot",
+      source: "service-worker",
+      phase: active.name,
+      phaseToken: active.phaseToken,
+      documentId: `worker:${randomUUID()}`,
+      runtimeId: fixture.extensionId,
+      version: options.updateVersion,
+      lifecycle: "boot",
+      serviceWorkerStartCount: 1,
+      persistentStorageSentinel
+    });
+
+    const invalidRestart = state.beginPhase("restart-enabled", {
+      requireArm: false
+    });
+    state.recordReport({
+      event: "runtime-installed",
+      source: "service-worker",
+      phase: invalidRestart.name,
+      phaseToken: invalidRestart.phaseToken,
+      documentId: `worker:${randomUUID()}`,
+      runtimeId: fixture.extensionId,
+      version: options.updateVersion,
+      reason: "update"
+    });
+    state.recordWorkerCreated(new URL(`${server.baseURL}/worker-created.html`));
+    const restartLifecycleEvaluation = state.evaluate(invalidRestart, {
+      ignoreSettle: true
+    });
+    expect(
+      restartLifecycleEvaluation.status === "FAIL" &&
+        restartLifecycleEvaluation.reasons.includes(
+          "restart emitted 1 runtime.onInstalled event(s)"
+        ) &&
+        restartLifecycleEvaluation.reasons.includes(
+          "restart opened 1 onboarding page(s)"
+      ),
+      "Restart phase accepted a repeated install lifecycle or onboarding page"
+    );
+
+    const populateRestartPhase = async (phase, serviceWorkerStartCount) => {
+      const page = await fetch(`${server.baseURL}/probe-page.html`);
+      expect(page.ok, `Self-test page did not load for ${phase.name}`);
+      const restartDocumentId = [...phase.documents.keys()][0];
+      const restartReportBase = {
+        phase: phase.name,
+        phaseToken: phase.phaseToken,
+        documentId: restartDocumentId
+      };
+      const tabId = 17 + serviceWorkerStartCount;
+      const tabIdentity = {
+        id: tabId,
+        windowId: 5,
+        url: `${server.baseURL}/probe-page.html`,
+        title: "Rex MV3 Runtime Probe"
+      };
+
+      await postJSON(`${server.baseURL}/extension-report`, {
+        ...restartReportBase,
+        event: "page-loaded",
+        source: "page"
+      });
+      await fetch(
+        `${server.baseURL}/control?phaseToken=${phase.phaseToken}` +
+          `&documentId=${restartDocumentId}`
+      );
+      await postJSON(`${server.baseURL}/extension-report`, {
+        ...restartReportBase,
+        event: "page-dnr",
+        source: "page",
+        dnr: { controlOK: true, blocked: true }
+      });
+      await postJSON(`${server.baseURL}/extension-report`, {
+        ...restartReportBase,
+        event: "worker-ack",
+        source: "service-worker",
+        runtimeId: fixture.extensionId,
+        version: options.updateVersion,
+        injectionCount: 1,
+        workerAck: true,
+        senderTab: {
+          ...tabIdentity,
+          frameId: 0,
+          documentId: restartDocumentId
+        },
+        workerToContent: {
+          ok: true,
+          response: {
+            ok: true,
+            source: "content-script",
+            runtimeId: fixture.extensionId,
+            documentId: restartDocumentId
+          },
+          error: ""
+        },
+        tabQueries: {
+          currentWindow: tabIdentity,
+          lastFocusedWindow: tabIdentity,
+          senderListed: true,
+          senderMatch: tabIdentity,
+          error: ""
+        }
+      });
+      await postJSON(`${server.baseURL}/extension-report`, {
+        ...restartReportBase,
+        event: "content-script",
+        source: "content-script",
+        runtimeId: fixture.extensionId,
+        version: options.updateVersion,
+        injectionCount: 1,
+        workerAck: true,
+        workerToContentAck: true
+      });
+      state.recordReport({
+        event: "worker-boot",
+        source: "service-worker",
+        phase: phase.name,
+        phaseToken: phase.phaseToken,
+        documentId: `worker:${randomUUID()}`,
+        runtimeId: fixture.extensionId,
+        version: options.updateVersion,
+        lifecycle: "boot",
+        serviceWorkerStartCount,
+        persistentStorageSentinel
+      });
+      state.recordReport({
+        event: "runtime-startup",
+        source: "service-worker",
+        phase: phase.name,
+        phaseToken: phase.phaseToken,
+        documentId: `worker:${randomUUID()}`,
+        runtimeId: fixture.extensionId,
+        version: options.updateVersion,
+        lifecycle: "startup",
+        serviceWorkerStartCount,
+        persistentStorageSentinel
+      });
+    };
+
+    const restart = state.beginPhase("restart-enabled", {
+      requireArm: false
+    });
+    await populateRestartPhase(restart, 2);
+    expect(
+      state.evaluate(restart, { ignoreSettle: true }).status === "PASS",
+      "First persistent restart self-report assertion did not pass"
+    );
+
+    const restartAgain = state.beginPhase("restart-enabled-again", {
+      requireArm: false
+    });
+    await populateRestartPhase(restartAgain, 3);
+    expect(
+      state.evaluate(restartAgain, { ignoreSettle: true }).status === "PASS",
+      "Second persistent restart self-report assertion did not pass"
+    );
+
+    const restartAgainBoot = restartAgain.reports.find(
+      (report) => report.event === "worker-boot"
+    );
+    restartAgainBoot.persistentStorageSentinel = randomUUID();
+    const changedStorageEvaluation = state.evaluate(restartAgain, {
+      ignoreSettle: true
+    });
+    expect(
+      changedStorageEvaluation.status === "FAIL" &&
+        changedStorageEvaluation.reasons.includes(
+          "extension storage sentinel changed across reload/restart"
+        ),
+      "Restart accepted a changed extension storage sentinel"
+    );
+    restartAgainBoot.persistentStorageSentinel = persistentStorageSentinel;
+    expect(
+      state.evaluate(restartAgain, { ignoreSettle: true }).status === "PASS",
+      "Restart did not recover after restoring the storage sentinel"
     );
 
     const inactive = state.beginPhase("hot-remove", { requireArm: false });

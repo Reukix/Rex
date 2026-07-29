@@ -2,6 +2,20 @@ import AppKit
 import SwiftUI
 
 @MainActor
+struct RexExtensionsPageView: View {
+    let url: URL?
+
+    var body: some View {
+        BrowserExtensionsView(
+            presentation: .page,
+            initialRuntimeID: RexExtensionsPage.detailRuntimeID(from: url)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+@MainActor
 struct RexExtensionPageUnavailableView: View {
     @EnvironmentObject private var store: BrowserStore
 

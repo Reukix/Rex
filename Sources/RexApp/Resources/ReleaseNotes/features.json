@@ -1,5 +1,5 @@
 {
-  "lastUpdatedVersion": "0.9.5",
+  "lastUpdatedVersion": "0.9.7",
   "categories": [
     {
       "id": "app-shell",
@@ -61,8 +61,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.9.0",
-          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签",
+          "updatedIn": "0.9.6",
+          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签；加载、进度、前进后退及刷新/停止直接使用 Chromium 导航代次和状态",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -471,21 +471,24 @@
       "features": [
         {
           "id": "controlled-extensions",
-          "name": "Chromium 扩展运行时",
+          "name": "Chromium 扩展运行时与 Rex 管理界面",
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.9.5",
-          "description": "Rex 管理 Chrome Web Store 与本地扩展包，并提供列表、小型面板和扩展管理界面；安装、启停、更新与移除通过无监听端口的 --remote-debugging-pipe 即时同步。独立 AppKit 浮窗加载扩展自身静态 default_popup，并向其提供最近来源网页的 active/currentWindow 查询上下文；扩展创建的包内页面统一映射为 rex-extension://",
+          "updatedIn": "0.9.7",
+          "description": "Rex 使用 SwiftUI/AppKit 提供全部可见扩展管理界面，并管理 Chrome Web Store 与本地扩展包；Chromium 负责扩展执行、安装生命周期和权限配置的权威状态。rex://extensions 不渲染 chrome://extensions，后者只在隐藏受控上下文中提供 developerPrivate API。网站访问三态、具体网站增删、用户脚本与文件网址开关均提交给 Chromium，并以更新后的 Chromium 配置读回刷新；扩展自身的静态 default_popup/options 仍在 chrome-extension:// 安全源中执行，对外显示为 rex-extension://",
           "supportsPrivateWindow": false,
           "supportsSplitView": true,
           "supportsKeyboard": true,
           "requiresRestart": false,
           "settingsPath": "扩展",
           "limitations": [
-            "安装、启用、停用、更新和移除会立即对账 Chromium 扩展集合；活跃普通页面立即重载一次，休眠页面恢复时重载一次，隐私窗口不运行扩展",
-            "最终 Dist 包需通过通用 MV3 探针，在不刷新、不重复导航的首次文档上覆盖冷启动、热生命周期、service worker、content script、runtime messaging、chrome.storage.local、Chromium DNR、options 和静态 default_popup",
-            "Rex 小型面板不是 Chromium 原生 action popup；静态 popup 仅获得受控的来源标签查询上下文，完整 activeTab 权限、无 popup 的 action.onClicked 和动态 action.setPopup 当前不支持",
+            "安装、启用、停用、更新和移除会立即对账 Chromium 扩展集合；停用后重新启用会由 Chromium 显式 reload 受管包；活跃普通页面立即重载一次，休眠页面恢复时重载一次，隐私窗口不运行扩展",
+            "扩展替换只在原生操作成功且最终 Chromium 注册状态验证成功后提交；同版本 reload 错误不能由表面不变的版本字段掩盖",
+            "Rex 只呈现和提交扩展配置意图；具体网站授权调用 Chromium addHostPermission/removeHostPermission，网站访问、用户脚本和文件网址状态必须由 Chromium 原生管理 API 返回后才显示为已生效",
+            "最终 Dist 包需通过通用 MV3 探针，在不刷新、不重复导航的首次文档上覆盖冷启动、热生命周期、service worker、content script、双向 runtime/tab messaging、真实 tab/frame identity、chrome.storage.local、Chromium DNR、options 和静态 default_popup",
+            "Rex 小型面板不是 Chromium 原生 action popup；静态 popup 只在能匹配 Chromium 来源标签时保留真实 tab ID/window ID，不等同于完整 activeTab 权限授予；无 popup 的 action.onClicked 和动态 action.setPopup 当前不支持",
+            "iCloud Passwords 的扩展包和权限可以加载，但系统 manifest 只注册在 Chrome 专用目录；Apple helper 的 Parent Launch Constraints 要求获批的浏览器 entitlement 或名单内的 Bundle ID + Team ID，当前 ad-hoc Rex 均不满足，不能标记为可用",
             "核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容",
             "Chrome Web Store 扩展尚不自动更新，可使用相同链接或 ID 手动重新安装"
           ]

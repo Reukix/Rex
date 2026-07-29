@@ -4,7 +4,7 @@
 
 生产内核首选 CEF（Chromium Embedded Framework），原因是它提供可嵌入 API、多进程模型、DevTools 和相对可控的升级面。Content API 或自维护 Chromium 分支可获得最强控制，但每个 Chromium 大版本的合并、安全补丁和 macOS 签名成本显著更高，暂不作为 MVP 首选。
 
-目标基线：macOS 14+，仅支持 Apple Silicon（arm64），不生成通用二进制或 Intel 构建。v0.9.5 固定 CEF standard `150.0.14+g7c1aa68+chromium-150.0.7871.129`。版本策略为跟随 CEF 稳定分支，安全高危补丁目标 72 小时内完成评估和候选构建，常规大版本在上游稳定后一周内进入兼容测试。
+目标基线：macOS 14+，仅支持 Apple Silicon（arm64），不生成通用二进制或 Intel 构建。v0.9.7 固定 CEF standard `150.0.14+g7c1aa68+chromium-150.0.7871.129`。版本策略为跟随 CEF 稳定分支，安全高危补丁目标 72 小时内完成评估和候选构建，常规大版本在上游稳定后一周内进入兼容测试。
 
 ## 分层
 
@@ -16,15 +16,16 @@ flowchart TB
     Bridge["BrowserEngine Actor\n类型安全命令与事件"]
     Adapter["CEF Adapter ObjC++\n生命周期·frame·IPC"]
     Chromium["Chromium Processes\nBrowser·Renderer·GPU·Utility"]
-    Persistence["SQLite / Keychain\n会话·历史·设置·机密"]
+    Persistence["SQLite\n会话·历史·设置"]
     Extensions["Managed Extension Store\nCRX·Manifest·catalog"]
-    ExtensionControl["Extension Runtime Control\npipe CDP·generation barrier"]
+    ExtensionUI["Rex Extension UI\nrex://extensions·列表·详情"]
+    ExtensionControl["Hidden Chromium Control\nchrome.developerPrivate·pipe CDP"]
     ExtensionRuntime["Chromium Extension Runtime\nservice worker·content script·API·DNR"]
     Rules["Rex Privacy Engine\n内置隐私目录"]
     UI --> Store --> Domain
     Store --> Bridge --> Adapter --> Chromium
     Store --> Persistence
-    UI --> Extensions --> ExtensionControl --> Adapter
+    UI --> ExtensionUI --> Extensions --> ExtensionControl --> Adapter
     Adapter --> ExtensionRuntime
     Adapter --> Rules
 ```
@@ -57,27 +58,29 @@ sequenceDiagram
 
 ## 核心协议
 
-`BrowserEngine` 负责实例创建/销毁、导航、缩放、查找、DevTools、崩溃恢复、页面优先级与事件流。Swift 层只发送 `BrowserCommand` 枚举；CEF 适配器为每种命令做长度、枚举、URL scheme、tab ownership 与隐私 profile 校验。禁止通用“执行 JavaScript/调用原生方法”桥。
+`BrowserEngine` 负责实例创建/销毁、导航、缩放、查找、DevTools、崩溃恢复、页面优先级与事件流。Swift 层只发送 `BrowserCommand` 枚举；CEF 适配器为每种命令做长度、枚举、URL scheme、tab ownership 与隐私 profile 校验。Chromium 回报的 URL、标题与加载状态是单向观测值，SwiftUI surface 不得把它们重新提交成导航命令；只有明确的用户/应用命令进入 `loadURL`。新主框架请求在 `OnBeforeBrowse` 分配代次，redirect 沿用原请求代次，不依赖聚合 loading 的边沿。禁止通用“执行 JavaScript/调用原生方法”桥。
 
-## v0.9.5 扩展运行时
+## v0.9.7 扩展管理与运行时边界
 
 扩展安装和运行被拆成五个边界明确的层次：
 
 1. **可信包管理**：Swift 域层解析 Chrome Web Store URL/ID，限制下载来源与大小，验证 CRX2/CRX3 身份和签名，安全解包后与本地 Manifest V2/V3 文件夹一起保存到 Rex 受管目录。启动时每个包只执行一次完整文件树验证；名称与描述共享一次加载的 locale 字典。
 2. **身份与预期集合**：商店包读取时要求合法 store ID、有效 manifest 公钥，且公钥推导出的 Chromium runtime ID 必须与验签安装记录一致。Rex 为每次安装、启停、更新和移除生成受管路径与启用状态的预期集合；Chromium 返回的 ID、路径、版本和启用状态同时进入运行时观测数据。
-3. **无端口运行时控制**：Rex 在 `CefInitialize` 前为 Chromium 预留 fd 3/4 专用传输，并以 `--remote-debugging-pipe` 启动 browser process；browser-target `Extensions.getExtensions`、`Extensions.loadUnpacked` 与 `Extensions.uninstall` 只通过该本地通道调用。没有 TCP 监听端口，也不向普通网页或 page target 暴露 browser CDP 会话。
+3. **不可见的 Chromium 管理上下文**：Rex 在 `CefInitialize` 前为 Chromium 预留 fd 3/4 专用传输，并以 `--remote-debugging-pipe` 启动 browser process；browser-target `Extensions.getExtensions` 与 `Extensions.uninstall` 只通过该本地通道调用。`chrome://extensions` 仅在不可见、受控的上下文中提供 `chrome.developerPrivate` API：首次安装调用 `loadUnpacked`，同 ID 更新调用 `reload`，启停调用 `chrome.management.setEnabled`。该上下文不承载任何用户可见页面，没有 TCP 监听端口，也不向普通网页或 page target 暴露 browser CDP 会话。
 4. **Chromium 原生执行**：后台 service worker、content script、runtime messaging、`chrome.storage.local`、DNR 与 options 等已支持资源页均来自扩展包并由 Chromium 执行。Rex 不解析规则后模拟扩展行为，也不维护任何扩展专用执行适配器。
-5. **Rex 产品外壳**：扩展发现、安装状态、列表、小型面板入口与管理界面由 Rex 实现；小型面板使用独立的无边框 AppKit `NSPanel`，不再通过 SwiftUI `.popover` 把子窗口附着到 CEF 远程视图。面板直接加载清单声明的静态 `default_popup`，options 等资源也直接来自已安装扩展包。执行边界仍使用 `chrome-extension://`，用户可见资源地址统一使用 `rex-extension://<runtime-id>/<包内路径>`。
+5. **Rex 可见产品外壳**：扩展发现、安装状态、列表、详情、权限控件、小型面板入口和 `rex://extensions` 管理路由全部由 Rex SwiftUI/AppKit 实现；该内部路由不会向 Chromium 发送可见导航。小型面板使用独立的无边框 AppKit `NSPanel`，直接加载清单声明的静态 `default_popup`；options 等资源也直接来自已安装扩展包。扩展资源的执行边界仍使用 `chrome-extension://`，用户可见地址统一使用 `rex-extension://<runtime-id>/<包内路径>`。
 
-扩展运行时变更按 generation 串行执行。只有 `Extensions.getExtensions` 确认实际启用的受管路径与当前预期集合一致，generation 才完成；安装、启用、停用、手动更新和移除因此可以在当前进程生效。成功变更后，Rex 对活跃普通窗口中已加载的 HTTP(S) 页面各重载一次；休眠或冻结页面记录一次待处理重载并在恢复时执行，隐私窗口与内部页面不参与。失败 generation 不直接重载，只有随后成功提交的补偿 generation 才统一刷新。
+网站访问配置严格映射 Chromium 的三种运行范围：`ON_CLICK`（点击扩展时）、`ON_SPECIFIC_SITES`（指定网站）和 `ON_ALL_SITES`（所有网站）。“允许运行用户脚本”和“允许访问文件网址”也由 Chromium 保存。Rex 提交 `updateExtensionConfiguration` 后立即调用 `getExtensionInfo`；界面只使用 Chromium 返回的新状态，失败、超时或返回无效数据时保留原读回值并显示错误，不能乐观地把目标值写进本地 UI。
 
-冷启动恢复不会把“`CefInitialize` 已返回”误作扩展就绪。恢复的 HTTP(S) browser 先保持 `about:blank` 与 pending URL；当前 generation 完成后才统一放行首次导航。预期集合为空时也必须先通过 CDP 清理 Chromium profile 中可能残留的受管 unpacked 扩展，不能直接绕过屏障。`chrome.tabs.create` 的转交路径只在主框架确定加载 `about:blank` 后才按空白目标处理，避免临时 Chrome browser 与 Rex 正式标签对同一 URL 分别导航。
+扩展运行时变更按 generation 串行执行。原生 `loadUnpacked`、`reload`、启停或卸载操作必须成功，`Extensions.getExtensions` 必须确认实际启用的受管路径与当前预期集合一致，受管包也必须仍匹配事务开始时的指纹快照，generation 才能提交；注册表字段表面一致不能掩盖原生操作错误或事务期间的二次换盘。已停用扩展重新启用时先调用 `management.setEnabled(true)`，随后无条件调用 `developerPrivate.reload`，确保 Chromium 重新读取禁用期间发生的同版本 JS/CSS 变化。成功变更后，Rex 对活跃普通窗口中已加载的 HTTP(S) 页面各重载一次；休眠或冻结页面记录一次待处理重载并在恢复时执行，隐私窗口与内部页面不参与。失败 generation 不直接重载，只有随后成功提交的补偿 generation 才统一刷新。
 
-Swift 扩展事务由进程级异步门串行化，状态只由对应命令 completion 提交，不接受无关联 generation 的广播二次写入。同路径更新在目录换盘前原子写入 `runtime-replacements.json`，记录旧包、目标、备份和事务阶段；Chromium 确认后才提交并清理备份，确认前崩溃则在下次启动恢复上一版本。用户重新导入 Rex 受管目录自身时会显式传递强制重载路径，既有 JS/CSS 原地覆写无需依赖目录或 manifest stat 变化。多个普通窗口合并首次全量对账；窗口关闭会取消该窗口恢复、导航、休眠和事件任务，随后销毁其全部 Chromium 页面。
+冷启动恢复不会把“`CefInitialize` 已返回”误作扩展就绪，也不会重新安装已经存在于 Chromium profile 的受管扩展。恢复的 HTTP(S) browser 先保持 `about:blank` 与 pending URL；当前 generation 完成后才统一放行首次导航。每个标签的占位标记不会随屏障释放而删除，只在首个非空、非 `about:blank` 地址提交时清除，因此延迟地址/标题回调不会发布到 Rex 导航状态或覆盖持久会话。预期集合为空时也必须先通过 CDP 清理 Chromium profile 中可能残留的受管 unpacked 扩展，不能直接绕过屏障。连续冷启动不得重复触发 `runtime.onInstalled` 或 onboarding，并必须保持 `chrome.storage.local` 身份不变。`chrome.tabs.create` 的转交路径只在主框架确定加载 `about:blank` 后才按空白目标处理，避免临时 Chrome browser 与 Rex 正式标签对同一 URL 分别导航。
+
+Swift 扩展事务由进程级异步门串行化，状态只由对应命令 completion 提交，不接受无关联 generation 的广播二次写入。同路径更新在目录换盘前原子写入 `runtime-replacements.json`，记录旧包、目标、备份和事务阶段；Chromium 确认后才提交并清理备份，确认前崩溃则在下次启动恢复上一版本。原生事务指纹覆盖目录与 manifest 元数据，用于识别 Rex 的原子换盘；它不是整棵文件树的内容哈希。用户重新导入 Rex 受管目录自身时会显式传递强制重载路径，使既有 JS/CSS 原地覆写不依赖该指纹变化。多个普通窗口合并首次全量对账；窗口关闭会取消该窗口恢复、导航、休眠和事件任务，随后销毁其全部 Chromium 页面。
 
 真实 popup 内容由扩展包决定尺寸：非广告 fixture 为 `280×113`，显示 `Ready` 并与 service worker 完成消息交互；AdGuard 经相同通用路径调整为 `320×600`，分段交互有效，没有扩展专用执行适配器。普通 Rex UI 仍使用原有 Alloy 子视图嵌入，没有网页裁剪、负偏移或 Chrome 顶层窗口覆盖。未托管的 Chrome extension popup/auxiliary window 会把普通网页目标转交 Rex，再关闭辅助窗口。
 
-Rex 小型面板不触发 Chromium 原生 action popup。v0.9.5 将面板 surface ID 中经过验证的来源标签解析为只读 HTTP(S) 上下文，并在 popup 主文档加载开始时包装 `chrome.tabs.query`，使 `{active:true,currentWindow:true}` 返回用户点击前的来源网页；`chrome.tabs.getCurrent()` 仍按 action popup 语义返回空。stock CEF 150 的 Alloy 嵌入路径仍不提供完整 `activeTab` 授权，也不支持未声明静态 `default_popup` 时的 `action.onClicked` 和运行时 `action.setPopup` 动态变更。这些限制意味着核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容。
+Rex 小型面板不触发 Chromium 原生 action popup。面板 surface ID 只解析出经过验证的来源 tab identity；popup 主文档包装 `chrome.tabs.query` 后使用 Chromium `tabs.get(tabId)` 获取按扩展权限裁剪的 Tab，并只修正 active/highlighted 语义。Rex 不向 renderer 注入来源 URL 或标题；`chrome.tabs.getCurrent()` 仍按 action popup 语义返回空。stock CEF 150 的 Alloy 嵌入路径仍不提供完整 `activeTab` 授权，也不支持未声明静态 `default_popup` 时的 `action.onClicked` 和运行时 `action.setPopup` 动态变更。这些限制意味着核心探针通过不等同于所有 Chrome Web Store 扩展或全部 Chrome API 均兼容。
 
 Rex 源码和主可执行文件不包含 `SystemPasswordsCoordinator` 或 `AuthenticationServices` 依赖，不实现系统密码调用。打包门槛会拒绝 Rex 主 executable 链接该 framework 或 App 包含任何 `.systemextension`，并在 `PACKAGE-INFO.txt` 写入 `rex_password_integration=absent`。上游 Chromium Embedded Framework 自身仍链接该系统 framework，因此 bundle 级依赖审计不能据此声称完全不存在 `AuthenticationServices`。
 

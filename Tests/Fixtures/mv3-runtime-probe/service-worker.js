@@ -4,19 +4,41 @@ const probeConfig = globalThis.REX_MV3_PROBE_CONFIG ?? {};
 const workerBootId = crypto.randomUUID();
 const startupReady = (async () => {
   const current = await chrome.storage.local.get({
-    serviceWorkerStartCount: 0
+    serviceWorkerStartCount: 0,
+    persistentStorageSentinel: ""
   });
+  const persistentStorageSentinel =
+    current.persistentStorageSentinel || crypto.randomUUID();
   await chrome.storage.local.set({
     serviceWorkerStartCount: current.serviceWorkerStartCount + 1,
     serviceWorkerStartedAt: Date.now(),
-    workerBootId
+    workerBootId,
+    persistentStorageSentinel
   });
+  return {
+    serviceWorkerStartCount: current.serviceWorkerStartCount + 1,
+    persistentStorageSentinel
+  };
 })();
 
 function runtimeIdentity() {
   return {
     extensionId: chrome.runtime.id,
     version: chrome.runtime.getManifest().version
+  };
+}
+
+function tabSummary(tab) {
+  if (!tab) {
+    return null;
+  }
+  return {
+    id: tab.id ?? null,
+    windowId: tab.windowId ?? null,
+    index: tab.index ?? null,
+    active: tab.active === true,
+    url: tab.url ?? tab.pendingUrl ?? "",
+    title: tab.title ?? ""
   };
 }
 
@@ -81,9 +103,10 @@ async function reportAgainstCurrentPhase(event, fields) {
 }
 
 void startupReady
-  .then(() =>
+  .then((storageState) =>
     reportAgainstCurrentPhase("worker-boot", {
-      lifecycle: "boot"
+      lifecycle: "boot",
+      ...storageState
     })
   )
   .catch(() => {});
@@ -128,9 +151,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.runtime.onStartup.addListener(() => {
   void startupReady
-    .then(() =>
+    .then((storageState) =>
       reportAgainstCurrentPhase("runtime-startup", {
-        lifecycle: "startup"
+        lifecycle: "startup",
+        ...storageState
       })
     )
     .catch(() => {});
@@ -154,12 +178,81 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         lastContentMessageAt: Date.now(),
         lastContentSenderURL: sender.url ?? ""
       });
+      const senderTab = {
+        id: sender.tab?.id ?? null,
+        windowId: sender.tab?.windowId ?? null,
+        url: sender.tab?.url ?? sender.url ?? "",
+        title: sender.tab?.title ?? "",
+        frameId: sender.frameId ?? null,
+        documentId: sender.documentId ?? ""
+      };
+      let tabQueries = {
+        currentWindow: null,
+        lastFocusedWindow: null,
+        senderListed: false,
+        senderMatch: null,
+        error: ""
+      };
+      try {
+        const [currentWindowTabs, lastFocusedWindowTabs, allTabs] =
+          await Promise.all([
+            chrome.tabs.query({ active: true, currentWindow: true }),
+            chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+            chrome.tabs.query({})
+          ]);
+        const senderMatch = allTabs.find((tab) => tab.id === senderTab.id);
+        tabQueries = {
+          currentWindow: tabSummary(currentWindowTabs[0]),
+          lastFocusedWindow: tabSummary(lastFocusedWindowTabs[0]),
+          senderListed: Boolean(senderMatch),
+          senderMatch: tabSummary(senderMatch),
+          error: ""
+        };
+      } catch (queryError) {
+        tabQueries.error = String(queryError);
+      }
+
+      let workerToContent = {
+        ok: false,
+        response: null,
+        error: ""
+      };
+      if (Number.isInteger(senderTab.id) && senderTab.id >= 0) {
+        try {
+          const request = {
+            type: "probe-worker-to-content",
+            phaseToken: message.phaseToken,
+            documentId: message.documentId
+          };
+          const response = Number.isInteger(senderTab.frameId)
+            ? await chrome.tabs.sendMessage(senderTab.id, request, {
+                frameId: senderTab.frameId
+              })
+            : await chrome.tabs.sendMessage(senderTab.id, request);
+          workerToContent = {
+            ok:
+              response?.ok === true &&
+              response.source === "content-script" &&
+              response.runtimeId === identity.extensionId &&
+              response.documentId === message.documentId,
+            response: response ?? null,
+            error: ""
+          };
+        } catch (sendError) {
+          workerToContent.error = String(sendError);
+        }
+      } else {
+        workerToContent.error = "sender.tab.id is unavailable";
+      }
       let reportDelivered = false;
       let error = "";
       try {
         reportDelivered = await deliverReport(context, "worker-ack", {
           injectionCount: message.injectionCount,
           documentURL: message.pageURL ?? sender.url ?? "",
+          senderTab,
+          tabQueries,
+          workerToContent,
           dnr: {
             source: "page"
           }
@@ -174,6 +267,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         version: identity.version,
         reportDelivered,
         workerBootId,
+        senderTab,
+        workerToContent,
         error
       });
       return;
@@ -183,6 +278,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const stored = await chrome.storage.local.get({
         latestProbeContext: null
       });
+      let workerTabContext = null;
+      if (message.surface === "popup") {
+        workerTabContext = {
+          lastFocusedWindow: null,
+          error: ""
+        };
+        try {
+          const lastFocusedWindowTabs = await chrome.tabs.query({
+            active: true,
+            lastFocusedWindow: true
+          });
+          workerTabContext.lastFocusedWindow = tabSummary(
+            lastFocusedWindowTabs[0]
+          );
+        } catch (queryError) {
+          workerTabContext.error = String(queryError);
+        }
+      }
       await chrome.storage.local.set({
         lastSurfaceRuntimeMessage: message.type,
         lastSurface: message.surface,
@@ -194,7 +307,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         extensionId: identity.extensionId,
         version: identity.version,
         surface: message.surface,
-        probeContext: stored.latestProbeContext
+        probeContext: stored.latestProbeContext,
+        workerTabContext
       });
       return;
     }

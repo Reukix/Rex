@@ -11,6 +11,65 @@ enum RexApplicationLifecycle {
     }
 }
 
+struct RexWindowSessionFlushReport: Sendable {
+    let savedWindowIDs: Set<UUID>
+    let failedWindows: [UUID: String]
+    let skippedPrivateWindowIDs: Set<UUID>
+}
+
+@MainActor
+final class RexActiveWindowSessionRegistry {
+    static let shared = RexActiveWindowSessionRegistry()
+
+    private final class WeakStore {
+        weak var value: BrowserStore?
+
+        init(_ value: BrowserStore) {
+            self.value = value
+        }
+    }
+
+    private var storesByWindowID: [UUID: WeakStore] = [:]
+
+    func register(_ store: BrowserStore) {
+        storesByWindowID[store.windowID] = WeakStore(store)
+    }
+
+    func unregister(_ store: BrowserStore) {
+        guard storesByWindowID[store.windowID]?.value === store else { return }
+        storesByWindowID.removeValue(forKey: store.windowID)
+    }
+
+    func flushStandardWindowSessionsForApplicationTermination() async
+        -> RexWindowSessionFlushReport {
+        storesByWindowID = storesByWindowID.filter { $0.value.value != nil }
+        let activeStores = storesByWindowID.values.compactMap(\.value)
+        let privateWindowIDs = Set(activeStores.filter(\.profile.isPrivate).map(\.windowID))
+        let standardStores = activeStores
+            .filter { !$0.profile.isPrivate }
+            .sorted { $0.windowID.uuidString < $1.windowID.uuidString }
+
+        var savedWindowIDs = Set<UUID>()
+        var failedWindows: [UUID: String] = [:]
+        for store in standardStores {
+            if Task.isCancelled { break }
+            do {
+                try await store.persistLatestSessionSnapshotForApplicationTermination()
+                savedWindowIDs.insert(store.windowID)
+            } catch is CancellationError {
+                break
+            } catch {
+                failedWindows[store.windowID] = error.localizedDescription
+            }
+        }
+        return RexWindowSessionFlushReport(
+            savedWindowIDs: savedWindowIDs,
+            failedWindows: failedWindows,
+            skippedPrivateWindowIDs: privateWindowIDs
+        )
+    }
+}
+
 @MainActor
 final class RexWindowCoordinator: ObservableObject {
     let persistence: BrowserSQLitePersistence
@@ -133,6 +192,7 @@ struct RexWindowScene: View {
             }
             .onAppear {
                 RexMenuLocalization.schedule()
+                RexActiveWindowSessionRegistry.shared.register(store)
                 if !profile.isPrivate {
                     coordinator.registerNewWindow(windowID)
                     coordinator.restoreOtherWindows(using: openWindow)
@@ -146,6 +206,7 @@ struct RexWindowScene: View {
                 }
             }
             .onDisappear {
+                RexActiveWindowSessionRegistry.shared.unregister(store)
                 let removesPersistedSession = coordinator.shouldRemovePersistedSession(
                     for: windowID,
                     profile: profile
@@ -669,7 +730,6 @@ private extension BrowserAppearance {
     }
 }
 
-@main
 struct RexApp: App {
     @StateObject private var windowCoordinator = RexWindowCoordinator()
     @StateObject private var preferences = BrowserPreferences.shared

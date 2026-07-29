@@ -11,6 +11,12 @@ typedef void (^RexChromiumBrowserPreferredSizeHandler)(NSSize size);
 typedef void (^RexChromiumExtensionRuntimeCompletion)(
     NSDictionary<NSString *, id> *_Nullable result,
     NSError *_Nullable error);
+/// Returns Chromium's authoritative configuration for one installed
+/// extension. Optional capabilities are represented by the corresponding
+/// `*Available` fields in `configuration`.
+typedef void (^RexChromiumExtensionConfigurationCompletion)(
+    NSDictionary<NSString *, id> *_Nullable configuration,
+    NSError *_Nullable error);
 
 /// Errors produced while loading or initializing the embedded Chromium runtime.
 FOUNDATION_EXPORT NSErrorDomain const RexChromiumErrorDomain;
@@ -21,6 +27,11 @@ FOUNDATION_EXPORT NSInteger const RexChromiumNormalExitProcessNotifiedCode;
 
 /// Returns YES only for CEF's normal process-singleton early-exit result.
 FOUNDATION_EXPORT BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error);
+
+/// Orders an auxiliary AppKit window without taking key status. CEF embeds
+/// remote views whose macOS window-ordering callbacks can raise Objective-C
+/// exceptions; those must not escape into Swift's event dispatch path.
+FOUNDATION_EXPORT BOOL RexOrderAuxiliaryWindowFrontSafely(NSWindow *window);
 
 /// Stable AppKit host for one CEF browser instance. SwiftUI may resize or move
 /// this view but must not recreate it for ordinary state changes.
@@ -75,7 +86,8 @@ FOUNDATION_EXPORT BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error);
 
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
                     locale:(NSString *)locale
-            extensionPaths:(NSArray<NSString *> *)extensionPaths
+     managedExtensionPaths:(NSArray<NSString *> *)managedExtensionPaths
+     enabledExtensionPaths:(NSArray<NSString *> *)enabledExtensionPaths
                      error:(NSError **)error;
 - (void)prepareForApplicationTermination:(void (^)(void))completion;
 - (void)shutdownAfterApplicationTermination;
@@ -116,23 +128,42 @@ FOUNDATION_EXPORT BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error);
 /// Global content-blocking toggle for the curated ad/tracker host catalogs.
 /// Takes effect immediately for subsequent requests; no restart needed.
 - (void)setContentBlockingEnabled:(BOOL)enabled;
-/// Reconciles Chromium's live unpacked-extension set with `extensionPaths`.
-/// The legacy fire-and-forget form remains for existing callers.
-- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths;
-/// Completion is delivered on the main thread. Success is reported only after
-/// a final Extensions.getExtensions result matches the requested managed set.
-- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths
-                           completion:
-                               (nullable RexChromiumExtensionRuntimeCompletion)
-                                   completion;
-/// `forceReloadPaths` must be a subset of `extensionPaths`. Those packages are
-/// unloaded and loaded even when the directory/manifest stat fingerprint is
-/// unchanged, covering explicit re-import of an edited managed directory.
-- (void)reloadExtensionRulesFromPaths:(NSArray<NSString *> *)extensionPaths
-                     forceReloadPaths:(NSArray<NSString *> *)forceReloadPaths
-                           completion:
-                               (nullable RexChromiumExtensionRuntimeCompletion)
-                                   completion;
+/// Reconciles Chromium's live unpacked extensions while preserving disabled
+/// packages in the profile. Only `removedPaths` authorizes an uninstall;
+/// `enabledPaths` and `forceReloadPaths` must be subsets of `managedPaths`.
+/// Completion is delivered on the main thread after final registry validation.
+- (void)reloadExtensionRulesFromManagedPaths:
+            (NSArray<NSString *> *)managedPaths
+                                  enabledPaths:
+                                      (NSArray<NSString *> *)enabledPaths
+                                  removedPaths:
+                                      (NSArray<NSString *> *)removedPaths
+                              forceReloadPaths:
+                                  (NSArray<NSString *> *)forceReloadPaths
+                                    completion:
+                                        (nullable RexChromiumExtensionRuntimeCompletion)
+                                            completion;
+/// Reads one extension through the hidden chrome://extensions management
+/// context. The completion is delivered on the main thread.
+- (void)readExtensionConfigurationForExtensionID:(NSString *)extensionID
+                                        completion:
+                                            (nullable RexChromiumExtensionConfigurationCompletion)
+                                                completion;
+/// Applies only the nonnull fields, then reads the extension back from
+/// Chromium and returns that authoritative state. `hostAccess`, when present,
+/// must be ON_CLICK, ON_SPECIFIC_SITES, or ON_ALL_SITES. A nonnull
+/// `sitePermissionHost` must be paired with `sitePermissionGranted` and is
+/// applied through developerPrivate.addHostPermission/removeHostPermission.
+- (void)updateExtensionConfigurationForExtensionID:(NSString *)extensionID
+                                         hostAccess:(nullable NSString *)hostAccess
+                                  userScriptsAccess:(nullable NSNumber *)userScriptsAccess
+                                          fileAccess:(nullable NSNumber *)fileAccess
+                                     incognitoAccess:(nullable NSNumber *)incognitoAccess
+                                  sitePermissionHost:(nullable NSString *)sitePermissionHost
+                               sitePermissionGranted:(nullable NSNumber *)sitePermissionGranted
+                                          completion:
+                                              (nullable RexChromiumExtensionConfigurationCompletion)
+                                                  completion;
 - (void)setZoomLevel:(double)zoomLevel tabID:(NSString *)tabID;
 - (void)findText:(NSString *)text
          forward:(BOOL)forward

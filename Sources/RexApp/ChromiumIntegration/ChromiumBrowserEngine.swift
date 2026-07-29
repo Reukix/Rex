@@ -15,7 +15,12 @@ final class ChromiumBrowserEngine: BrowserEngine {
     init(runtime: RexChromiumRuntime = .shared) {
         self.runtime = runtime
         runtime.eventHandler = { [weak self] payload in
-            Task { @MainActor in self?.receive(payload) }
+            // RexChromiumRuntime always invokes its handler on the main thread.
+            // Consume synchronously so address/loading callbacks cannot overtake
+            // one another while being wrapped in separate unstructured tasks.
+            MainActor.assumeIsolated {
+                self?.receive(payload)
+            }
         }
     }
 
@@ -84,11 +89,18 @@ final class ChromiumBrowserEngine: BrowserEngine {
             )
         case let .setContentBlocking(enabled):
             runtime.setContentBlockingEnabled(enabled)
-        case let .reloadExtensionRules(paths, forceReloadPaths):
+        case let .reloadExtensionRules(
+            managedPaths,
+            enabledPaths,
+            removedPaths,
+            forceReloadPaths
+        ):
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Void, Error>) in
                 runtime.reloadExtensionRules(
-                    fromPaths: paths,
+                    fromManagedPaths: managedPaths,
+                    enabledPaths: enabledPaths,
+                    removedPaths: removedPaths,
                     forceReloadPaths: forceReloadPaths
                 ) { _, error in
                     if let error {
@@ -140,6 +152,63 @@ final class ChromiumBrowserEngine: BrowserEngine {
         }
     }
 
+    func extensionRuntimeConfiguration(
+        extensionID: String
+    ) async throws -> BrowserExtensionRuntimeConfiguration {
+        guard RexExtensionResourceURL.isValidRuntimeID(extensionID) else {
+            throw BrowserEngineError.invalidPayload
+        }
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<BrowserExtensionRuntimeConfiguration, Error>) in
+            runtime.readExtensionConfiguration(
+                forExtensionID: extensionID
+            ) { configuration, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let configuration,
+                          let decoded = BrowserExtensionRuntimeConfiguration(configuration),
+                          decoded.extensionID == extensionID {
+                    continuation.resume(returning: decoded)
+                } else {
+                    continuation.resume(throwing: BrowserEngineError.invalidPayload)
+                }
+            }
+        }
+    }
+
+    func updateExtensionRuntimeConfiguration(
+        extensionID: String,
+        update: BrowserExtensionRuntimeConfigurationUpdate
+    ) async throws -> BrowserExtensionRuntimeConfiguration {
+        guard RexExtensionResourceURL.isValidRuntimeID(extensionID), !update.isEmpty else {
+            throw BrowserEngineError.invalidPayload
+        }
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<BrowserExtensionRuntimeConfiguration, Error>) in
+            runtime.updateExtensionConfiguration(
+                forExtensionID: extensionID,
+                hostAccess: update.hostAccess?.rawValue,
+                userScriptsAccess: update.userScriptsAccess.map(NSNumber.init(value:)),
+                fileAccess: update.fileAccess.map(NSNumber.init(value:)),
+                incognitoAccess: update.incognitoAccess.map(NSNumber.init(value:)),
+                sitePermissionHost: update.sitePermission?.host,
+                sitePermissionGranted: update.sitePermission.map {
+                    NSNumber(value: $0.isGranted)
+                }
+            ) { configuration, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let configuration,
+                          let decoded = BrowserExtensionRuntimeConfiguration(configuration),
+                          decoded.extensionID == extensionID {
+                    continuation.resume(returning: decoded)
+                } else {
+                    continuation.resume(throwing: BrowserEngineError.invalidPayload)
+                }
+            }
+        }
+    }
+
     private func receive(_ payload: [String: Any]) {
         guard let kind = payload["kind"] as? String else { return }
         if kind == "extensionRuntimeChanged" || kind == "extensionRuntimeError" {
@@ -160,21 +229,23 @@ final class ChromiumBrowserEngine: BrowserEngine {
         switch kind {
         case "created":
             emit(.pageCreated(tabID: tabID))
+        case "focused":
+            emit(.pageFocused(tabID: tabID))
         case "address":
-            mutateNavigation(tabID) { state in
+            mutateNavigation(tabID, payload: payload) { state in
                 if let value = payload["url"] as? String {
                     state.url = Self.userVisibleURL(from: value)
                 }
             }
         case "loading":
-            mutateNavigation(tabID) { state in
+            mutateNavigation(tabID, payload: payload) { state in
                 state.isLoading = payload["isLoading"] as? Bool ?? false
                 state.canGoBack = payload["canGoBack"] as? Bool ?? false
                 state.canGoForward = payload["canGoForward"] as? Bool ?? false
                 if !state.isLoading { state.loadingProgress = 1 }
             }
         case "progress":
-            mutateNavigation(tabID) { state in
+            mutateNavigation(tabID, payload: payload) { state in
                 state.loadingProgress = payload["progress"] as? Double ?? 0
             }
         case "siteSecurity":
@@ -183,6 +254,7 @@ final class ChromiumBrowserEngine: BrowserEngine {
             visibleInfo.url = info.url.flatMap(Self.userVisibleURL(from:))
             emit(.siteSecurityChanged(tabID: tabID, info: visibleInfo))
         case "title":
+            guard !isStaleNavigationPayload(payload, for: tabID) else { return }
             emit(.titleChanged(
                 tabID: tabID,
                 title: RexExtensionResourceURL.userVisibleString(
@@ -315,6 +387,7 @@ final class ChromiumBrowserEngine: BrowserEngine {
             navigationStates.removeValue(forKey: tabID)
             emit(.pageClosed(tabID: tabID))
         case "loadError":
+            guard !isStaleNavigationPayload(payload, for: tabID) else { return }
             let message = RexExtensionResourceURL.userVisibleString(
                 from: payload["message"] as? String ?? "Navigation failed"
             )
@@ -355,11 +428,40 @@ final class ChromiumBrowserEngine: BrowserEngine {
         ))
     }
 
-    private func mutateNavigation(_ tabID: UUID, mutation: (inout NavigationState) -> Void) {
+    private func mutateNavigation(
+        _ tabID: UUID,
+        payload: [String: Any]? = nil,
+        mutation: (inout NavigationState) -> Void
+    ) {
         var state = navigationStates[tabID] ?? NavigationState()
+        if let payload,
+           let generation = Self.navigationGeneration(from: payload) {
+            if let currentGeneration = state.navigationGeneration,
+               generation < currentGeneration {
+                return
+            }
+            if generation > (state.navigationGeneration ?? 0) {
+                state.url = nil
+                state.title = ""
+                state.loadingProgress = 0
+            }
+            state.navigationGeneration = generation
+        }
         mutation(&state)
         navigationStates[tabID] = state
         emit(.navigationChanged(tabID: tabID, state: state))
+    }
+
+    private func isStaleNavigationPayload(_ payload: [String: Any], for tabID: UUID) -> Bool {
+        guard let generation = Self.navigationGeneration(from: payload),
+              let currentGeneration = navigationStates[tabID]?.navigationGeneration else {
+            return false
+        }
+        return generation < currentGeneration
+    }
+
+    private static func navigationGeneration(from payload: [String: Any]) -> UInt64? {
+        (payload["navigationGeneration"] as? NSNumber)?.uint64Value
     }
 
     private func downloadRetryKey(tabID: UUID, url: URL) -> String {
@@ -371,6 +473,7 @@ final class ChromiumBrowserEngine: BrowserEngine {
     }
 
     private static func runtimeURL(for url: URL) -> URL? {
+        guard !RexExtensionsPage.matches(url) else { return nil }
         if let extensionURL = RexExtensionResourceURL(rexURL: url) {
             return extensionURL.chromiumURL
         }
@@ -382,7 +485,10 @@ final class ChromiumBrowserEngine: BrowserEngine {
 
     private static func userVisibleURL(from value: String) -> URL? {
         guard let url = URL(string: value) else { return nil }
-        return RexExtensionResourceURL.userVisibleURL(from: url)
+        guard let internalURL = RexExtensionsPage.userVisibleURL(from: url) else {
+            return nil
+        }
+        return RexExtensionResourceURL.userVisibleURL(from: internalURL)
     }
 
     private static func userVisibleURL(from url: URL) -> URL? {
@@ -390,7 +496,7 @@ final class ChromiumBrowserEngine: BrowserEngine {
     }
 
     private static func isAllowedUserVisibleNavigation(_ url: URL) -> Bool {
-        if RexExtensionResourceURL(rexURL: url) != nil {
+        if RexExtensionsPage.matches(url) || RexExtensionResourceURL(rexURL: url) != nil {
             return true
         }
         return ["http", "https", "about"].contains(url.scheme?.lowercased() ?? "")
@@ -405,7 +511,6 @@ struct ChromiumBrowserSurface: NSViewRepresentable {
 
     func makeNSView(context: Context) -> RexChromiumBrowserView {
         let initialURL = Self.runtimeURLString(for: tab.url)
-        context.coordinator.lastURL = initialURL
         context.coordinator.lastMuted = tab.isMuted
         RexChromiumRuntime.shared.setAudioMuted(tab.isMuted, tabID: tab.id.uuidString)
         return RexChromiumRuntime.shared.browserView(
@@ -422,22 +527,17 @@ struct ChromiumBrowserSurface: NSViewRepresentable {
             context.coordinator.lastMuted = tab.isMuted
             RexChromiumRuntime.shared.setAudioMuted(tab.isMuted, tabID: tab.id.uuidString)
         }
-        let nextURL = Self.runtimeURLString(for: tab.url)
-        guard context.coordinator.lastURL != nextURL else { return }
-        context.coordinator.lastURL = nextURL
-        RexChromiumRuntime.shared.loadURLString(
-            nextURL,
-            tabID: tab.id.uuidString
-        )
+        // tab.url is Chromium's observed state. Only BrowserCommand.loadURL
+        // may turn a Rex navigation intent back into a runtime navigation.
     }
 
     final class Coordinator {
-        var lastURL: String?
         var lastMuted: Bool?
     }
 
     private static func runtimeURLString(for url: URL?) -> String {
         guard !BrowserStartPage.matches(url), let url else { return "about:blank" }
+        guard !RexExtensionsPage.matches(url) else { return "about:blank" }
         return RexExtensionResourceURL(rexURL: url)?.chromiumURL.absoluteString
             ?? url.absoluteString
     }
@@ -573,10 +673,15 @@ struct ChromiumDeveloperToolsSurface: NSViewRepresentable {
 
 @MainActor
 final class RexAppDelegate: NSObject, NSApplicationDelegate {
+    private static let sessionFlushTimeout: Duration = .seconds(5)
+
     private var initializationError: Error?
     private var shouldTerminateAfterNormalEarlyExit = false
     private var isPreparingTermination = false
     private var isTerminationReady = false
+    private var didFinishSessionPreparation = false
+    private var sessionFlushTask: Task<Void, Never>?
+    private var sessionFlushTimeoutTask: Task<Void, Never>?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         installApplicationIcon()
@@ -593,7 +698,8 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
             try RexChromiumRuntime.shared.start(
                 withCacheRoot: cacheRoot,
                 locale: "zh-CN",
-                extensionPaths: BrowserExtensionsStore.shared.startupExtensionPaths
+                managedExtensionPaths: BrowserExtensionsStore.shared.managedRuntimeExtensionPaths,
+                enabledExtensionPaths: BrowserExtensionsStore.shared.startupExtensionPaths
             )
             // Initial content-blocking state; window stores re-push on toggle changes.
             RexChromiumRuntime.shared.setContentBlockingEnabled(
@@ -635,20 +741,56 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
         guard RexChromiumRuntime.shared.isReady else { return .terminateNow }
         guard !isPreparingTermination else { return .terminateCancel }
         isPreparingTermination = true
+        sessionFlushTask = Task { @MainActor [weak self] in
+            let report = await RexActiveWindowSessionRegistry.shared
+                .flushStandardWindowSessionsForApplicationTermination()
+            guard !Task.isCancelled else { return }
+            self?.finishSessionPreparation(report: report, sender: sender, timedOut: false)
+        }
+        sessionFlushTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: Self.sessionFlushTimeout)
+            } catch {
+                return
+            }
+            self?.finishSessionPreparation(report: nil, sender: sender, timedOut: true)
+        }
+        return .terminateCancel
+    }
+
+    private func finishSessionPreparation(
+        report: RexWindowSessionFlushReport?,
+        sender: NSApplication,
+        timedOut: Bool
+    ) {
+        guard !didFinishSessionPreparation else { return }
+        didFinishSessionPreparation = true
+        sessionFlushTimeoutTask?.cancel()
+        sessionFlushTimeoutTask = nil
+        if timedOut {
+            sessionFlushTask?.cancel()
+            NSLog("[Rex] Timed out while persisting window sessions; continuing shutdown.")
+        } else if let report {
+            for (windowID, message) in report.failedWindows {
+                NSLog("[Rex] Failed to persist window %@ before shutdown: %@", windowID.uuidString, message)
+            }
+        }
+        sessionFlushTask = nil
+
         RexChromiumRuntime.shared.prepare(forApplicationTermination: {
             MainActor.assumeIsolated {
                 self.isTerminationReady = true
-                sender.terminate(nil)
+                // CEF must leave NSApplication.run before CefShutdown. The
+                // explicit main entry point performs final shutdown afterward.
+                DispatchQueue.main.async {
+                    sender.stop(nil)
+                }
             }
         })
-        // Let the current Cocoa event and CefScopedSendingEvent unwind. The
-        // completion initiates a second termination after CEF is fully closed.
-        return .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         RexApplicationLifecycle.beginTermination()
-        RexChromiumRuntime.shared.shutdownAfterApplicationTermination()
     }
 }
 #endif

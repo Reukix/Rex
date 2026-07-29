@@ -42,6 +42,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHighResolutionCapable: true
+        NSBluetoothAlwaysUsageDescription: "Rex 仅在您允许的网站请求时使用蓝牙连接安全密钥或附近设备。"
         NSCameraUsageDescription: "Rex 仅在您允许的网站请求时使用摄像头。"
         NSMicrophoneUsageDescription: "Rex 仅在您允许的网站请求时使用麦克风。"
         NSLocationUsageDescription: "Rex 仅在您允许的网站请求时提供位置信息。"
@@ -49,8 +50,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rex.browser
         PRODUCT_NAME: Rex
-        MARKETING_VERSION: 0.9.5
-        CURRENT_PROJECT_VERSION: 950
+        MARKETING_VERSION: 0.9.7
+        CURRENT_PROJECT_VERSION: 970
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "6.0"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) REX_CEF"

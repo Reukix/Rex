@@ -139,6 +139,8 @@ private struct BrowserPane: View {
         Group {
             if BrowserStartPage.matches(tab.url) {
                 BrowserStartPageView(tabID: tab.id)
+            } else if RexExtensionsPage.matches(tab.url) {
+                RexExtensionsPageView(url: tab.url)
             } else if let extensionPageError {
                 RexExtensionPageUnavailableView(
                     title: extensionPageError.title,

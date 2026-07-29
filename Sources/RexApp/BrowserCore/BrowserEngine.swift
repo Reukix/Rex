@@ -85,10 +85,15 @@ enum BrowserCommand: Sendable, Equatable {
     )
     /// Engine-global ad/tracker content blocking (bound to the Settings toggle).
     case setContentBlocking(enabled: Bool)
-    /// Reconcile Chromium's live extension set with the managed paths.
-    /// `forceReloadPaths` covers an explicitly re-imported managed directory
-    /// whose payload changed without changing its manifest or directory inode.
-    case reloadExtensionRules(paths: [String], forceReloadPaths: [String])
+    /// Reconcile Chromium's live extensions without conflating disable and removal.
+    /// `enabledPaths` and `forceReloadPaths` must be subsets of `managedPaths`;
+    /// only `removedPaths` authorizes an uninstall.
+    case reloadExtensionRules(
+        managedPaths: [String],
+        enabledPaths: [String],
+        removedPaths: [String],
+        forceReloadPaths: [String]
+    )
     case find(tabID: UUID, query: String, forward: Bool, findNext: Bool)
     case stopFinding(tabID: UUID)
     case openDeveloperTools(tabID: UUID)
@@ -105,6 +110,7 @@ enum BrowserCommand: Sendable, Equatable {
 
 enum BrowserEvent: Sendable, Equatable {
     case pageCreated(tabID: UUID)
+    case pageFocused(tabID: UUID)
     case navigationChanged(tabID: UUID, state: NavigationState)
     case titleChanged(tabID: UUID, title: String)
     case faviconChanged(tabID: UUID, url: URL?, imageData: Data?)
@@ -144,6 +150,28 @@ enum BrowserEngineError: LocalizedError, Sendable {
 protocol BrowserEngine: Sendable {
     func execute(_ command: BrowserCommand) async throws
     func eventStream() async -> AsyncStream<BrowserEvent>
+    func extensionRuntimeConfiguration(
+        extensionID: String
+    ) async throws -> BrowserExtensionRuntimeConfiguration
+    func updateExtensionRuntimeConfiguration(
+        extensionID: String,
+        update: BrowserExtensionRuntimeConfigurationUpdate
+    ) async throws -> BrowserExtensionRuntimeConfiguration
+}
+
+extension BrowserEngine {
+    func extensionRuntimeConfiguration(
+        extensionID: String
+    ) async throws -> BrowserExtensionRuntimeConfiguration {
+        throw BrowserEngineError.chromiumUnavailable
+    }
+
+    func updateExtensionRuntimeConfiguration(
+        extensionID: String,
+        update: BrowserExtensionRuntimeConfigurationUpdate
+    ) async throws -> BrowserExtensionRuntimeConfiguration {
+        throw BrowserEngineError.chromiumUnavailable
+    }
 }
 
 @MainActor
@@ -188,7 +216,7 @@ actor PrototypeBrowserEngine: BrowserEngine {
         case let .loadURL(tabID, url):
             try requireKnown(tabID)
             let isExtensionResource = RexExtensionResourceURL(rexURL: url) != nil
-            guard isExtensionResource
+            guard RexExtensionsPage.matches(url) || isExtensionResource
                     || ["http", "https", "about"].contains(url.scheme?.lowercased() ?? "")
             else {
                 throw BrowserEngineError.unsupportedScheme

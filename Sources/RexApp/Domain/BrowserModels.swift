@@ -297,6 +297,9 @@ struct NavigationState: Codable, Hashable, Sendable {
     var loadingProgress = 0.0
     var zoomLevel = 1.0
     var isSecure = true
+    /// Chromium's monotonically increasing identity for a main-frame navigation.
+    /// Optional so session snapshots written before this field remain decodable.
+    var navigationGeneration: UInt64?
 }
 
 struct SplitViewSession: Identifiable, Codable, Hashable, Sendable {
