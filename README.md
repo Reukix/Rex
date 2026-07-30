@@ -33,6 +33,15 @@ Scripts/package-chromium-app.sh 0.9.7 970 Release
 
 build 970 只交付本地 Beta ZIP，不生成 DMG。最终产物为 `Dist/Rex.app`（`343M` / `351344 KiB`）与 `Dist/Rex-v0.9.7-macos-arm64-chromium.zip`（`142,723,427` bytes，`147740 KiB` / `144M`），ZIP SHA-256 为 `0940bab0c6541b39b85a26668096dfbd738ae1dc5c62360a8a5a0ab7f45480f3`；详细清单见 `Dist/PACKAGE-INFO.txt` 与 `Dist/SHA256SUMS`。当前包仍使用 ad-hoc 签名、未启用 Hardened Runtime 且未公证，不是正式分发候选。
 
+自动化 QA 不得直接运行上述 App，也不得使用 `open`。唯一支持的烟测入口会为
+Rex 创建隔离的临时用户目录，并验证真实配置未被修改：
+
+```bash
+Scripts/run-isolated-rex-smoke.sh
+```
+
+事件记录与恢复边界见 [QA 配置隔离说明](Documentation/QAProfileSafety.md)。
+
 CEF 固定为 `150.0.14` 官方标准发行包，对应 Chromium `150.0.7871.129`。`Vendor/CEF` 和下载归档不进入版本控制，可随时根据锁文件重建。
 
 ## 文档入口
@@ -46,6 +55,7 @@ CEF 固定为 `150.0.14` 官方标准发行包，对应 Chromium `150.0.7871.129
 - [技术架构](Documentation/Architecture.md)
 - [安全、隐私与性能](Documentation/SecurityPrivacyPerformance.md)
 - [测试与交付计划](Documentation/DeliveryPlan.md)
+- [QA 配置隔离与真实配置保护](Documentation/QAProfileSafety.md)
 - [功能状态](FEATURES.md)
 - [路线图](ROADMAP.md)
 
