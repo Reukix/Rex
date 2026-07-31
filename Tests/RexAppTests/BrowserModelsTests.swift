@@ -3208,6 +3208,24 @@ func windowChromeToolbarInset() {
     #expect(RexMetrics.toolbarHeight == 44)
 }
 
+@Test("Toolbar auxiliary panels never use SwiftUI popovers beside windowed CEF")
+func toolbarAuxiliaryPanelsAvoidCEFChildWindowOrdering() throws {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appending(
+        path: "Sources/RexApp/Features/AppShell/BrowserRootView.swift"
+    )
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(!source.contains(".popover("))
+    #expect(
+        source.components(separatedBy: "RexToolbarPanelAnchor(controller:").count - 1 == 4
+    )
+    #expect(source.contains("RexOrderAuxiliaryWindowFrontSafely(panel)"))
+}
+
 @Test("About information is derived from release and feature catalogs")
 func aboutInformationUsesReleaseCatalogs() {
     let activeFeature = FeatureRecord(

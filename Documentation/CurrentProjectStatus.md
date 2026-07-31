@@ -1,7 +1,7 @@
 # Rex 当前项目状态与问题清单
 
 最后更新：2026-08-01
-当前基线：v0.9.8（build 982 本地 Beta 候选）
+当前基线：v0.9.8（build 983 本地 Beta 候选）
 发布通道：Beta
 
 本文用于集中说明 Rex 当前能做什么、工程处于什么阶段、哪些问题仍未解决，以及最近哪些高风险问题已经修复。具体需求、实现细节和历史变化仍分别以 `ProductRequirements.md`、`Architecture.md`、`FEATURES.md`、`ROADMAP.md` 和版本发布说明为准。
@@ -18,19 +18,19 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 |---|---|
 | 系统 | macOS 14 或更高版本 |
 | 架构 | 仅 Apple Silicon（arm64） |
-| 应用版本 | v0.9.8（build 982） |
+| 应用版本 | v0.9.8（build 983） |
 | Chromium | 150.0.7871.129 |
 | CEF | 150.0.14，官方 standard ARM64 发行包 |
 | 产品外壳 | SwiftUI + AppKit |
 | 浏览器桥 | Swift `BrowserEngine` + Objective-C++ CEF facade |
 | 数据存储 | SQLite，会话、历史、收藏、下载、权限和网站策略 |
 | 当前签名 | `Dist` 的 11 个 Mach-O 均为同一 Apple Development 个人团队签名；Hardened Runtime 关闭，只用于开发/本地 Beta |
-| 当前产物 | `Dist/Rex.app`（344M / 352344 KiB）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,034,126 bytes，147968 KiB / 145M） |
-| ZIP SHA-256 | `d57573e5b5bc441e37ad07270f9e90cb4f7aafd53cc8e8d8f65f7ad372fa2e8e` |
+| 当前产物 | `Dist/Rex.app`（344M / 352312 KiB）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,035,796 bytes，147520 KiB / 144M） |
+| ZIP SHA-256 | `d1c58812160421f80a4b35c24d81b128550afb4211866b9817e5df4dfeecff78` |
 
 ## 2. 技术架构概览
 
-- SwiftUI 负责主要界面和状态呈现，AppKit 负责原生窗口、稳定的 Chromium `NSView` 宿主和扩展浮窗。
+- SwiftUI 负责主要界面和状态呈现，AppKit 负责原生窗口、稳定的 Chromium `NSView` 宿主，以及下载、隐私、站点信息和扩展工具栏浮窗。
 - `BrowserStore` 在主线程维护窗口、标签、工作空间、分屏和可见状态。
 - `BrowserEngine` 使用类型安全命令和事件连接 Swift 与 Objective-C++；网页不能获得任意原生调用入口。
 - CEF/Chromium 负责 Browser、Renderer、GPU、Utility 和扩展运行时等多进程能力，并启用 Chromium sandbox 与 site isolation。
@@ -137,14 +137,14 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 
 ## 4. 当前验证状态
 
-v0.9.8 build 982 当前完成源码层安全与隐私主线：
+v0.9.8 build 983 当前完成源码层安全与隐私主线：
 
 - Chromium 下载事实到 Rex 右侧模块的映射已实现：进度优先使用 Chromium 百分比，状态、按钮可用性与终态只映射 Chromium 快照，未知状态不可操作；GitHub release DMG 崩溃定位为 `ParallelDownloading` 兼容性问题并已修复。
 - Mozilla PSL `2026-07-25_14-20-03_UTC` 与 JSON 隐私目录是 bundle 基线；两者可由 Ed25519 签名包同版本更新，并实施同源下载、原子安装、LKG、失败回退、降级拒绝、吊销和 kill switch。旧站点策略按最近更新时间原子迁移。
 - CRX、普通下载、安全资源和应用更新四类供应链使用独立验证权威；应用更新 manifest 还要求独立 trust domain、公钥、向前 build 与当前 build 的精确回退包。
 - 隐私统计、应用级 Cookie、已知指纹服务与恶意网站检测边界已在 UI、结构化发布数据和文档统一。
-- Swift Testing `182/182`、Release Notes Validator（28 个功能 ID）以及 MV3 verifier 语法与自测通过；13 个新增测试覆盖安全资源与供应链故障注入。
-- CEF bridge arm64 Release 和完整 Xcode Release 通过；App 为 `0.9.8 / 982`。最终本地 Beta 包的 11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。打包后的 `Dist/Rex.app` 隔离烟测通过，真实数据指纹不变且 Helper 全部退出。
+- Swift Testing `183/183`、Release Notes Validator（28 个功能 ID）以及 MV3 verifier 语法与自测通过；13 个新增测试覆盖安全资源与供应链故障注入，工具栏结构测试禁止重新使用 SwiftUI popover。
+- CEF bridge arm64 Release 和完整 Xcode Release 通过；App 为 `0.9.8 / 983`。最终本地 Beta 包的 11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。打包后的 `Dist/Rex.app` 隔离烟测通过，真实数据指纹不变且 Helper 全部退出。
 - 新版隔离下载矩阵确认内置 Chromium 下载 UI 控制扩展已启动，`safe.pdf` 由 Chromium 完成下载到隔离 `Downloads/Rex`；截图确认左上角开始动画和 Chromium 完成气泡均未显示，Rex 右侧浮层显示完成状态，CEF 正常关闭且真实数据指纹不变。
 - 隔离 harness 使用 CEF 官方 macOS `--use-mock-keychain` 参数；Chromium 下载矩阵的 loopback fixture 与隔离启动器已完成。GitHub release DMG 已完整下载 53,879,378 bytes，CEF 正常关闭且真实数据指纹不变。
 - 本轮第一次 GUI 操作曾因相同 bundle ID 绕过隔离意外启动真实 profile Rex，随后还直接启动过 build 981；两次均已正常退出，但 `~/Library/Application Support/Rex/Chromium` 的元数据在 `22:39:46-22:42:14 +0800` 发生变化。未删除、恢复或回滚真实数据，证据保留于 `/tmp/rex-download-matrix.gGKMWW` 与 `/tmp/rex-qa-smoke.HmCiQD`；后续纯隔离证据为 `/tmp/rex-download-matrix.w2vfqU` 与 `/tmp/rex-qa-smoke.JPjsZd`。
@@ -238,7 +238,7 @@ v0.9.6 build 962 的历史产物与验收数据保留在 [v0.9.6 发布说明](R
 2. **网页暴露自动化指纹导致反自动化白屏。** 内部 DevTools pipe 不再使页面暴露 `navigator.webdriver=true`，User-Agent 恢复标准 Chrome 版本段。
 3. **强制绕过系统代理。** CEF 不再追加 `--no-proxy-server`，恢复遵循 macOS 系统代理。
 4. **首次 `loadURL` 导航竞态。** 地址提交会等待页面创建和站点隐私策略准备完成，首次导航不再被静默丢弃。
-5. **CEF RemoteView 上的 SwiftUI Popover 崩溃。** 扩展列表和 popup 改为独立 AppKit 浮窗，移除了 `.popover` / `NSWindow.addChildWindow` 的高风险路径。
+5. **CEF RemoteView 上的 SwiftUI Popover 崩溃。** 扩展、下载、隐私和站点信息工具栏入口均改为独立 AppKit 浮窗，`BrowserRootView` 不再使用 `.popover`，移除了 `NSWindow.addChildWindow` 的高风险路径。
 6. **静态 popup 缺失真实来源身份。** `chrome.tabs.query` 的 currentWindow/lastFocusedWindow 现在按 CEF 真实 `tabId` 精确选择来源 HTTP(S) 标签，并由 Chromium `tabs.get` 返回权限裁剪后的字段；重复 URL/标题不再误选，Rex 也不注入敏感字段。
 7. **原生扩展页坐标耦合。** `rex://extensions` 现由 Rex SwiftUI/AppKit 呈现，不再把用户交互绑定到 Chromium 子窗口坐标；`chrome://extensions` 只保留为不可见 API 上下文。
 8. **扩展热生命周期与更新回滚竞态（v0.9.4）。** generation 串行、状态按命令 completion 提交，同路径更新由磁盘 journal 保护并可在启动时回滚。

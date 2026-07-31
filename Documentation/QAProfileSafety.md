@@ -19,6 +19,20 @@ build 981。两次进程均已通过 Cocoa 正常退出，但
 `/tmp/rex-qa-smoke.HmCiQD`。以后不得使用通用 GUI 控制或 Launch Services 操作 Rex QA，
 只能使用本文件规定的隔离脚本。
 
+2026-08-01 `02:19:05-02:21:25 +0800`，在 build 983 的隔离下载矩阵通过后，
+Computer Use 无法可靠绑定已经由隔离脚本启动的 Rex PID；随后按构建产物完整路径定位时，
+系统另行启动了 `Dist/Rex.app`（PID 39494、PPID 1）。该进程没有
+`CFFIXED_USER_HOME` 或 `REX_QA_ISOLATED`，并打开了真实
+`~/Library/Application Support/Rex`。发现后已立即通过 Cocoa 正常终止，所有 Helper
+均已退出。元数据扫描记录到该时间窗内 68 个文件发生变化：58 个位于
+`Chromium/Default`，8 个位于 Chromium profile 根级，另有 `Browser.sqlite-wal` 与
+`Browser.sqlite-shm`；临时元数据清单保留于
+`/tmp/rex-real-profile-20260801-0219-metadata.txt`。没有主动查询数据库内容，也没有删除、
+恢复或回滚真实配置；GUI 截图曾显示真实 Rex 起始页上的历史/书签信息，因此该截图也
+视为用户数据，不进入仓库。此事件再次确认：即使向 GUI 自动化提供 app 完整路径，
+相同 bundle ID 仍可能经 Launch Services 启动或复用非隔离实例。Rex QA 禁止继续使用
+Computer Use；运行态验证只能由隔离脚本直接启动 executable。
+
 取证期间曾对 `Browser.sqlite` 执行只读 SQLite quick check；数据库返回 `ok`，但 SQLite
 仍更新了 `Browser.sqlite-shm` 的文件时间。以后检查活动或最近使用的 SQLite 配置时，
 必须先复制数据库、WAL 和 SHM 到隔离目录，再针对副本检查，不能直接打开真实数据库。

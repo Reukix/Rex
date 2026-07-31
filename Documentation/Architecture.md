@@ -68,7 +68,7 @@ sequenceDiagram
 2. **身份与预期集合**：商店包读取时要求合法 store ID、有效 manifest 公钥，且公钥推导出的 Chromium runtime ID 必须与验签安装记录一致。Rex 为每次安装、启停、更新和移除生成受管路径与启用状态的预期集合；Chromium 返回的 ID、路径、版本和启用状态同时进入运行时观测数据。
 3. **不可见的 Chromium 管理上下文**：Rex 在 `CefInitialize` 前为 Chromium 预留 fd 3/4 专用传输，并以 `--remote-debugging-pipe` 启动 browser process；browser-target `Extensions.getExtensions` 与 `Extensions.uninstall` 只通过该本地通道调用。`chrome://extensions` 仅在不可见、受控的上下文中提供 `chrome.developerPrivate` API：首次安装调用 `loadUnpacked`，同 ID 更新调用 `reload`，启停调用 `chrome.management.setEnabled`。该上下文不承载任何用户可见页面，没有 TCP 监听端口，也不向普通网页或 page target 暴露 browser CDP 会话。
 4. **Chromium 原生执行**：后台 service worker、content script、runtime messaging、`chrome.storage.local`、DNR 与 options 等已支持资源页均来自扩展包并由 Chromium 执行。Rex 不解析规则后模拟扩展行为，也不维护任何扩展专用执行适配器。
-5. **Rex 可见产品外壳**：扩展发现、安装状态、列表、详情、权限控件、小型面板入口和 `rex://extensions` 管理路由全部由 Rex SwiftUI/AppKit 实现；该内部路由不会向 Chromium 发送可见导航。小型面板使用独立的无边框 AppKit `NSPanel`，直接加载清单声明的静态 `default_popup`；options 等资源也直接来自已安装扩展包。扩展资源的执行边界仍使用 `chrome-extension://`，用户可见地址统一使用 `rex-extension://<runtime-id>/<包内路径>`。
+5. **Rex 可见产品外壳**：扩展发现、安装状态、列表、详情、权限控件、小型面板入口和 `rex://extensions` 管理路由全部由 Rex SwiftUI/AppKit 实现；该内部路由不会向 Chromium 发送可见导航。扩展、下载、隐私和站点信息工具栏浮层使用独立的无边框 AppKit `NSPanel`，不通过 SwiftUI `NSPopover` 附着到 CEF 子窗口；扩展面板直接加载清单声明的静态 `default_popup`，options 等资源也直接来自已安装扩展包。扩展资源的执行边界仍使用 `chrome-extension://`，用户可见地址统一使用 `rex-extension://<runtime-id>/<包内路径>`。
 
 网站访问配置严格映射 Chromium 的三种运行范围：`ON_CLICK`（点击扩展时）、`ON_SPECIFIC_SITES`（指定网站）和 `ON_ALL_SITES`（所有网站）。“允许运行用户脚本”和“允许访问文件网址”也由 Chromium 保存。Rex 提交 `updateExtensionConfiguration` 后立即调用 `getExtensionInfo`；界面只使用 Chromium 返回的新状态，失败、超时或返回无效数据时保留原读回值并显示错误，不能乐观地把目标值写进本地 UI。
 

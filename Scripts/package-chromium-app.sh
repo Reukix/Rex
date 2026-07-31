@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 VERSION="${1:-0.9.8}"
-BUILD_NUMBER="${2:-982}"
+BUILD_NUMBER="${2:-983}"
 CONFIGURATION="${3:-Release}"
 SIGNING_MODE="${REX_PACKAGE_SIGNING_MODE:-adhoc}"
 

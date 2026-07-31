@@ -296,7 +296,10 @@ private struct BrowserToolbar: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var preferences: BrowserPreferences
     @ObservedObject private var extensionsStore = BrowserExtensionsStore.shared
-    @StateObject private var extensionActionPanel = RexExtensionActionPanelController()
+    @StateObject private var extensionActionPanel = RexToolbarPanelController()
+    @StateObject private var siteInfoPanel = RexToolbarPanelController()
+    @StateObject private var privacyPanel = RexToolbarPanelController()
+    @StateObject private var downloadsPanel = RexToolbarPanelController()
     @Binding var certificateViewerSnapshot: CertificateViewerSnapshot?
     let onShowPerformanceMonitor: () -> Void
     let onOpenExtensionPage: (BrowserExtensionPackage) -> Void
@@ -320,12 +323,14 @@ private struct BrowserToolbar: View {
                     if extensionActionPanel.isPresented {
                         extensionActionPanel.dismiss()
                     } else {
+                        store.isSiteInfoPresented = false
+                        store.isPrivacyPresented = false
                         isDownloadsPanelPresented = false
                         presentExtensionsList()
                     }
                 }
                 .background {
-                    RexExtensionActionPanelAnchor(controller: extensionActionPanel)
+                    RexToolbarPanelAnchor(controller: extensionActionPanel)
                 }
             }
 
@@ -357,7 +362,7 @@ private struct BrowserToolbar: View {
 
             HStack(spacing: 8) {
                 Button {
-                    store.isSiteInfoPresented = true
+                    store.isSiteInfoPresented.toggle()
                 } label: {
                     Image(systemName: siteSecuritySymbol)
                         .font(.caption.weight(.semibold))
@@ -368,9 +373,8 @@ private struct BrowserToolbar: View {
                 .buttonStyle(.plain)
                 .help("网站信息与证书")
                 .accessibilityLabel("查看网站信息与证书")
-                .popover(isPresented: $store.isSiteInfoPresented, arrowEdge: .bottom) {
-                    SiteInfoPopover(certificateViewerSnapshot: $certificateViewerSnapshot)
-                        .environmentObject(store)
+                .background {
+                    RexToolbarPanelAnchor(controller: siteInfoPanel)
                 }
 
                 TextField("搜索或输入网址", text: $store.addressText)
@@ -441,9 +445,8 @@ private struct BrowserToolbar: View {
                 label: "隐私盾牌",
                 isSelected: store.isPrivacyPresented
             ) { store.isPrivacyPresented.toggle() }
-            .popover(isPresented: $store.isPrivacyPresented, arrowEdge: .bottom) {
-                PrivacyShieldView(report: store.privacyReport(for: store.currentTab))
-                    .frame(width: RexMetrics.popoverWidth)
+            .background {
+                RexToolbarPanelAnchor(controller: privacyPanel)
             }
 
             LiquidGlassIconButton(
@@ -457,30 +460,10 @@ private struct BrowserToolbar: View {
                 label: "下载",
                 isSelected: isDownloadsPanelPresented
             ) {
-                if !isDownloadsPanelPresented {
-                    extensionActionPanel.dismiss()
-                }
                 isDownloadsPanelPresented.toggle()
             }
-            .popover(isPresented: $isDownloadsPanelPresented, arrowEdge: .bottom) {
-                BrowserDownloadsPanel(
-                    onShowAll: {
-                        isDownloadsPanelPresented = false
-                        store.presentLibrary(.downloads)
-                    },
-                    onOpenSettings: {
-                        isDownloadsPanelPresented = false
-                        store.presentSettings(.downloads)
-                    },
-                    onClose: {
-                        isDownloadsPanelPresented = false
-                    }
-                )
-                .environmentObject(store)
-                .frame(
-                    width: BrowserDownloadsPanel.preferredSize.width,
-                    height: BrowserDownloadsPanel.preferredSize.height
-                )
+            .background {
+                RexToolbarPanelAnchor(controller: downloadsPanel)
             }
 
             if !store.profile.isPrivate {
@@ -607,13 +590,53 @@ private struct BrowserToolbar: View {
             BrowserTitlebarCardSurface()
         }
         .onChange(of: store.addressFocusRequest) { _, _ in addressFocused = true }
+        .onChange(of: store.isSiteInfoPresented) { _, isPresented in
+            if isPresented {
+                presentSiteInfoPanel()
+            } else {
+                siteInfoPanel.dismiss()
+            }
+        }
+        .onChange(of: siteInfoPanel.isPresented) { _, isPresented in
+            if !isPresented {
+                store.isSiteInfoPresented = false
+            }
+        }
+        .onChange(of: store.isPrivacyPresented) { _, isPresented in
+            if isPresented {
+                presentPrivacyPanel()
+            } else {
+                privacyPanel.dismiss()
+            }
+        }
+        .onChange(of: privacyPanel.isPresented) { _, isPresented in
+            if !isPresented {
+                store.isPrivacyPresented = false
+            }
+        }
+        .onChange(of: isDownloadsPanelPresented) { _, isPresented in
+            if isPresented {
+                presentDownloadsPanel()
+            } else {
+                downloadsPanel.dismiss()
+            }
+        }
+        .onChange(of: downloadsPanel.isPresented) { _, isPresented in
+            if !isPresented {
+                isDownloadsPanelPresented = false
+            }
+        }
         .onChange(of: store.downloadPanelRequest) { _, _ in
-            guard !isDownloadsPanelPresented else { return }
-            extensionActionPanel.dismiss()
+            guard !downloadsPanel.isPresented else { return }
             isDownloadsPanelPresented = true
         }
         .onDisappear {
             extensionActionPanel.dismiss()
+            siteInfoPanel.dismiss()
+            privacyPanel.dismiss()
+            downloadsPanel.dismiss()
+            store.isSiteInfoPresented = false
+            store.isPrivacyPresented = false
             isDownloadsPanelPresented = false
         }
         .alert("保存分屏组合", isPresented: $isSavingComposition) {
@@ -670,7 +693,87 @@ private struct BrowserToolbar: View {
         }
     }
 
+    private func presentSiteInfoPanel() {
+        dismissToolbarPanels(except: siteInfoPanel)
+        let size = CGSize(width: RexMetrics.popoverWidth, height: 500)
+        let content = LiquidGlassPanel(cornerRadius: 12, showsShadow: false) {
+            SiteInfoPopover(certificateViewerSnapshot: $certificateViewerSnapshot)
+                .environmentObject(store)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .environment(\.colorScheme, colorScheme)
+        .frame(width: size.width, height: size.height)
+        guard siteInfoPanel.present(rootView: AnyView(content), size: size) else {
+            store.isSiteInfoPresented = false
+            store.lastError = "网站信息面板暂时无法在当前窗口中打开。"
+            return
+        }
+    }
+
+    private func presentPrivacyPanel() {
+        dismissToolbarPanels(except: privacyPanel)
+        let size = CGSize(width: RexMetrics.popoverWidth, height: 600)
+        let content = LiquidGlassPanel(cornerRadius: 12, showsShadow: false) {
+            ScrollView {
+                PrivacyShieldView(report: store.privacyReport(for: store.currentTab))
+                    .environmentObject(store)
+                    .environmentObject(preferences)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .environment(\.colorScheme, colorScheme)
+        .frame(width: size.width, height: size.height)
+        guard privacyPanel.present(rootView: AnyView(content), size: size) else {
+            store.isPrivacyPresented = false
+            store.lastError = "隐私面板暂时无法在当前窗口中打开。"
+            return
+        }
+    }
+
+    private func presentDownloadsPanel() {
+        dismissToolbarPanels(except: downloadsPanel)
+        let size = BrowserDownloadsPanel.preferredSize
+        let content = BrowserDownloadsPanel(
+            onShowAll: {
+                isDownloadsPanelPresented = false
+                store.presentLibrary(.downloads)
+            },
+            onOpenSettings: {
+                isDownloadsPanelPresented = false
+                store.presentSettings(.downloads)
+            },
+            onClose: {
+                isDownloadsPanelPresented = false
+            }
+        )
+        .environmentObject(store)
+        .environment(\.colorScheme, colorScheme)
+        .frame(width: size.width, height: size.height)
+        guard downloadsPanel.present(rootView: AnyView(content), size: size) else {
+            isDownloadsPanelPresented = false
+            store.lastError = "下载面板暂时无法在当前窗口中打开。"
+            return
+        }
+    }
+
+    private func dismissToolbarPanels(except retainedPanel: RexToolbarPanelController) {
+        let panels = [extensionActionPanel, siteInfoPanel, privacyPanel, downloadsPanel]
+        for panel in panels where panel !== retainedPanel {
+            panel.dismiss()
+        }
+        if retainedPanel !== siteInfoPanel {
+            store.isSiteInfoPresented = false
+        }
+        if retainedPanel !== privacyPanel {
+            store.isPrivacyPresented = false
+        }
+        if retainedPanel !== downloadsPanel {
+            isDownloadsPanelPresented = false
+        }
+    }
+
     private func presentExtensionsList() {
+        dismissToolbarPanels(except: extensionActionPanel)
         extensionActionPanel.presentList(
             packages: extensionsStore.extensions,
             store: store,
@@ -1182,13 +1285,13 @@ private struct RexRuntimeExtensionActionPanel: View {
     }
 }
 
-private final class RexExtensionPanel: NSPanel {
+private final class RexToolbarPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
 @MainActor
-private final class RexExtensionActionPanelController: NSObject, ObservableObject, NSWindowDelegate {
+private final class RexToolbarPanelController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var isPresented = false
 
     weak var anchorView: NSView?
@@ -1278,7 +1381,7 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
             return false
         }
 
-        let panel = RexExtensionPanel(
+        let panel = RexToolbarPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless],
             backing: .buffered,
@@ -1323,6 +1426,15 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
             scheduleRevealFallback(for: panel)
         }
         return true
+    }
+
+    func present(rootView: AnyView, size: CGSize) -> Bool {
+        present(
+            rootView: rootView,
+            size: size,
+            revealAfterLayout: false,
+            sessionID: UUID()
+        )
     }
 
     func dismiss() {
@@ -1506,8 +1618,8 @@ private final class RexExtensionActionPanelController: NSObject, ObservableObjec
     }
 }
 
-private struct RexExtensionActionPanelAnchor: NSViewRepresentable {
-    let controller: RexExtensionActionPanelController
+private struct RexToolbarPanelAnchor: NSViewRepresentable {
+    let controller: RexToolbarPanelController
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)

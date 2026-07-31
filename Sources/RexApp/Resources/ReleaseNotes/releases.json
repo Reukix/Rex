@@ -2,7 +2,7 @@
   "releases": [
     {
       "version": "0.9.8",
-      "build": 982,
+      "build": 983,
       "date": "2026-08-01",
       "channel": "beta",
       "summary": "继续采用 Rex 可见 UI 与 Chromium 权威后端：Chromium 独占下载生命周期，Rex 映射右侧下载 UI；同时使用固定 Mozilla PSL 统一站点归属，并明确 Cookie、统计与恶意网站检测边界。",
@@ -20,10 +20,11 @@
         "隐私盾牌明确为当前标签会话累计，已知指纹服务与追踪器分项展示，Cookie 显示为应用级共享限制"
       ],
       "changed": [
-        "应用版本更新为 v0.9.8 build 982 Beta",
+        "应用版本更新为 v0.9.8 build 983 Beta",
         "恶意网站检测选择为当前明确不提供：Rex 不为该能力把访问网址发送给第三方 provider，也不使用安全浏览文案暗示不存在的检测"
       ],
       "fixed": [
+        "下载、隐私和站点信息浮层在 CEF NSRemoteView 窗口排序期间触发 AppKit 崩溃的问题；三个入口统一改用独立 Rex NSPanel，不再调用 SwiftUI NSPopover/addChildWindow",
         "Chrome runtime 下载完成气泡和下载开始动画错误显示在窗口左上角、与 Rex 下载浮层重复的问题",
         "GitHub release DMG 点击后因实验性 ParallelDownloading 在 Chrome_IOThread 崩溃的问题",
         "第一方判断依赖少量手写二级后缀，无法覆盖 private suffix、IDN、通配和例外规则的问题",
