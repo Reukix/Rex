@@ -953,6 +953,54 @@ func sqliteSitePrivacyPolicyRoundTrip() async throws {
     #expect(policies.first?.level == .custom)
 }
 
+@Test("Mozilla PSL scopes ICANN, private, wildcard, exception, IDN, localhost, and IP sites")
+func publicSuffixListScopesSiteOwnership() {
+    let list = PublicSuffixList.current
+    #expect(list.version == "2026-07-25_14-20-03_UTC")
+    #expect(list.registrableDomain(for: "assets.news.example.co.uk") == "example.co.uk")
+    #expect(list.registrableDomain(for: "a.blogspot.com") == "a.blogspot.com")
+    #expect(list.registrableDomain(for: "a.b.ck") == "a.b.ck")
+    #expect(list.registrableDomain(for: "a.www.ck") == "www.ck")
+    #expect(list.registrableDomain(for: "食狮.com.cn") == "xn--85x722f.com.cn")
+    #expect(list.registrableDomain(for: "localhost") == "localhost")
+    #expect(list.registrableDomain(for: "127.0.0.1") == "127.0.0.1")
+    #expect(list.registrableDomain(for: "2001:db8::1") == "2001:db8::1")
+}
+
+@Test("PSL site-policy migration atomically merges host records by newest update")
+func pslSitePolicyMigrationCanReplaceLegacyRows() async throws {
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let profileID = UUID()
+    let older = SitePrivacyPolicy(
+        profileID: profileID,
+        host: "www.example.co.uk",
+        protectionEnabled: false,
+        updatedAt: Date(timeIntervalSince1970: 100)
+    )
+    let newer = SitePrivacyPolicy(
+        profileID: profileID,
+        host: "shop.example.co.uk",
+        protectionEnabled: true,
+        level: .strict,
+        updatedAt: Date(timeIntervalSince1970: 200)
+    )
+    try await persistence.saveSitePrivacyPolicy(older)
+    try await persistence.saveSitePrivacyPolicy(newer)
+
+    var migrated = newer
+    migrated.host = PublicSuffixList.current.registrableDomain(for: newer.host)
+    try await persistence.replaceSitePrivacyPolicies(profileID: profileID, with: [migrated])
+
+    let policies = try await persistence.sitePrivacyPolicies(profileID: profileID)
+    #expect(policies.count == 1)
+    #expect(policies.first?.host == "example.co.uk")
+    #expect(policies.first?.level == .strict)
+    #expect(policies.first?.protectionEnabled == true)
+}
+
 @Test("SQLite imports the legacy JSON session only once")
 func sqliteMigratesLegacySessionOnce() async throws {
     let legacy = BrowserSessionPersistence(
@@ -1090,6 +1138,39 @@ func downloadRecordDecodesLegacyPayload() throws {
     #expect(!download.canOpen)
 }
 
+@Test("Download progress maps Chromium percent before byte fallback")
+func downloadProgressPrefersChromiumPercent() {
+    let download = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/archive.zip")!,
+        suggestedFilename: "archive.zip",
+        receivedBytes: 20,
+        expectedBytes: 100,
+        state: .downloading,
+        createdAt: .now,
+        chromiumPercentComplete: 37
+    )
+
+    #expect(download.progress == 0.37)
+}
+
+@Test("Unknown Chromium download state is not actionable")
+func unknownChromiumDownloadStateIsNotActionable() {
+    let download = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/archive.zip")!,
+        suggestedFilename: "archive.zip",
+        receivedBytes: 0,
+        expectedBytes: nil,
+        state: .unknown,
+        createdAt: .now
+    )
+
+    #expect(!download.canCancel)
+    #expect(!download.canRetry)
+    #expect(!download.isTerminal)
+}
+
 @Test("Download manager cancels and retries with the same task identity")
 @MainActor
 func downloadManagerDispatchesCancelAndRetry() async throws {
@@ -1115,6 +1196,7 @@ func downloadManagerDispatchesCancelAndRetry() async throws {
     let storedActive = try #require(store.downloads.first)
     #expect(storedActive.progress == 0.25)
     #expect(storedActive.canCancel)
+    #expect(store.downloadPanelRequest == 1)
 
     store.cancelDownload(storedActive)
     await engine.emit(.downloadUpdated(
@@ -1131,11 +1213,14 @@ func downloadManagerDispatchesCancelAndRetry() async throws {
     ))
     try? await Task.sleep(for: .milliseconds(10))
     let cancelled = try #require(store.downloads.first)
+    #expect(store.downloadPanelRequest == 1)
     store.retryDownload(cancelled)
     try? await Task.sleep(for: .milliseconds(10))
 
     #expect(store.downloads.first?.id == downloadID)
-    #expect(store.downloads.first?.state == .pending)
+    // Retry remains in the last Chromium-reported state until Chromium emits
+    // the new task lifecycle snapshot.
+    #expect(store.downloads.first?.state == .cancelled)
     #expect(await engine.recordedCommands().contains(.cancelDownload(downloadID: downloadID)))
     #expect(await engine.recordedCommands().contains(.retryDownload(
         downloadID: downloadID,
@@ -1143,6 +1228,79 @@ func downloadManagerDispatchesCancelAndRetry() async throws {
         url: sourceURL
     )))
     await engine.finish()
+}
+
+@Test("Default download directory is Downloads/Rex")
+@MainActor
+func defaultDownloadDirectoryUsesRexFolder() {
+    let home = URL(fileURLWithPath: "/tmp/rex-test-home", isDirectory: true)
+    #expect(
+        BrowserStore.defaultDownloadDirectory(homeDirectory: home).path ==
+            "/tmp/rex-test-home/Downloads/Rex"
+    )
+}
+
+@Test("A direct download response cannot trap session restore in a download loop")
+@MainActor
+func directDownloadResponseIsNotRestoredAsNavigation() throws {
+    let spaceID = UUID()
+    let downloadURL = try #require(URL(
+        string: "https://github.com/example/rex/releases/download/v1/Rex.pkg"
+    ))
+    var tab = BrowserTab(url: downloadURL, title: "Rex.pkg", spaceID: spaceID)
+    tab.faviconURL = URL(string: "https://github.com/favicon.ico")
+    tab.isLoading = true
+    tab.loadingProgress = 0.4
+
+    let restorable = BrowserStore.restorableTabAfterDownload(
+        tab,
+        nonRestorableURL: downloadURL
+    )
+    #expect(BrowserStartPage.matches(restorable.url))
+    #expect(restorable.title == BrowserStartPage.title)
+    #expect(restorable.faviconURL == nil)
+    #expect(!restorable.isLoading)
+    #expect(restorable.loadingProgress == 1)
+
+    let ordinaryPage = BrowserStore.restorableTabAfterDownload(
+        tab,
+        nonRestorableURL: URL(string: "https://objects.githubusercontent.com/Rex.pkg")
+    )
+    #expect(ordinaryPage == tab)
+}
+
+@Test("GitHub release assets are removed before restored pages are created")
+@MainActor
+func githubReleaseAssetsAreNotRestoredAsNavigation() throws {
+    let spaceID = UUID()
+    let releaseURL = try #require(URL(
+        string: "https://github.com/example/rex/releases/latest/download/Rex.dmg"
+    ))
+    let assetURL = try #require(URL(
+        string: "https://release-assets.githubusercontent.com/github-production-release-asset/Rex.dmg"
+    ))
+    let releasePageURL = try #require(URL(
+        string: "https://github.com/example/rex/releases/tag/v0.9.8"
+    ))
+
+    #expect(BrowserStore.isLikelyDirectDownloadNavigation(releaseURL))
+    #expect(BrowserStore.isLikelyDirectDownloadNavigation(assetURL))
+    #expect(!BrowserStore.isLikelyDirectDownloadNavigation(releasePageURL))
+
+    let restored = BrowserStore.restorableTabForSession(BrowserTab(
+        url: releaseURL,
+        title: "Rex.dmg",
+        spaceID: spaceID
+    ))
+    #expect(BrowserStartPage.matches(restored.url))
+    #expect(restored.title == BrowserStartPage.title)
+
+    let releasePage = BrowserStore.restorableTabForSession(BrowserTab(
+        url: releasePageURL,
+        title: "Rex release",
+        spaceID: spaceID
+    ))
+    #expect(releasePage.url == releasePageURL)
 }
 
 @Test("Download directory is stored per workspace and sent to browser pages")
@@ -1171,6 +1329,19 @@ func downloadDirectoryIsConfiguredPerSpace() async throws {
         return tabID
     })
     #expect(configuredTabIDs == currentSpaceTabIDs)
+
+    let commandCountBeforeReset = await engine.recordedCommands().count
+    store.setDownloadDirectory(nil)
+    try? await Task.sleep(for: .milliseconds(20))
+    let defaultDirectory = BrowserStore.defaultDownloadDirectory().standardizedFileURL
+    #expect(store.usesDefaultDownloadDirectory)
+    let commandsAfterReset = (await engine.recordedCommands()).dropFirst(commandCountBeforeReset)
+    let resetTabIDs = Set(commandsAfterReset.compactMap { command -> UUID? in
+        guard case let .setDownloadDirectory(tabID, configuredURL) = command,
+              configuredURL?.standardizedFileURL == defaultDirectory else { return nil }
+        return tabID
+    })
+    #expect(resetTabIDs == currentSpaceTabIDs)
 }
 
 @Test("SQLite permissions use profile and origin scope")
@@ -2531,7 +2702,7 @@ func shieldControlsPushPrivacyPolicy() async throws {
             && store.tab(withID: $0)?.privacyState.isEnabled == false
     })
     #expect(savedPolicies.count == 1)
-    #expect(savedPolicies.first?.host == "www.apple.com")
+    #expect(savedPolicies.first?.host == "apple.com")
     #expect(savedPolicies.first?.level == .strict)
     #expect(savedPolicies.first?.protectionEnabled == false)
 
@@ -2660,7 +2831,7 @@ func blockedResourceEventsUpdatePrivacyReport() async throws {
     #expect(store.currentTab?.privacyState.blockedCount == 16)
     #expect(report.adsBlocked == 2)
     #expect(report.trackersBlocked == 2)
-    #expect(report.totalBlocked == 4)
+    #expect(report.totalBlocked == 16)
     #expect(report.resources.count == 2)
     await engine.finish()
 }

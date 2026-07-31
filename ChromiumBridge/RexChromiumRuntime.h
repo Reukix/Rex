@@ -28,6 +28,11 @@ FOUNDATION_EXPORT NSInteger const RexChromiumNormalExitProcessNotifiedCode;
 /// Returns YES only for CEF's normal process-singleton early-exit result.
 FOUNDATION_EXPORT BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error);
 
+/// Installs the AppKit run/termination hooks required by CEF on macOS. Call
+/// before SwiftUI enters NSApplicationMain so the main event loop can return
+/// and CEF can shut down before process exit.
+FOUNDATION_EXPORT void RexInstallCEFApplicationLifecycleHooks(void);
+
 /// Orders an auxiliary AppKit window without taking key status. CEF embeds
 /// remote views whose macOS window-ordering callbacks can raise Objective-C
 /// exceptions; those must not escape into Swift's event dispatch path.
@@ -74,6 +79,7 @@ FOUNDATION_EXPORT BOOL RexOrderAuxiliaryWindowFrontSafely(NSWindow *window);
 
 @property(class, nonatomic, readonly) RexChromiumRuntime *shared;
 @property(nonatomic, readonly, getter=isReady) BOOL ready;
+@property(nonatomic, readonly, getter=isFinalizingShutdown) BOOL finalizingShutdown;
 @property(nonatomic, copy, nullable) RexChromiumEventHandler eventHandler;
 @property(nonatomic, readonly, copy) NSString *cefVersion;
 @property(nonatomic, readonly, copy) NSString *chromiumVersion;
@@ -86,6 +92,8 @@ FOUNDATION_EXPORT BOOL RexOrderAuxiliaryWindowFrontSafely(NSWindow *window);
 
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
                     locale:(NSString *)locale
+       publicSuffixListURL:(NSURL *)publicSuffixListURL
+         privacyCatalogURL:(NSURL *)privacyCatalogURL
      managedExtensionPaths:(NSArray<NSString *> *)managedExtensionPaths
      enabledExtensionPaths:(NSArray<NSString *> *)enabledExtensionPaths
                      error:(NSError **)error;

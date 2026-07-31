@@ -55,8 +55,8 @@ struct BrowserLibraryView: View {
                 } else if store.librarySelection == .downloads {
                     Menu {
                         Button("选择下载文件夹…", action: chooseDownloadDirectory)
-                        if store.currentDownloadDirectoryURL != nil {
-                            Button("恢复为每次询问") {
+                        if !store.usesDefaultDownloadDirectory {
+                            Button("恢复默认位置") {
                                 store.setDownloadDirectory(nil)
                             }
                         }
@@ -211,6 +211,99 @@ struct BrowserLibraryView: View {
     }
 }
 
+struct BrowserDownloadsPanel: View {
+    @EnvironmentObject private var store: BrowserStore
+    let onShowAll: () -> Void
+    let onOpenSettings: () -> Void
+    let onClose: () -> Void
+
+    static let preferredSize = CGSize(width: 440, height: 420)
+
+    var body: some View {
+        LiquidGlassPanel(cornerRadius: 12, showsShadow: false) {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text("下载")
+                        .font(.system(size: 14, weight: .semibold))
+
+                    if activeDownloadCount > 0 {
+                        Text("\(activeDownloadCount) 项进行中")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Button("显示全部", action: onShowAll)
+                        .buttonStyle(.borderless)
+
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help("关闭下载面板")
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 50)
+
+                Divider()
+
+                if recentDownloads.isEmpty {
+                    ContentUnavailableView("没有下载记录", systemImage: "arrow.down.circle")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(recentDownloads) { download in
+                                DownloadRow(download: download)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 5)
+                                if download.id != recentDownloads.last?.id {
+                                    Divider()
+                                        .padding(.leading, 50)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    Image(systemName: "folder")
+                        .foregroundStyle(.secondary)
+                    Text(store.currentDownloadDirectoryName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 12)
+                    Button(action: onOpenSettings) {
+                        Image(systemName: "gearshape")
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help("下载设置")
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+            }
+        }
+    }
+
+    private var recentDownloads: [BrowserDownloadTask] {
+        Array(store.downloads.prefix(5))
+    }
+
+    private var activeDownloadCount: Int {
+        store.downloads.count(where: \.canCancel)
+    }
+}
+
 private extension BrowsingDataTimeRange {
     var displayName: String {
         switch self {
@@ -359,6 +452,7 @@ private struct DownloadRow: View {
         case .completed: "已完成"
         case .failed: "失败"
         case .cancelled: "已取消"
+        case .unknown: "状态未知"
         }
     }
 
@@ -369,6 +463,7 @@ private struct DownloadRow: View {
         case .completed: "checkmark.circle.fill"
         case .failed: "exclamationmark.circle.fill"
         case .cancelled: "xmark.circle"
+        case .unknown: "questionmark.circle"
         }
     }
 
@@ -376,6 +471,7 @@ private struct DownloadRow: View {
         switch download.state {
         case .completed: .green
         case .failed: .red
+        case .unknown: .secondary
         default: .accentColor
         }
     }

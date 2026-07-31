@@ -165,14 +165,14 @@
 - ✅ 停用扩展重新启用时由 Chromium 显式 reload，覆盖禁用期间及跨 Rex 重启的同版本 JS/CSS 更新；原生操作、最终注册状态与事务指纹快照必须同时有效才提交。
 - ✅ 启动屏障释放后仍按标签隐藏临时 `about:blank`，直到真实恢复地址提交；Chromium 地址事件也不再被 SwiftUI surface 回写为同地址二次 reload。
 - ✅ build 970 最终产物为 `Dist/Rex.app`（`343M` / `351160 KiB`）与 `Dist/Rex-v0.9.7-macos-arm64-chromium.zip`（`142,675,732` bytes，`148092 KiB` / `145M`），ZIP SHA-256 为 `a9882360ebe8850bf0bdeb6dc7c586ab80eccde96e26a4fa1f8deee94e3d8280`；未生成 DMG。
-- ⚠️ 当前仍是 ad-hoc 本地 Beta。Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退全部未完成。
+- ⚠️ 当前为个人团队 Apple Development 签名的本地 Beta。Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退全部未完成。
 
 ## 进行中 — v0.9.x
 
 - ⏳ **当前最高优先级：扩展兼容矩阵继续收敛。** Rex 管理页路由、Chromium 配置读回和连续冷启动回归已经完成；下一步补齐 Tampermonkey 最小用户脚本端到端注入，并扩大带版本与包哈希的真实扩展样本。
 - ⏳ 将 MV2/MV3、service worker、content script、runtime messaging、storage、DNR、`scripting`/`userScripts`、站点访问、action/current tab、options、native messaging 和其他 Chrome API 分项测试；每项只使用“已验证、部分支持、未通过、未验证、受限”结论。
-- ⏳ iCloud Passwords 的包/权限已加载，且通用真实 tab/frame 消息链路已进入探针；但系统 manifest 只注册在 Chrome 专用目录，Apple helper 的 Parent Launch Constraints 要求获批的浏览器 managed entitlement 或名单内的 Bundle ID + Team ID，当前 ad-hoc Rex 均不满足。未完成 Apple 正式接入前保持受限，不复制/重签 helper 或伪装受支持浏览器。
-- ⏳ 拦截域名目录的在线更新机制。
+- ⏳ iCloud Passwords 的包/权限已加载，且通用真实 tab/frame 消息链路已进入探针；但系统 manifest 只注册在 Chrome 专用目录，Apple helper 的 Parent Launch Constraints 要求获批的浏览器 managed entitlement 或名单内的 Bundle ID + Team ID，当前个人团队 Apple Development Rex 仍不满足。未完成 Apple 正式接入前保持受限，不复制/重签 helper 或伪装受支持浏览器。
+- ✅ 签名隐私目录与 PSL 在线更新客户端：Ed25519、同源下载、原子安装、LKG、启动回退、降级拒绝与 kill switch；生产端点/公钥尚待发布配置。
 - ⚠️ 完整 brave-core + Thorium 源码融合与自建 CEF 发行包。
 - ⚠️ DevTools 左侧、底部与独立窗口停靠模式。
 
@@ -180,14 +180,14 @@
 
 - ⏳ 原生文件选择、JavaScript 对话框和全屏窗口体验。
 - ⏳ 页面安全状态与 Renderer 崩溃恢复界面。
-- ⏳ 下载校验、危险文件提示和批量清理策略。
+- ⏳ 下载信誉/内容校验与批量清理策略；普通传输继续由 Chromium 独占。
 - ⚠️ Chromium 扩展运行时已接入，但不承诺每个 Chrome Web Store 扩展或所有 Chrome API 均兼容，也不提供 Google 账号同步。
 
 ## v0.9.7 → v1.0.0
 
 - **v0.9.7 build 970：** Rex 扩展管理 UI、Chromium 权威配置读回与冷启动恢复的本地 Beta 基线；正式分发工作包仍未完成。
 - **v0.9.7 正式分发门禁：** Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退；外部条件不足时保持阻塞，不把 ad-hoc 包改称正式候选。
-- **v0.9.8：** 签名隐私目录更新、PSL、危险下载、隐私落盘语义和安全决策。
+- **v0.9.8 build 982：** Chromium 下载生命周期与 Rex 右侧 UI 映射、GitHub release 崩溃修复、签名隐私目录/PSL 更新客户端、策略迁移、四类供应链边界、Cookie/统计语义和“当前不提供恶意网站检测”决策已完成；生产更新配置和正式分发仍受外部门禁阻塞。
 - **v0.9.9：** 文件选择、JavaScript 对话框、全屏、Renderer 恢复、默认浏览器、无障碍、诊断、扩展自动更新与更广样本回归。
 - **v1.0.0：** 功能冻结后的 RC 全矩阵、压力与恢复演练、安全审计和稳定发布。
 

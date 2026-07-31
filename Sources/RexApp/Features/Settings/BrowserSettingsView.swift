@@ -219,10 +219,16 @@ struct BrowserSettingsView: View {
                         SettingsRow(
                             icon: "circle.hexagongrid.fill",
                             title: "限制第三方 Cookie",
-                            detail: "将第三方 Cookie 限制应用到所有网页"
+                            detail: "应用级共享开关，同步到普通与隐私 Chromium 资料上下文"
                         )
                     }
                     .toggleStyle(.switch)
+                    Divider()
+                    SettingsRow(
+                        icon: "shield.slash",
+                        title: "恶意网站检测",
+                        detail: "当前不提供；Rex 不会为此把访问网址发送给第三方检测服务"
+                    )
                     Divider()
                     Button {
                         store.isPermissionCenterPresented = true
@@ -257,8 +263,8 @@ struct BrowserSettingsView: View {
                         }
                         Spacer()
                         Button("更改…", action: chooseDownloadDirectory)
-                        if store.currentDownloadDirectoryURL != nil {
-                            Button("每次询问") { store.setDownloadDirectory(nil) }
+                        if !store.usesDefaultDownloadDirectory {
+                            Button("恢复默认") { store.setDownloadDirectory(nil) }
                         }
                     }
                 }

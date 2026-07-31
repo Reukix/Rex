@@ -1,8 +1,8 @@
 # Rex 当前项目状态与问题清单
 
-最后更新：2026-07-30
-当前基线：v0.9.7（build 970）
-发布通道：本地 Beta
+最后更新：2026-08-01
+当前基线：v0.9.8（build 982 本地 Beta 候选）
+发布通道：Beta
 
 本文用于集中说明 Rex 当前能做什么、工程处于什么阶段、哪些问题仍未解决，以及最近哪些高风险问题已经修复。具体需求、实现细节和历史变化仍分别以 `ProductRequirements.md`、`Architecture.md`、`FEATURES.md`、`ROADMAP.md` 和版本发布说明为准。
 
@@ -10,7 +10,7 @@
 
 Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是垂直标签、工作空间、双页面分屏、默认隐私保护和受管 Chromium 扩展。
 
-当前项目已经具备可运行、可恢复会话、可打包的完整 Beta 主链路，但仍不是正式分发版本。主要原因是 Developer ID 签名、公证、Hardened Runtime、正式自动更新和部分兼容性收敛尚未完成。
+当前项目已经具备可运行、可恢复会话、可打包的完整 Beta 主链路，但仍不是正式分发版本。安全资源更新客户端与发布门禁已经实现；生产端点/公钥、Developer ID、公证、Gatekeeper、真实应用替换/回退演练和部分兼容性收敛仍未完成。
 
 当前运行基线：
 
@@ -18,15 +18,15 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 |---|---|
 | 系统 | macOS 14 或更高版本 |
 | 架构 | 仅 Apple Silicon（arm64） |
-| 应用版本 | v0.9.7（build 970） |
+| 应用版本 | v0.9.8（build 982） |
 | Chromium | 150.0.7871.129 |
 | CEF | 150.0.14，官方 standard ARM64 发行包 |
 | 产品外壳 | SwiftUI + AppKit |
 | 浏览器桥 | Swift `BrowserEngine` + Objective-C++ CEF facade |
 | 数据存储 | SQLite，会话、历史、收藏、下载、权限和网站策略 |
-| 当前签名 | ad-hoc 深度签名，Hardened Runtime 关闭 |
-| 当前产物 | `Dist/Rex.app`（`343M` / `351344 KiB`）、`Dist/Rex-v0.9.7-macos-arm64-chromium.zip`（`142,723,427` bytes，`147740 KiB` / `144M`）；不生成 DMG |
-| ZIP SHA-256 | `0940bab0c6541b39b85a26668096dfbd738ae1dc5c62360a8a5a0ab7f45480f3` |
+| 当前签名 | `Dist` 的 11 个 Mach-O 均为同一 Apple Development 个人团队签名；Hardened Runtime 关闭，只用于开发/本地 Beta |
+| 当前产物 | `Dist/Rex.app`（344M / 352344 KiB）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,034,126 bytes，147968 KiB / 145M） |
+| ZIP SHA-256 | `d57573e5b5bc441e37ad07270f9e90cb4f7aafd53cc8e8d8f65f7ad372fa2e8e` |
 
 ## 2. 技术架构概览
 
@@ -71,19 +71,20 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 
 - 历史记录查询、搜索、单条删除，以及按 1 小时、24 小时、7 天或全部时间清理。
 - 收藏添加、搜索和删除。
-- 下载进度、失败原因、取消、原任务重试、打开文件、Finder 定位和删除记录。
-- 可按工作空间保存下载目录；未配置时使用 CEF 系统保存流程。
+- Chromium 下载 URL、原始 URL、文件名、MIME、大小、进度、路径和失败原因映射到 Rex 资料库；支持取消、原任务重试、打开文件、Finder 定位和删除记录。
+- Chromium 独占下载请求、重定向、传输、落盘和生命周期；Rex 右侧下载模块只呈现 Chromium 状态，并在新下载开始时自动弹出。
+- Chromium 原生保存面板、下载按钮和完成气泡保持关闭，默认目录为 `~/Downloads/Rex`；可按工作空间选择自定义目录，恢复默认后重新使用该目录。
 
 ### 3.5 隐私、安全与权限
 
-- 隐私盾牌开关和级别按 profile + 精确 hostname 保存，并同步到已打开的同站标签。
+- 隐私盾牌开关和级别按 profile + Mozilla PSL 站点保存，并同步到已打开的同站标签。
 - 顶层导航清理已知追踪参数，并在合适条件下尝试从 HTTP 升级到 HTTPS。
 - CEF 请求层内置 104 条目录规则：45 条广告、41 条追踪、10 条指纹和 8 条社交规则。
 - 标准、严格和自定义保护级别；扩展自己的 DNR 由 Chromium 独立执行。
-- 第三方 Cookie 通过 Chromium RequestContext 设置限制；Rex 当前只提供一个应用级共享开关。
+- 第三方 Cookie 通过 Chromium RequestContext 设置限制；Rex 只提供一个应用级共享开关。
 - 站点权限支持临时、标签关闭撤销、始终允许、始终阻止和每次询问。
 - 站点信息面板可查看证书链、复制 PEM 和管理网站权限。
-- 隐私窗口使用独立内存 RequestContext，不恢复或写入普通会话资料。
+- 隐私窗口使用独立内存 RequestContext，不恢复或写入普通会话资料；保存的下载文件仍会落盘，但不进入普通下载资料库。
 
 ### 3.6 扩展
 
@@ -125,7 +126,7 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 | 其他 Chrome API/表面 | 未验证 | `bookmarks`、`history`、`downloads`、`cookies`、`webRequest`、`contextMenus`、`commands`、`notifications`、`identity`、DevTools、side panel、offscreen document、theme 等没有系统探针 | 按用户价值选代表样本逐项加入，不做默认兼容假设 |
 | 隐私窗口扩展 | 受限 | 产品当前明确不在隐私 RequestContext 中运行扩展 | 保持用户可见说明与排除回归 |
 
-真实扩展样本不能替代 API 级证据：MV3 自测夹具的已覆盖项为**已验证**；uBlock Origin Lite 仅有静态 DNR/popup 子集记录，视为**部分支持**；Tampermonkey 的权限配置和 worker 已确认，但用户脚本端到端仍是**部分支持、待实测**；iCloud Passwords 的包、`nativeMessaging` 权限和全站 host permission 已加载，但系统 `com.apple.passwordmanager` manifest 只注册在 Chrome 专用目录，Apple helper 的 Parent Launch Constraints 又要求获批的 `com.apple.developer.web-browser.public-key-credential` managed entitlement，或名单内的 Bundle ID + Team ID，当前 ad-hoc Rex 均不满足，因此整体视为**受限**。其他内容增强、生产力、开发工具、主题或界面类扩展在完成带版本和包哈希的实测前均为**未验证**。
+真实扩展样本不能替代 API 级证据：MV3 自测夹具的已覆盖项为**已验证**；uBlock Origin Lite 仅有静态 DNR/popup 子集记录，视为**部分支持**；Tampermonkey 的权限配置和 worker 已确认，但用户脚本端到端仍是**部分支持、待实测**；iCloud Passwords 的包、`nativeMessaging` 权限和全站 host permission 已加载，但系统 `com.apple.passwordmanager` manifest 只注册在 Chrome 专用目录，Apple helper 的 Parent Launch Constraints 又要求获批的 `com.apple.developer.web-browser.public-key-credential` managed entitlement，或名单内的 Bundle ID + Team ID，当前个人团队 Apple Development Rex 仍不满足，因此整体视为**受限**。其他内容增强、生产力、开发工具、主题或界面类扩展在完成带版本和包哈希的实测前均为**未验证**。
 
 ### 3.8 性能与开发工具
 
@@ -136,9 +137,21 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 
 ## 4. 当前验证状态
 
-v0.9.7 build 970 已完成本地 Beta 的构建、管理界面与产物门禁：
+v0.9.8 build 982 当前完成源码层安全与隐私主线：
 
-- Swift Testing `157/157`、Release Notes Validator（28 个功能 ID）、CEF bridge arm64 Release、完整 Xcode Release、MV3 verifier 语法与自测均通过。
+- Chromium 下载事实到 Rex 右侧模块的映射已实现：进度优先使用 Chromium 百分比，状态、按钮可用性与终态只映射 Chromium 快照，未知状态不可操作；GitHub release DMG 崩溃定位为 `ParallelDownloading` 兼容性问题并已修复。
+- Mozilla PSL `2026-07-25_14-20-03_UTC` 与 JSON 隐私目录是 bundle 基线；两者可由 Ed25519 签名包同版本更新，并实施同源下载、原子安装、LKG、失败回退、降级拒绝、吊销和 kill switch。旧站点策略按最近更新时间原子迁移。
+- CRX、普通下载、安全资源和应用更新四类供应链使用独立验证权威；应用更新 manifest 还要求独立 trust domain、公钥、向前 build 与当前 build 的精确回退包。
+- 隐私统计、应用级 Cookie、已知指纹服务与恶意网站检测边界已在 UI、结构化发布数据和文档统一。
+- Swift Testing `182/182`、Release Notes Validator（28 个功能 ID）以及 MV3 verifier 语法与自测通过；13 个新增测试覆盖安全资源与供应链故障注入。
+- CEF bridge arm64 Release 和完整 Xcode Release 通过；App 为 `0.9.8 / 982`。最终本地 Beta 包的 11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。打包后的 `Dist/Rex.app` 隔离烟测通过，真实数据指纹不变且 Helper 全部退出。
+- 新版隔离下载矩阵确认内置 Chromium 下载 UI 控制扩展已启动，`safe.pdf` 由 Chromium 完成下载到隔离 `Downloads/Rex`；截图确认左上角开始动画和 Chromium 完成气泡均未显示，Rex 右侧浮层显示完成状态，CEF 正常关闭且真实数据指纹不变。
+- 隔离 harness 使用 CEF 官方 macOS `--use-mock-keychain` 参数；Chromium 下载矩阵的 loopback fixture 与隔离启动器已完成。GitHub release DMG 已完整下载 53,879,378 bytes，CEF 正常关闭且真实数据指纹不变。
+- 本轮第一次 GUI 操作曾因相同 bundle ID 绕过隔离意外启动真实 profile Rex，随后还直接启动过 build 981；两次均已正常退出，但 `~/Library/Application Support/Rex/Chromium` 的元数据在 `22:39:46-22:42:14 +0800` 发生变化。未删除、恢复或回滚真实数据，证据保留于 `/tmp/rex-download-matrix.gGKMWW` 与 `/tmp/rex-qa-smoke.HmCiQD`；后续纯隔离证据为 `/tmp/rex-download-matrix.w2vfqU` 与 `/tmp/rex-qa-smoke.JPjsZd`。
+
+v0.9.7 build 970 已完成历史本地 Beta 的构建、管理界面与产物门禁：
+
+- Swift Testing `162/162`、Release Notes Validator（28 个功能 ID）、CEF bridge arm64 Release、完整 Xcode Release、MV3 verifier 语法与自测均通过。
 - 打包后的 Rex 已实机打开 `rex://extensions` 发现页、已安装页、Tampermonkey 详情和 options；详情准确显示 Chromium 已启用、所有网站、允许运行用户脚本和允许访问文件网址，options 通过 `rex-extension://` 正常加载。
 - 网站访问三态、用户脚本与文件网址配置均走 Chromium 写入后读回；成功读取、成功写入和权威返回值不同于请求值已有回归。失败、超时、跨窗口刷新与真实脚本注入仍需补齐，不从现有配置状态外推。
 - 持久扩展安装记录与连续冷启动回归拒绝重复 `runtime.onInstalled`、onboarding 和安装成功页，并保持 storage identity。
@@ -148,7 +161,7 @@ v0.9.7 build 970 已完成本地 Beta 的构建、管理界面与产物门禁：
 
 Tampermonkey 的 Chromium 权限配置和 worker 已确认，但真实用户脚本在普通站点的最小注入、撤销和重启仍需作为独立兼容性用例继续实测，不能由配置状态外推。
 
-v0.9.6 build 962 的历史产物与验收数据保留在 [v0.9.6 发布说明](Releases/v0.9.6.md)，不得复制为 build 970 的结果。当前 ad-hoc 基线仍不是 Developer ID 正式分发候选，`spctl --assess`、公证、更新与回退尚未完成。
+v0.9.6 build 962 的历史产物与验收数据保留在 [v0.9.6 发布说明](Releases/v0.9.6.md)，不得复制为 build 970 的结果。当前个人团队 Apple Development 基线仍不是 Developer ID 正式分发候选，`spctl --assess`、公证、更新与回退尚未完成。
 
 ## 5. 当前问题与限制
 
@@ -160,8 +173,8 @@ v0.9.6 build 962 的历史产物与验收数据保留在 [v0.9.6 发布说明](R
 2. **扩展兼容矩阵仍不完整。** `rex://extensions` 路由、三态网站访问、用户脚本和文件网址已有成功写入与权威返回差异回归；失败、重试、完整 `activeTab`、action、native messaging 与大量 Chrome API 仍需按版本化真实样本逐项验证。
 3. **iCloud Passwords 受 Apple 签名能力阻塞。** 系统 native host manifest 只注册在 Chrome 专用目录；即使把原始 manifest 安装到 Rex profile，Apple helper 的 Parent Launch Constraints 仍要求获批的 `com.apple.developer.web-browser.public-key-credential` managed entitlement，或明确列入的 Bundle ID + Team ID，`com.rex.browser` 不在名单中。通用探针已覆盖真实 `sender.tab`、frame 和 `tabs.sendMessage`，但这不能替代 iCloud 原始 helper 的端到端结果。本地 ZIP 只能准确报告受限，不能宣称已生效；“扩展包已加载”也必须与“native host 可用”分开显示。
 4. **扩展启动仍是高风险回归面。** build 970 已复用 Chromium profile 的持久安装记录，连续重启回归会拒绝 `runtime.onInstalled`、onboarding 和重复安装成功页，并核对 storage UUID 不变；临时 `about:blank` 不再覆盖恢复 URL。冷启动屏障、补偿 generation、窗口恢复和扩展损坏仍需持续纳入故障注入与实机回归。
-5. **正式签名和公证未完成。** 当前包只做 ad-hoc 深度签名，并为本地 CEF 包关闭 Hardened Runtime，`spctl` 会拒绝它。正式外部分发需要用同一 Developer ID 团队签名主 App、CEF 和所有嵌套 Helper，重新启用 Hardened Runtime，并通过 Apple 公证与 Gatekeeper 验证。
-6. **正式自动更新链路未完成。** 尚未完成更新签名、差分/完整包下载、失败回退、跨版本迁移和更新演练。
+5. **正式签名和公证受外部凭据阻塞。** 打包脚本已有显式 Developer ID 模式，嵌套代码会启用 timestamp/Hardened Runtime；严格门禁检查所有 Mach-O 的 Developer ID Authority、Team ID、runtime flag、stapler 和 Gatekeeper。当前只有免费个人团队 Apple Development 证书，不能通过这些正式门禁。
+6. **正式自动替换链路未完成。** 独立 Ed25519 应用更新 manifest、向前 build、更新 ZIP 与当前 build 精确回退 ZIP 的验证器和发布门禁已完成；实际下载后替换 App、跨版本迁移和故障回退演练尚未实现，也没有生产更新端点/公钥。
 7. **发布覆盖范围有限。** 完整 CEF/Xcode、多窗口、签名和 UI 实机验证依赖 Apple Silicon macOS；Intel 不支持，也不进入测试矩阵。
 8. **Mac App Store 分发路径未验证。** 当前启用的是 Chromium 进程沙箱，并未启用 Mac App Store App Sandbox；可执行扩展代码、CEF 打包和商店政策兼容性仍需单独评估，现阶段以 Developer ID 分发为主计划。
 
@@ -178,21 +191,21 @@ v0.9.6 build 962 的历史产物与验收数据保留在 [v0.9.6 发布说明](R
 
 ### 5.3 P1：隐私与安全
 
-1. **隐私目录是内置快照。** 没有签名在线更新、自定义规则或订阅，也不执行 EasyList 语法和元素隐藏。
-2. **没有恶意网站和下载信誉检测。** Safe Browsing、危险文件提示、通用下载内容扫描、签名和 MIME 一致性校验尚未实现。
+1. **安全资源生产发布配置尚未提供。** 隐私目录/PSL 的签名在线更新客户端、LKG 与 kill switch 已实现，但仓库不包含生产 HTTPS 端点、公钥或私钥发布流程；未配置时只用 bundle 基线。仍不支持自定义规则、订阅、EasyList 语法或元素隐藏。
+2. **没有恶意网站和下载信誉检测。** Rex 已按 Chromium 元数据提示危险扩展名、脚本、双扩展名和 MIME 不一致，但没有 Safe Browsing、信誉、内容扫描或代码签名判定。
 3. **指纹保护覆盖有限。** 当前只拦截目录中已知指纹服务的网络请求，不随机化 Canvas、WebGL、Audio 等浏览器指纹。
-4. **站点归属判断不完整。** 网站策略按精确 hostname 保存；第一方判断只使用有限 registrable-domain 启发式和少量二级后缀，不是完整 PSL/eTLD+1，因此子域不会自动归并。
+4. **PSL 更新与隐私目录同版本。** 网站策略与 CEF 第一方判断默认使用完整 Mozilla PSL `2026-07-25` 基线，覆盖 private suffix、IDN、通配、例外、localhost 和 IP；在线更新不能单独替换 PSL，必须通过同一个签名安全资源包并在下一次成功启动后成为 LKG。
 5. **第三方 Cookie 是应用级共享设置。** Chromium 在各 RequestContext 内应用该设置，但 Rex 的同一个开关会同步写入普通及隐私 contexts；它不能按网站、标签、工作空间或某个隐私窗口独立配置，盾牌统计也通常不会反映 Cookie 阻止数量。
 6. **隐私统计不是单次页面统计。** 拦截计数随标签会话累计，主导航后不会自动清零。
 7. **隐私窗口不是匿名网络。** 独立 RequestContext 只隔离本地会话数据，不能向 ISP、组织网络管理员或访问的网站隐藏活动。
 8. **普通工作空间不是独立 Cookie 容器。** 工作空间用于组织标签和会话，但共享普通 profile 的 Cookie；只有隐私窗口使用独立内存 RequestContext。
-9. **隐私窗口下载仍会留下本地文件。** 下载记录不写入普通 SQLite 资料库，但用户选择保存的文件仍会落到磁盘。
+9. **隐私窗口下载仍会留下本地文件。** 下载记录不写入普通 SQLite 资料库，但 Chromium 保存的文件仍会落到磁盘；当前没有额外落盘确认。
 
 ### 5.4 P1：基础浏览与下载体验
 
 1. **原生文件选择、JavaScript 对话框和全屏体验仍需完善。** 这些能力尚未达到稳定版验收标准。
 2. **页面安全状态和 Renderer 崩溃恢复界面未收敛。** 底层已有事件和恢复能力，但面向用户的完整错误与恢复流程仍在计划中。
-3. **下载安全和整理能力不足。** 缺少危险文件提示、校验策略和批量清理；v0.5.0 及更早记录没有本地路径，升级后不能直接打开文件或在 Finder 中显示。
+3. **下载安全和整理能力仍有限。** Rex 沿用 Chromium 下载链，不提供额外信誉、内容扫描、代码签名判断或批量清理；v0.5.0 及更早记录没有本地路径。
 4. **新标签页收藏与资料库收藏相互独立。** 两套数据目前不会自动同步。
 5. **不能设置为系统默认浏览器。** 当前设置中心只管理 Rex 内部偏好，不会修改 macOS 默认浏览器。
 
@@ -239,14 +252,14 @@ v0.9.6 build 962 的历史产物与验收数据保留在 [v0.9.6 发布说明](R
 - 先完成 Rex `rex://extensions` 列表/详情路由与 Chromium 配置权威读回回归，覆盖网站访问三态、用户脚本、文件网址、失败和重试；同时确认 `chrome://extensions` 始终不可见。
 - 以 Tampermonkey 为真实样本，补齐 host permission、`activeTab`、`tabs.sendMessage`、`webNavigation.getAllFrames`、`scripting`/`userScripts` 的授权、撤销和注入探针；不能用 URL/标题合成上下文代替真实权限。
 - 对 native messaging 建立通用测试 host；仅在 Rex 获得 Apple entitlement 或被 helper 的签名名单接纳后安装经签名校验的系统 manifest，不复制 helper。iCloud Passwords 只有原始 helper 与正式签名 Rex 端到端通过时才能标记支持，否则维持平台受限结论。
-- 完成 Developer ID 全嵌套签名、Hardened Runtime、公证和 Gatekeeper 实机验证。
-- 完成正式更新链路、更新签名、迁移与失败回退演练。
+- 获取付费 Apple Developer Program 的 Developer ID，执行现有全嵌套签名、Hardened Runtime、公证和 Gatekeeper 门禁。
+- 配置独立的安全资源/应用更新生产端点和公钥，完成正式应用替换、迁移与失败回退演练。
 - 固化扩展同步失败、连续 generation 失败、多窗口恢复和损坏扩展的导航屏障回归套件。
 
 ### P1：安全与兼容性
 
 - 在已建立的扩展能力矩阵上扩大扩展类别样本，并加入商店自动更新。
-- 接入签名隐私目录更新、完整 PSL/eTLD+1、危险下载提示和恶意网站检测。
+- 在隔离 Chromium GUI 下载矩阵中手动触发并核对全部五个样本，留存提示、允许/拒绝、落盘与退出证据；继续保持四类供应链互不外推和“当前不提供恶意网站检测”的准确边界。
 - 收敛原生文件选择、JavaScript 对话框、全屏、页面崩溃和安全状态体验。
 
 ### P2：体验与诊断

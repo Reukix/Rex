@@ -8,3 +8,6 @@ Dist/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+/Configuration/RexSigning.local.xcconfig
+__pycache__/
+*.pyc

@@ -16,6 +16,7 @@
 #include <cctype>
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -28,6 +29,7 @@
 #include "include/cef_audio_handler.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
+#include "include/cef_command_handler.h"
 #include "include/cef_client.h"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_dialog_handler.h"
@@ -38,6 +40,7 @@
 #include "include/cef_navigation_entry.h"
 #include "include/cef_parser.h"
 #include "include/cef_permission_handler.h"
+#include "include/cef_preference.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
@@ -72,6 +75,12 @@ NSInteger const RexChromiumNormalExitProcessNotifiedCode =
 BOOL RexChromiumErrorIsNormalEarlyExit(NSError *error) {
   return [error.domain isEqualToString:RexChromiumErrorDomain] &&
          error.code == RexChromiumNormalExitProcessNotifiedCode;
+}
+
+static void RexShutdownCEFAtProcessExit() {
+  @autoreleasepool {
+    [RexChromiumRuntime.shared shutdownAfterApplicationTermination];
+  }
 }
 
 BOOL RexOrderAuxiliaryWindowFrontSafely(NSWindow *window) {
@@ -197,6 +206,8 @@ constexpr char kRexManagedExtensionResultPrefix[] =
     "__REX_MANAGED_EXTENSION_RESULT__:";
 constexpr char kRexManagedExtensionConfigurationResultPrefix[] =
     "__REX_MANAGED_EXTENSION_CONFIGURATION_RESULT__:";
+NSString *const kRexInternalDownloadUIExtensionName =
+    @"RexDownloadUIController";
 
 NSString *RexNSString(const CefString &value) {
   return [[NSString alloc] initWithUTF8String:value.ToString().c_str()] ?: @"";
@@ -796,6 +807,37 @@ NSArray<NSString *> *_Nullable RexValidatedExtensionPaths(
       validation_error);
 }
 
+NSString *_Nullable RexInternalDownloadUIExtensionPath(
+    NSError **validation_error) {
+  NSURL *resourceURL = [[NSBundle mainBundle]
+      URLForResource:kRexInternalDownloadUIExtensionName
+       withExtension:nil
+        subdirectory:@"InternalExtensions"];
+  NSString *path = resourceURL.path.stringByStandardizingPath
+                         .stringByResolvingSymlinksInPath
+                         .stringByStandardizingPath;
+  NSArray<NSString *> *validated = path.length
+      ? RexValidatedExtensionPaths(@[path], validation_error)
+      : nil;
+  if (!validated.count) {
+    if (validation_error && !*validation_error) {
+      *validation_error = RexExtensionRuntimeError(
+          34, @"Rex 内部 Chromium 下载 UI 控制扩展缺失");
+    }
+    return nil;
+  }
+  return validated.firstObject;
+}
+
+NSArray<NSString *> *RexPathsIncludingInternalDownloadUIExtension(
+    NSArray<NSString *> *paths,
+    NSString *internal_path) {
+  NSMutableOrderedSet<NSString *> *result =
+      [NSMutableOrderedSet orderedSetWithArray:paths ?: @[]];
+  if (internal_path.length) [result addObject:internal_path];
+  return [[result array] sortedArrayUsingSelector:@selector(compare:)];
+}
+
 NSArray<NSString *> *_Nullable RexValidatedRemovedExtensionPaths(
     NSArray<NSString *> *extension_paths,
     NSError **validation_error) {
@@ -1339,6 +1381,8 @@ NSDictionary<NSString *, id> *RexSecurityPayload(
 
 constexpr char kRexCookieControlsModePreference[] =
     "profile.cookie_controls_mode";
+constexpr char kRexDownloadBubblePartialViewPreference[] =
+    "download_bubble.partial_view_enabled";
 constexpr int kRexCookieControlsOff = 0;
 constexpr int kRexCookieControlsBlockThirdParty = 1;
 NSString *const kRexBlockThirdPartyCookiesDefaultsKey =
@@ -1408,6 +1452,52 @@ bool RexApplyThirdPartyCookiePreference(
   return true;
 }
 
+bool RexDisableChromeDownloadBubble(CefRefPtr<CefRequestContext> context,
+                                    const std::string &scope) {
+  CEF_REQUIRE_UI_THREAD();
+  const CefString preferenceName(kRexDownloadBubblePartialViewPreference);
+  if (!context || !context->HasPreference(preferenceName)) {
+    NSLog(@"[Rex] Chromium download bubble preference is unavailable for %s: %s",
+          scope.c_str(), kRexDownloadBubblePartialViewPreference);
+    return false;
+  }
+
+  CefRefPtr<CefValue> currentValue = context->GetPreference(preferenceName);
+  if (!currentValue || currentValue->GetType() != VTYPE_BOOL) {
+    NSLog(@"[Rex] Chromium download bubble preference has an unexpected type for %s: %s",
+          scope.c_str(), kRexDownloadBubblePartialViewPreference);
+    return false;
+  }
+  if (!currentValue->GetBool()) return true;
+  if (!context->CanSetPreference(preferenceName)) {
+    NSLog(@"[Rex] Chromium download bubble preference is not writable for %s: %s",
+          scope.c_str(), kRexDownloadBubblePartialViewPreference);
+    return false;
+  }
+
+  CefRefPtr<CefValue> disabled = CefValue::Create();
+  if (!disabled || !disabled->SetBool(false)) return false;
+  CefString error;
+  if (!context->SetPreference(preferenceName, disabled, error)) {
+    const std::string errorText = error.ToString();
+    NSLog(@"[Rex] Failed to disable Chromium download bubble for %s: %s",
+          scope.c_str(), errorText.empty() ? "unknown" : errorText.c_str());
+    return false;
+  }
+  NSLog(@"[Rex] Chromium download completion bubble disabled for %s.",
+        scope.c_str());
+  return true;
+}
+
+bool RexIsChromeDownloadToolbarButton(
+    cef_chrome_toolbar_button_type_t button_type) {
+#if CEF_API_ADDED(13600)
+  return button_type == CEF_CTBT_DOWNLOAD_DEPRECATED;
+#else
+  return button_type == CEF_CTBT_DOWNLOAD;
+#endif
+}
+
 class RexRequestContextHandler final : public CefRequestContextHandler {
  public:
   RexRequestContextHandler(
@@ -1418,6 +1508,7 @@ class RexRequestContextHandler final : public CefRequestContextHandler {
 
   void OnRequestContextInitialized(
       CefRefPtr<CefRequestContext> request_context) override {
+    RexDisableChromeDownloadBubble(request_context, scope_);
     RexApplyThirdPartyCookiePreference(
         request_context,
         block_third_party_cookies_->load(std::memory_order_relaxed), scope_);
@@ -1496,6 +1587,7 @@ enum class RexManagedExtensionOperationKind {
 };
 
 class RexDefaultChromeClient final : public CefClient,
+                                     public CefCommandHandler,
                                      public CefDialogHandler,
                                      public CefDisplayHandler,
                                      public CefLifeSpanHandler,
@@ -1505,11 +1597,16 @@ class RexDefaultChromeClient final : public CefClient,
   explicit RexDefaultChromeClient(__weak RexChromiumRuntime *runtime)
       : runtime_(runtime) {}
 
+  CefRefPtr<CefCommandHandler> GetCommandHandler() override { return this; }
   CefRefPtr<CefDialogHandler> GetDialogHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  bool IsChromeToolbarButtonVisible(
+      cef_chrome_toolbar_button_type_t button_type) override {
+    return !RexIsChromeDownloadToolbarButton(button_type);
+  }
   bool OnFileDialog(
       CefRefPtr<CefBrowser> browser,
       FileDialogMode mode,
@@ -1598,6 +1695,7 @@ class RexCEFApp final : public CefApp, public CefBrowserProcessHandler {
   }
 
   void OnContextInitialized() override {
+    RexDisableChromeDownloadBubble(CefRequestContext::GetGlobalContext(), "global");
     RexApplyThirdPartyCookiePreference(
         CefRequestContext::GetGlobalContext(),
         block_third_party_cookies_->load(std::memory_order_relaxed), "global");
@@ -2385,7 +2483,11 @@ namespace {
 
 const void *kRexHandlingSendEventKey = &kRexHandlingSendEventKey;
 using RexSendEventImplementation = void (*)(id, SEL, NSEvent *);
+using RexRunImplementation = void (*)(id, SEL);
+using RexTerminateImplementation = void (*)(id, SEL, id);
 RexSendEventImplementation gOriginalSendEvent = nullptr;
+RexRunImplementation gOriginalRun = nullptr;
+RexTerminateImplementation gOriginalTerminate = nullptr;
 
 BOOL RexIsHandlingSendEvent(id application, SEL command) {
   NSNumber *value = objc_getAssociatedObject(application, kRexHandlingSendEventKey);
@@ -2420,7 +2522,69 @@ void RexSendEvent(id application, SEL command, NSEvent *event) {
   }
 }
 
+void RexRun(id application, SEL command) {
+  if (gOriginalRun) {
+    gOriginalRun(application, command);
+  }
+
+  // Chromium's macOS shutdown contract requires CefShutdown only after the
+  // main NSApplication event loop has returned. SwiftUI's App.main() exits the
+  // process immediately after -run returns, so perform the final shutdown in
+  // this hook before control returns to NSApplicationMain.
+  [RexChromiumRuntime.shared shutdownAfterApplicationTermination];
+}
+
+void RexTerminate(id application, SEL command, id sender) {
+  id delegate = [(NSApplication *)application delegate];
+  SEL terminationSelector = NSSelectorFromString(@"rexTryToTerminateApplication:");
+  if (delegate && [delegate respondsToSelector:terminationSelector]) {
+    using RexTerminationDelegateImplementation = void (*)(id, SEL, NSApplication *);
+    auto implementation = reinterpret_cast<RexTerminationDelegateImplementation>(
+        [delegate methodForSelector:terminationSelector]);
+    implementation(delegate, terminationSelector, (NSApplication *)application);
+    return;
+  }
+
+  if (gOriginalTerminate) {
+    gOriginalTerminate(application, command, sender);
+  }
+}
+
+}  // namespace
+
+void RexInstallCEFApplicationLifecycleHooks(void) {
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    Class applicationClass = NSApplication.class;
+
+    // CEF explicitly does not support AppKit's standard delayed termination
+    // transaction on macOS. Redirect ordinary -terminate: sources to the Rex
+    // delegate, which closes browsers and stops the main event loop.
+    Method terminateMethod =
+        class_getInstanceMethod(applicationClass, @selector(terminate:));
+    if (terminateMethod) {
+      gOriginalTerminate = reinterpret_cast<RexTerminateImplementation>(
+          method_getImplementation(terminateMethod));
+      class_replaceMethod(applicationClass, @selector(terminate:),
+                          reinterpret_cast<IMP>(RexTerminate),
+                          method_getTypeEncoding(terminateMethod));
+    }
+
+    Method runMethod = class_getInstanceMethod(applicationClass, @selector(run));
+    if (runMethod) {
+      gOriginalRun = reinterpret_cast<RexRunImplementation>(
+          method_getImplementation(runMethod));
+      class_replaceMethod(applicationClass, @selector(run),
+                          reinterpret_cast<IMP>(RexRun),
+                          method_getTypeEncoding(runMethod));
+    }
+  });
+}
+
+namespace {
+
 void RexInstallCEFApplicationHooks() {
+  RexInstallCEFApplicationLifecycleHooks();
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
     NSApplication *application = NSApplication.sharedApplication;
@@ -2453,6 +2617,7 @@ enum class RexDevToolsFrontendAction {
 
 class RexBrowserClient final : public CefClient,
                                public CefAudioHandler,
+                               public CefCommandHandler,
                                public CefCookieAccessFilter,
                                public CefContextMenuHandler,
                                public CefDisplayHandler,
@@ -2467,6 +2632,7 @@ class RexBrowserClient final : public CefClient,
       : runtime_(runtime), tab_id_([tabID copy]) {}
 
   CefRefPtr<CefAudioHandler> GetAudioHandler() override { return this; }
+  CefRefPtr<CefCommandHandler> GetCommandHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
@@ -2474,6 +2640,10 @@ class RexBrowserClient final : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  bool IsChromeToolbarButtonVisible(
+      cef_chrome_toolbar_button_type_t button_type) override {
+    return !RexIsChromeDownloadToolbarButton(button_type);
+  }
   bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
                       CefRefPtr<CefFrame> frame,
                       CefRefPtr<CefRequest> request,
@@ -2751,6 +2921,7 @@ class RexDevToolsClient final : public CefClient,
                            callback:(CefRefPtr<CefPermissionPromptCallback>)callback;
 - (void)dismissPermissionPromptID:(uint64_t)promptID;
 - (void)cancelPermissionRequestsForTabID:(NSString *)tabID;
+- (void)cancelAllDownloadsForTermination;
 - (void)releaseProfileForTabID:(NSString *)tabID;
 - (nullable NSURL *)downloadDirectoryForTabID:(NSString *)tabID;
 - (void)registerDownloadCallback:(CefRefPtr<CefDownloadItemCallback>)callback
@@ -2962,6 +3133,7 @@ struct RexPendingPermission {
 @implementation RexChromiumRuntime {
   BOOL _ready;
   BOOL _shuttingDown;
+  BOOL _finalizingShutdown;
   BOOL _layoutSyncSuspended;
   BOOL _chromiumContextReady;
   BOOL _extensionChromeWindowHostReady;
@@ -3018,6 +3190,7 @@ struct RexPendingPermission {
   NSMutableDictionary<NSString *, NSNumber *> *_mutedTabs;
   NSString *_focusedTabID;
   NSString *_lastFocusedTabID;
+  NSString *_internalDownloadUIExtensionPath;
   // Per-tab Brave-style shield policy (enabled/mode/fingerprint/cookies).
   NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *_privacyPolicies;
   NSMutableDictionary<NSString *, NSURL *> *_downloadDirectories;
@@ -3041,6 +3214,7 @@ struct RexPendingPermission {
     _layoutSyncSuspended = NO;
     _managedExtensionPaths = @[];
     _enabledExtensionPaths = @[];
+    _internalDownloadUIExtensionPath = nil;
     _extensionPathFingerprints = [[NSMutableDictionary alloc] init];
     _extensionSyncQueue = [[NSMutableArray alloc] init];
     _blockThirdPartyCookiesPreference = std::make_shared<std::atomic_bool>(
@@ -3063,6 +3237,7 @@ struct RexPendingPermission {
 }
 
 - (BOOL)isReady { return _ready; }
+- (BOOL)isFinalizingShutdown { return _finalizingShutdown; }
 - (NSString *)cefVersion { return @CEF_VERSION; }
 - (NSString *)chromiumVersion {
   return [NSString stringWithFormat:@"%d.%d.%d.%d", CHROME_VERSION_MAJOR,
@@ -3122,6 +3297,8 @@ struct RexPendingPermission {
 
 - (BOOL)startWithCacheRoot:(NSURL *)cacheRoot
                     locale:(NSString *)locale
+       publicSuffixListURL:(NSURL *)publicSuffixListURL
+         privacyCatalogURL:(NSURL *)privacyCatalogURL
      managedExtensionPaths:(NSArray<NSString *> *)managedExtensionPaths
      enabledExtensionPaths:(NSArray<NSString *> *)enabledExtensionPaths
                      error:(NSError **)error {
@@ -3131,11 +3308,36 @@ struct RexPendingPermission {
   RexInstallCEFApplicationHooks();
 
   NSError *pathValidationError = nil;
+  NSString *internalDownloadUIExtensionPath =
+      RexInternalDownloadUIExtensionPath(&pathValidationError);
+  NSArray<NSString *> *requiredManagedPaths =
+      internalDownloadUIExtensionPath
+          ? RexPathsIncludingInternalDownloadUIExtension(
+                managedExtensionPaths, internalDownloadUIExtensionPath)
+          : nil;
+  NSArray<NSString *> *requiredEnabledPaths =
+      internalDownloadUIExtensionPath
+          ? RexPathsIncludingInternalDownloadUIExtension(
+                enabledExtensionPaths, internalDownloadUIExtensionPath)
+          : nil;
   NSArray<NSString *> *validatedManagedPaths =
-      RexValidatedExtensionPaths(managedExtensionPaths, &pathValidationError);
+      requiredManagedPaths
+          ? RexValidatedExtensionPaths(requiredManagedPaths,
+                                       &pathValidationError)
+          : nil;
   NSArray<NSString *> *validatedEnabledPaths = validatedManagedPaths
-      ? RexValidatedExtensionPaths(enabledExtensionPaths, &pathValidationError)
+      ? RexValidatedExtensionPaths(requiredEnabledPaths, &pathValidationError)
       : nil;
+  NSString *internalDownloadUIExtensionID = internalDownloadUIExtensionPath
+      ? RexExtensionManifestMetadata(internalDownloadUIExtensionPath)[@"id"]
+      : nil;
+  if (validatedManagedPaths && validatedEnabledPaths &&
+      !internalDownloadUIExtensionID.length) {
+    pathValidationError = RexExtensionRuntimeError(
+        34, @"Rex 内部 Chromium 下载 UI 控制扩展身份无效");
+    validatedManagedPaths = nil;
+    validatedEnabledPaths = nil;
+  }
   if (validatedManagedPaths && validatedEnabledPaths) {
     NSSet<NSString *> *managedSet =
         [NSSet setWithArray:validatedManagedPaths];
@@ -3176,6 +3378,8 @@ struct RexPendingPermission {
     return NO;
   }
 
+  _internalDownloadUIExtensionPath =
+      [internalDownloadUIExtensionPath copy];
   _managedExtensionPaths = [validatedManagedPaths copy];
   _enabledExtensionPaths = [validatedEnabledPaths copy];
   // Reconcile even an empty desired set before restored HTTP(S) documents can
@@ -3207,6 +3411,39 @@ struct RexPendingPermission {
                                    code:1
                                userInfo:@{NSLocalizedDescriptionKey:
                                             @"无法从 Rex.app/Contents/Frameworks 加载 CEF"}];
+    }
+    [_extensionPipe shutdown];
+    [_extensionPipe releaseChromiumDescriptors];
+    _extensionPipe = nil;
+    _extensionStartupBarrierActive = NO;
+    _libraryLoader.reset();
+    return NO;
+  }
+
+  NSData *publicSuffixData = publicSuffixListURL.isFileURL
+      ? [NSData dataWithContentsOfURL:publicSuffixListURL]
+      : nil;
+  NSData *privacyCatalogData = privacyCatalogURL.isFileURL
+      ? [NSData dataWithContentsOfURL:privacyCatalogURL]
+      : nil;
+  std::string publicSuffixContents;
+  if (publicSuffixData.length > 0) {
+    publicSuffixContents.assign(
+        static_cast<const char *>(publicSuffixData.bytes),
+        publicSuffixData.length);
+  }
+  std::string privacyCatalogContents;
+  if (privacyCatalogData.length > 0) {
+    privacyCatalogContents.assign(
+        static_cast<const char *>(privacyCatalogData.bytes),
+        privacyCatalogData.length);
+  }
+  if (publicSuffixContents.empty() || privacyCatalogContents.empty()) {
+    if (error) {
+      *error = [NSError errorWithDomain:RexChromiumErrorDomain
+                                   code:3
+                               userInfo:@{NSLocalizedDescriptionKey:
+                                  @"Rex 隐私安全资源缺失或无效"}];
     }
     [_extensionPipe shutdown];
     [_extensionPipe releaseChromiumDescriptors];
@@ -3277,7 +3514,35 @@ struct RexPendingPermission {
     return NO;
   }
 
+  // PSL normalization uses Chromium's URL parser for IDN handling, which is
+  // only valid after CefInitialize. Configure it before the first pump turn so
+  // no browser request can observe an uninitialized site-ownership catalog.
+  if (!rex::privacy::ConfigurePublicSuffixList(publicSuffixContents) ||
+      !rex::privacy::ConfigurePrivacyCatalog(privacyCatalogContents)) {
+    if (error) {
+      *error = [NSError errorWithDomain:RexChromiumErrorDomain
+                                   code:3
+                               userInfo:@{NSLocalizedDescriptionKey:
+                                  @"Rex 隐私安全资源缺失或无效"}];
+    }
+    [_extensionPipe shutdown];
+    CefShutdown();
+    [_extensionPipe releaseChromiumDescriptors];
+    _extensionPipe = nil;
+    [_extensionSyncQueue removeAllObjects];
+    _activeExtensionSyncRequest = nil;
+    _extensionSyncActive = NO;
+    _extensionStartupBarrierActive = NO;
+    _application = nullptr;
+    _libraryLoader.reset();
+    return NO;
+  }
+
   _ready = YES;
+  static dispatch_once_t shutdownRegistration;
+  dispatch_once(&shutdownRegistration, ^{
+    std::atexit(RexShutdownCEFAtProcessExit);
+  });
   NSLog(@"[Rex] performance layer=%s · content filter=host-catalogs (toggleable)",
         rex::thorium::ProfileName());
   NSLog(@"[Rex] Chromium extension runtime: %lu enabled package(s)",
@@ -4023,11 +4288,21 @@ struct RexPendingPermission {
 }
 
 - (void)finishTerminationIfReady {
-  if (_shuttingDown && _browsers.empty() &&
-      _auxiliaryChromeBrowsers.empty() && _pendingTabs.empty() &&
-      _chromePopupBrowsers.empty() &&
+  if (!_shuttingDown) return;
+  const size_t defaultBrowserCount =
+      _application ? _application->DefaultBrowserCount() : 0;
+  NSLog(@"[Rex] Chromium termination state: tabs=%lu, pending=%lu, auxiliary=%lu, popups=%lu, devtools=%lu, openingDevtools=%lu, defaults=%lu",
+        static_cast<unsigned long>(_browsers.size()),
+        static_cast<unsigned long>(_pendingTabs.size()),
+        static_cast<unsigned long>(_auxiliaryChromeBrowsers.size()),
+        static_cast<unsigned long>(_chromePopupBrowsers.size()),
+        static_cast<unsigned long>(_developerToolsBrowsers.size()),
+        static_cast<unsigned long>(_developerToolsOpeningTabs.size()),
+        static_cast<unsigned long>(defaultBrowserCount));
+  if (_browsers.empty() && _auxiliaryChromeBrowsers.empty() &&
+      _pendingTabs.empty() && _chromePopupBrowsers.empty() &&
       _developerToolsBrowsers.empty() && _developerToolsOpeningTabs.empty() &&
-      (!_application || _application->DefaultBrowserCount() == 0)) {
+      defaultBrowserCount == 0) {
     dispatch_async(dispatch_get_main_queue(), ^{ [self finishTermination]; });
   }
 }
@@ -4374,6 +4649,16 @@ struct RexPendingPermission {
     NSString *value = [[NSString alloc] initWithUTF8String:requestID.c_str()] ?: @"";
     [self respondToPermissionRequestID:value decision:@"ask"];
   }
+}
+
+- (void)cancelAllDownloadsForTermination {
+  std::vector<CefRefPtr<CefDownloadItemCallback>> callbacks;
+  callbacks.reserve(self->_downloadCallbacks.size());
+  for (auto &entry : self->_downloadCallbacks) {
+    if (entry.second) callbacks.push_back(std::move(entry.second));
+  }
+  self->_downloadCallbacks.clear();
+  for (const auto &callback : callbacks) callback->Cancel();
 }
 
 - (nullable NSURL *)downloadDirectoryForTabID:(NSString *)tabID {
@@ -4882,14 +5167,38 @@ struct RexPendingPermission {
                                         (nullable RexChromiumExtensionRuntimeCompletion)
                                             completion {
   NSError *validationError = nil;
+  NSString *internalDownloadUIExtensionPath =
+      [_internalDownloadUIExtensionPath copy];
+  if (!internalDownloadUIExtensionPath.length) {
+    internalDownloadUIExtensionPath =
+        RexInternalDownloadUIExtensionPath(&validationError);
+  }
+  NSArray<NSString *> *requiredManagedPaths =
+      internalDownloadUIExtensionPath
+          ? RexPathsIncludingInternalDownloadUIExtension(
+                managedPaths, internalDownloadUIExtensionPath)
+          : nil;
+  NSArray<NSString *> *requiredEnabledPaths =
+      internalDownloadUIExtensionPath
+          ? RexPathsIncludingInternalDownloadUIExtension(
+                enabledPaths, internalDownloadUIExtensionPath)
+          : nil;
   NSArray<NSString *> *validatedManagedPaths =
-      RexValidatedExtensionPaths(managedPaths, &validationError);
+      requiredManagedPaths
+          ? RexValidatedExtensionPaths(requiredManagedPaths, &validationError)
+          : nil;
   NSArray<NSString *> *validatedEnabledPaths = validatedManagedPaths
-      ? RexValidatedExtensionPaths(enabledPaths, &validationError)
+      ? RexValidatedExtensionPaths(requiredEnabledPaths, &validationError)
       : nil;
   NSArray<NSString *> *validatedRemovedPaths = validatedEnabledPaths
       ? RexValidatedRemovedExtensionPaths(removedPaths, &validationError)
       : nil;
+  if (validatedRemovedPaths && internalDownloadUIExtensionPath.length) {
+    NSMutableArray<NSString *> *userRemovedPaths =
+        [validatedRemovedPaths mutableCopy];
+    [userRemovedPaths removeObject:internalDownloadUIExtensionPath];
+    validatedRemovedPaths = [userRemovedPaths copy];
+  }
   NSArray<NSString *> *validatedForcedReloadPaths = validatedRemovedPaths
       ? RexValidatedExtensionPaths(forceReloadPaths, &validationError)
       : nil;
@@ -5218,14 +5527,32 @@ struct RexPendingPermission {
     }
     request.previousExtensionIDsByPath = [previousIDs copy];
 
-    NSArray<NSDictionary<NSString *, id> *> *operations =
-        RexExtensionReconcileOperations(
+    NSMutableArray<NSDictionary<NSString *, id> *> *operations =
+        [RexExtensionReconcileOperations(
             extensions,
             request.managedPaths,
             request.desiredPaths,
             [NSSet setWithArray:request.removedPaths],
             [NSSet setWithArray:request.updatedPaths],
-            request.expectedManifestMetadataByPath);
+            request.expectedManifestMetadataByPath) mutableCopy];
+    if (request.startup && self->_internalDownloadUIExtensionPath.length) {
+      NSString *internalExtensionID =
+          request.expectedManifestMetadataByPath[
+              self->_internalDownloadUIExtensionPath][@"id"];
+      if (!internalExtensionID.length) {
+        [self failExtensionSyncRequest:request
+                                error:RexExtensionRuntimeError(
+                                    34,
+                                    @"Rex 内部 Chromium 下载 UI 控制扩展身份无效")
+                   attemptedMutation:operations.count > 0];
+        return;
+      }
+      [operations addObject:@{
+        @"type": @"configureIncognito",
+        @"id": internalExtensionID,
+        @"path": self->_internalDownloadUIExtensionPath
+      }];
+    }
     request.attemptedMutation = operations.count > 0;
     [self performExtensionOperations:operations
                                index:0
@@ -5367,7 +5694,8 @@ struct RexPendingPermission {
   if (![type isEqualToString:@"load"] &&
       ![type isEqualToString:@"reload"] &&
       ![type isEqualToString:@"enable"] &&
-      ![type isEqualToString:@"disable"]) {
+      ![type isEqualToString:@"disable"] &&
+      ![type isEqualToString:@"configureIncognito"]) {
     completion(RexExtensionRuntimeError(
         43, @"扩展事务包含未知操作"));
     return;
@@ -5576,6 +5904,28 @@ struct RexPendingPermission {
          "finish({error: 'chrome.management.setEnabled unavailable'}); "
          "return; } "
          "chrome.management.setEnabled(%@, false, () => finish());",
+        RexJavaScriptStringLiteral(identifier)];
+  } else if ([type isEqualToString:@"configureIncognito"] &&
+             identifier.length) {
+    invocation = [NSString stringWithFormat:
+        @"if (!globalThis.chrome || !chrome.developerPrivate || "
+         "typeof chrome.developerPrivate.updateExtensionConfiguration !== "
+         "'function' || typeof chrome.developerPrivate.getExtensionInfo !== "
+         "'function') { "
+         "finish({error: 'Chromium extension configuration API unavailable'}); "
+         "return; } "
+         "(async () => { "
+         "await chrome.developerPrivate.updateExtensionConfiguration({"
+         "extensionId: %@, incognitoAccess: true}); "
+         "const info = await chrome.developerPrivate.getExtensionInfo(%@); "
+         "if (!info || info.id !== %@ || !info.incognitoAccess || "
+         "!info.incognitoAccess.isActive) { "
+         "throw new Error('Chromium internal download extension is not enabled "
+         "in private windows'); } "
+         "finish(); "
+         "})().catch(finish);",
+        RexJavaScriptStringLiteral(identifier),
+        RexJavaScriptStringLiteral(identifier),
         RexJavaScriptStringLiteral(identifier)];
   }
   if (!invocation.length) {
@@ -6173,6 +6523,13 @@ struct RexPendingPermission {
     if (!self->_ready) { completion(); return; }
     self->_shuttingDown = YES;
     self->_terminationCompletion = [completion copy];
+    NSLog(@"[Rex] Preparing Chromium for application termination.");
+    [self cancelAllDownloadsForTermination];
+    // Closing Rex's DevTools pipe peer posts DevToolsPipeHandler::Shutdown to
+    // Chromium's UI thread. Do this while the external message pump and AppKit
+    // run loop are still active so its read/write threads retire before the
+    // final synchronous CefShutdown join.
+    [self->_extensionPipe shutdown];
     // CloseBrowser cannot be initiated while CefScopedSendingEvent is active.
     // The delegate first cancels Cocoa's current quit event; this block then
     // runs after sendEvent has unwound.
@@ -6224,6 +6581,7 @@ struct RexPendingPermission {
 
 - (void)finishTermination {
   if (!_ready) return;
+  NSLog(@"[Rex] Chromium termination preparation completed.");
   [_views removeAllObjects];
   [_developerToolsViews removeAllObjects];
   for (NSWindow *popupWindow in _chromePopupWindowsByBrowserID.allValues) {
@@ -6283,11 +6641,15 @@ struct RexPendingPermission {
 
 - (void)shutdownAfterApplicationTermination {
   NSAssert(NSThread.isMainThread, @"CEF must shut down on the main thread");
-  if (!_ready) return;
+  NSLog(@"[Rex] Final CEF shutdown requested (ready=%@).",
+        _ready ? @"true" : @"false");
+  if (!_ready || _finalizingShutdown) return;
+  _finalizingShutdown = YES;
+  NSLog(@"[Rex] Shutting down CEF after all Chromium browsers closed.");
   _taskManager = nullptr;
-  // Disconnect the DevTools pipe before draining final external-pump work so
-  // Chromium can retire its pipe handler threads before CefShutdown joins them.
-  // Keep fd 3/4 reserved until shutdown returns to prevent descriptor reuse.
+  // Termination preparation disconnects the DevTools pipe while the normal
+  // external pump is active. Keep this idempotent call as an atexit fallback,
+  // and keep fd 3/4 reserved until shutdown returns to prevent reuse.
   [_extensionPipe shutdown];
   _application->DrainMessagePumpForShutdown();
   CefShutdown();
@@ -6307,6 +6669,8 @@ struct RexPendingPermission {
   _application = nullptr;
   _libraryLoader.reset();
   _ready = NO;
+  _finalizingShutdown = NO;
+  NSLog(@"[Rex] CEF shutdown completed.");
 }
 
 @end
@@ -7477,23 +7841,34 @@ bool RexBrowserClient::OnBeforeDownload(
     const CefString &suggested_name,
     CefRefPtr<CefBeforeDownloadCallback> callback) {
   CEF_REQUIRE_UI_THREAD();
-  if (!callback) return true;
+  if (!callback) return false;
   RexChromiumRuntime *runtime = runtime_;
+  if (!runtime || !browser || !browser->IsValid()) return false;
   NSURL *directoryURL = [runtime downloadDirectoryForTabID:tab_id_];
-  NSNumber *isDirectory = nil;
-  NSError *resourceError = nil;
-  [directoryURL getResourceValue:&isDirectory
-                          forKey:NSURLIsDirectoryKey
-                           error:&resourceError];
-  if (directoryURL.isFileURL && isDirectory.boolValue && !resourceError) {
-    NSString *filename = RexNSString(suggested_name);
-    if (!filename.length && download_item) {
-      filename = RexNSString(download_item->GetSuggestedFileName());
-    }
-    callback->Continue(RexUTF8(RexUniqueDownloadPath(directoryURL, filename)), false);
-  } else {
-    callback->Continue(CefString(), true);
+  if (!directoryURL.isFileURL) {
+    directoryURL = [NSURL fileURLWithPath:
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads/Rex"]
+                               isDirectory:YES];
   }
+  NSError *directoryError = nil;
+  if (![NSFileManager.defaultManager
+          createDirectoryAtURL:directoryURL
+   withIntermediateDirectories:YES
+                    attributes:nil
+                         error:&directoryError]) {
+    NSLog(@"[Rex] Unable to prepare download directory %@: %@",
+          directoryURL.path, directoryError.localizedDescription);
+  }
+  NSString *filename = RexNSString(suggested_name);
+  if (!filename.length && download_item) {
+    filename = RexNSString(download_item->GetSuggestedFileName());
+  }
+  if (!filename.length) filename = @"下载文件";
+
+  NSString *destinationPath = RexUniqueDownloadPath(directoryURL, filename);
+  // Chromium owns the request, redirect chain, transfer and file lifecycle.
+  // Rex supplies only the destination and maps Chromium progress into its UI.
+  callback->Continue(RexUTF8(destinationPath), false);
   return true;
 }
 
@@ -7512,7 +7887,6 @@ void RexBrowserClient::OnDownloadUpdated(
   } else {
     [runtime registerDownloadCallback:callback downloadID:downloadID tabID:tab_id_];
   }
-
   NSString *filename = RexNSString(download_item->GetSuggestedFileName());
   if (!filename.length) filename = RexNSString(download_item->GetURL()).lastPathComponent;
   if (!filename.length) filename = @"下载文件";
@@ -7537,9 +7911,12 @@ void RexBrowserClient::OnDownloadUpdated(
   Emit(@"download", @{
     @"downloadID": @(downloadID),
     @"url": RexNSString(download_item->GetURL()),
+    @"originalURL": RexNSString(download_item->GetOriginalUrl()),
     @"filename": filename,
+    @"mimeType": RexNSString(download_item->GetMimeType()),
     @"receivedBytes": @(download_item->GetReceivedBytes()),
     @"expectedBytes": @(download_item->GetTotalBytes()),
+    @"percentComplete": @(download_item->GetPercentComplete()),
     @"state": state,
     @"createdAt": @(createdAt),
     @"fullPath": RexNSString(download_item->GetFullPath()),

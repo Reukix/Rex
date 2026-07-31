@@ -1,4 +1,5 @@
 #include "RexNavigationPolicy.h"
+#include "Privacy/RexThoriumPolicy.h"
 
 #include <array>
 #include <iostream>
@@ -40,6 +41,12 @@ static_assert(
     !rex::navigation::ShouldStartNavigationGeneration(true, false));
 static_assert(
     !rex::navigation::ShouldStartNavigationGeneration(false, true));
+static_assert(rex::thorium::ContainsCSVFeature(
+    rex::thorium::kBrowserEnabledFeatures, "BackForwardCache"));
+static_assert(!rex::thorium::ContainsCSVFeature(
+    rex::thorium::kBrowserEnabledFeatures, "ParallelDownloading"));
+static_assert(rex::thorium::ContainsCSVFeature(
+    rex::thorium::kBrowserDisabledFeatures, "DownloadBubble"));
 
 struct StartupPlaceholderCase {
   bool awaits_real_address;
@@ -82,6 +89,16 @@ int main() {
       rex::navigation::ShouldStartNavigationGeneration(true, false) ||
       rex::navigation::ShouldStartNavigationGeneration(false, true)) {
     std::cerr << "Unexpected navigation generation policy\n";
+    return 1;
+  }
+  if (rex::thorium::ContainsCSVFeature(
+          rex::thorium::kBrowserEnabledFeatures, "ParallelDownloading")) {
+    std::cerr << "ParallelDownloading must remain disabled for CEF downloads\n";
+    return 1;
+  }
+  if (!rex::thorium::ContainsCSVFeature(
+          rex::thorium::kBrowserDisabledFeatures, "DownloadBubble")) {
+    std::cerr << "DownloadBubble must remain disabled; Rex owns download UI\n";
     return 1;
   }
   for (const auto &test_case : kStartupPlaceholderCases) {

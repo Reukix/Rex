@@ -47,16 +47,26 @@ struct PrivacyShieldView: View {
                 .accessibilityLabel("此网站的隐私保护")
             }
 
-            Text("本页已阻止 \(report.totalBlocked) 项")
+            Text("此标签会话已阻止 \(report.totalBlocked) 项")
                 .font(.title3.bold())
 
             VStack(spacing: 10) {
                 metric("广告", value: report.adsBlocked, symbol: "rectangle.slash")
                 metric("跨站追踪器", value: report.trackersBlocked, symbol: "scope")
-                metric("第三方 Cookie", value: report.thirdPartyCookiesBlocked, symbol: "circle.hexagongrid")
+                metric("已知指纹服务", value: report.fingerprintingBlocked, symbol: "hand.raised")
                 metric("可疑脚本", value: report.suspiciousScriptsBlocked, symbol: "chevron.left.forwardslash.chevron.right")
                 metric("HTTPS 升级", value: report.httpsUpgrades, symbol: "lock.fill")
                 metric("清理追踪参数", value: report.cleanedParameters, symbol: "link.badge.plus")
+                HStack {
+                    Image(systemName: "circle.hexagongrid")
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 20)
+                    Text("第三方 Cookie")
+                    Spacer()
+                    Text(preferences.blockThirdPartyCookies ? "应用级限制" : "允许")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if !report.resources.isEmpty {
@@ -122,8 +132,8 @@ struct PrivacyShieldView: View {
 
             Text(
                 preferences.contentBlockingEnabled
-                    ? "此网站的保护开关和级别会像 Safari 的网站设置一样保存，并同步到该网站的所有标签页。广告与追踪拦截使用内置域名目录。"
-                    : "内容拦截已在设置中关闭，当前仅保留 Cookie 限制、HTTPS 升级与站点权限防护。"
+                    ? "保护策略按公共后缀站点保存并同步到同站标签；统计在当前标签的整个会话内累计。第三方 Cookie 是应用级共享设置，不随网站开关改变。"
+                    : "内容拦截已在设置中关闭。统计仍按当前标签会话保留；第三方 Cookie 是应用级共享设置，不随网站开关改变。"
             )
             .font(.caption2)
             .foregroundStyle(.secondary)

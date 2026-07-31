@@ -84,6 +84,8 @@ Rex 小型面板不触发 Chromium 原生 action popup。面板 surface ID 只�
 
 Rex 源码和主可执行文件不包含 `SystemPasswordsCoordinator` 或 `AuthenticationServices` 依赖，不实现系统密码调用。打包门槛会拒绝 Rex 主 executable 链接该 framework 或 App 包含任何 `.systemextension`，并在 `PACKAGE-INFO.txt` 写入 `rex_password_integration=absent`。上游 Chromium Embedded Framework 自身仍链接该系统 framework，因此 bundle 级依赖审计不能据此声称完全不存在 `AuthenticationServices`。
 
+CEF 的 macOS 正常退出遵循官方 external-pump 顺序。Rex 先保存全部活动标准窗口会话并关闭 Chromium browser；最后一个 `OnBeforeClose` 完成后停止 AppKit 主循环。进程启动时安装的 `NSApplication.run` hook 等待原始 event loop 返回，再执行 10 次 run-loop/CEF pump 排空并调用 `CefShutdown()`，保证 SwiftUI 的 `App.main()` 尚未进入 `exit()`。内部 DevTools pipe 在 browser 关闭前断开，但 Chromium 侧 fd 3/4 保留到 `CefShutdown()` 返回，避免描述符复用。自动 smoke 额外使用 `--use-mock-keychain` 隔离用户 Keychain；正式启动不使用该测试参数。
+
 ## 工程目录
 
 ```text
@@ -119,11 +121,11 @@ Rex 在固定 CEF 预编译运行时之上叠加可审计的隐私分类与性�
 
 1. **性能层**（Thorium 风格）：`ChromiumBridge/Privacy/RexThoriumFlags` 在浏览器/子进程启动参数注入 GPU、网络与进程策略优化。
 2. **顶层导航隐私层**：Swift `PrivacyURLPolicy` 在地址栏导航和 Rex 接管的弹窗导航中删除已知追踪参数，并把符合条件的 HTTP URL 改为 HTTPS 尝试；特定 TLS 不可用错误可回退到原 HTTP URL。该层不改写 CEF 自行发起的子资源请求。
-3. **CEF 子资源隐私层**：`RexPrivacyEngine` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目。标准模式匹配第三方广告/追踪；指纹保护默认为开启，因此标准模式也匹配第三方已知指纹服务。严格模式追加社交目录；Swift 的自定义模式映射为 CEF aggressive，允许广告/追踪目录匹配第一方请求，并仅对第三方请求使用路径启发式。主框架导航永不在此层取消；无法判断第一方时放行。命中项由 `OnBeforeResourceLoad` 返回 `RV_CANCEL`。保护开关、级别和指纹保护以 `SitePrivacyPolicy` 按 profile/host 写入 SQLite，并在导航及同站标签间复用。扩展 DNR 由 Chromium 扩展运行时独立执行，不合并到此目录。
+3. **CEF 子资源隐私层**：`RexPrivacyEngine` 内置 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目，并用固定 Mozilla PSL `2026-07-25` 判断第一方站点。标准模式匹配第三方广告/追踪；指纹保护匹配第三方已知指纹服务。严格模式追加社交目录；自定义映射为 CEF aggressive。保护策略按 profile/PSL 站点写入 SQLite；扩展 DNR 仍由 Chromium 独立执行。
 4. **Cookie 层**：第三方 Cookie 限制通过 CEF RequestContext/profile 的 `profile.cookie_controls_mode` 全局设置执行，而非每标签 `CanSendCookie`/`CanSaveCookie` 回调。单个标签页关闭盾牌不会关闭全局 Cookie 限制。
 5. **扩展管理性能**：受管扩展启动时只完整扫描一次；启停只更新内存运行状态。单次 manifest 解析只读取一次本地化消息字典，Chrome Web Store 下载中的进度约每 80 毫秒合并发布一次，终态不延迟。
 
-第一方判断使用当前 C++ 实现的有限 registrable-domain 启发式和少量常见二级后缀，不是完整 PSL/eTLD+1 实现。当前也没有 EasyList、自定义规则订阅、恶意网站检测、Safe Browsing 或通用 Canvas/WebGL 指纹随机化。
+第一方判断与 Rex 站点策略读取同一次安全资源选择中的 Mozilla PSL，覆盖 ICANN/private suffix、通配、例外、IDN、localhost 与 IP。bundle 基线可由 Ed25519 签名的 PSL + 隐私目录包更新，并使用候选启动验证/LKG/回退；未配置生产端点和公钥时保持离线基线。Rex 明确不提供恶意网站检测或 Safe Browsing，也没有 EasyList、自定义订阅或通用 Canvas/WebGL 指纹随机化。
 
 开发者工具直接复用固定 CEF 版本内置的 Chromium 前端：
 

@@ -4,9 +4,10 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="${1:-0.9.7}"
-BUILD_NUMBER="${2:-970}"
+VERSION="${1:-0.9.8}"
+BUILD_NUMBER="${2:-982}"
 CONFIGURATION="${3:-Release}"
+SIGNING_MODE="${REX_PACKAGE_SIGNING_MODE:-adhoc}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
   echo "Version must be a SemVer value without a leading v." >&2
@@ -18,6 +19,44 @@ if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
 fi
 if [[ "$CONFIGURATION" != "Debug" && "$CONFIGURATION" != "Release" ]]; then
   echo "Configuration must be Debug or Release." >&2
+  exit 8
+fi
+if [[ "$SIGNING_MODE" != "adhoc" &&
+      "$SIGNING_MODE" != "apple-development" &&
+      "$SIGNING_MODE" != "developer-id" ]]; then
+  echo "REX_PACKAGE_SIGNING_MODE must be adhoc, apple-development, or developer-id." >&2
+  exit 8
+fi
+SIGNING_IDENTITY="-"
+SIGNING_TEAM=""
+HARDENED_RUNTIME="NO"
+SIGNING_LABEL="ad-hoc"
+if [[ "$SIGNING_MODE" == "apple-development" ]]; then
+  SIGNING_IDENTITY="${REX_APPLE_DEVELOPMENT_IDENTITY:-}"
+  SIGNING_TEAM="${REX_APPLE_DEVELOPMENT_TEAM_ID:-}"
+  if [[ "$SIGNING_IDENTITY" != Apple\ Development:* || -z "$SIGNING_TEAM" ]]; then
+    echo "Apple Development packaging requires REX_APPLE_DEVELOPMENT_IDENTITY and REX_APPLE_DEVELOPMENT_TEAM_ID." >&2
+    exit 8
+  fi
+  SIGNING_LABEL="apple-development"
+elif [[ "$SIGNING_MODE" == "developer-id" ]]; then
+  SIGNING_IDENTITY="${REX_DEVELOPER_IDENTITY:-}"
+  SIGNING_TEAM="${REX_DEVELOPER_ID_TEAM_ID:-}"
+  if [[ "$SIGNING_IDENTITY" != Developer\ ID\ Application:* || -z "$SIGNING_TEAM" ]]; then
+    echo "Developer ID packaging requires REX_DEVELOPER_IDENTITY and REX_DEVELOPER_ID_TEAM_ID." >&2
+    exit 8
+  fi
+  if [[ "$CONFIGURATION" != "Release" ]]; then
+    echo "Developer ID packaging requires the Release configuration." >&2
+    exit 8
+  fi
+  HARDENED_RUNTIME="YES"
+  SIGNING_LABEL="developer-id"
+fi
+if [[ "$SIGNING_MODE" != "adhoc" ]] &&
+    ! /usr/bin/security find-identity -v -p codesigning \
+      | /usr/bin/grep -Fq "\"$SIGNING_IDENTITY\""; then
+  echo "Requested signing identity is not valid in the current keychain: $SIGNING_IDENTITY" >&2
   exit 8
 fi
 EXPECTED_MARKETING_VERSION="${VERSION%%-*}"
@@ -52,6 +91,7 @@ echo "==> Rex Chromium package builder"
 echo "    version: $VERSION"
 echo "    build:   $BUILD_NUMBER"
 echo "    config:  $CONFIGURATION"
+echo "    signing: $SIGNING_LABEL"
 
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$DERIVED_DATA/ModuleCache.noindex}"
@@ -84,8 +124,9 @@ xcodebuild \
   build \
   CODE_SIGNING_ALLOWED=YES \
   CODE_SIGNING_REQUIRED=YES \
-  CODE_SIGN_IDENTITY=- \
-  ENABLE_HARDENED_RUNTIME=NO \
+  CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+  DEVELOPMENT_TEAM="$SIGNING_TEAM" \
+  ENABLE_HARDENED_RUNTIME="$HARDENED_RUNTIME" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   MARKETING_VERSION="$EXPECTED_MARKETING_VERSION"
 
@@ -187,8 +228,41 @@ if [[ -d "$APP_PATH/Contents/Library/SystemExtensions" ]] &&
   exit 11
 fi
 
-echo "==> Verifying ad-hoc code signatures"
+echo "==> Verifying $SIGNING_LABEL code signatures"
 /usr/bin/codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+verify_signing_identity() {
+  local code_path="$1"
+  local label="$2"
+  local details
+  local authority
+  local team_id
+
+  details="$(/usr/bin/codesign -d --verbose=4 "$code_path" 2>&1)"
+  authority="$(printf '%s\n' "$details" | /usr/bin/awk -F= '/^Authority=/{print $2; exit}')"
+  team_id="$(printf '%s\n' "$details" | /usr/bin/awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+  if [[ "$authority" != "$SIGNING_IDENTITY" ]]; then
+    echo "$label signing authority mismatch: expected $SIGNING_IDENTITY, received $authority." >&2
+    exit 12
+  fi
+  if [[ "$team_id" != "$SIGNING_TEAM" ]]; then
+    echo "$label TeamIdentifier mismatch: expected $SIGNING_TEAM, received $team_id." >&2
+    exit 12
+  fi
+  if [[ "$SIGNING_MODE" == "developer-id" ]] &&
+      ! printf '%s\n' "$details" | /usr/bin/grep -Eq '(^| )flags=.*runtime'; then
+    echo "$label Developer ID signature is missing Hardened Runtime." >&2
+    exit 12
+  fi
+}
+
+if [[ "$SIGNING_MODE" != "adhoc" ]]; then
+  verify_signing_identity "$APP_PATH" "Rex.app"
+  while IFS= read -r -d '' code_path; do
+    if /usr/bin/file -b "$code_path" | /usr/bin/grep -q 'Mach-O'; then
+      verify_signing_identity "$code_path" "Nested Mach-O"
+    fi
+  done < <(/usr/bin/find "$APP_PATH/Contents" -type f -print0)
+fi
 
 /bin/rm -rf "$PUBLISH_DIR" "$BACKUP_DIST"
 mkdir -p "$PUBLISH_DIR"
@@ -238,14 +312,14 @@ SHA="$(/usr/bin/shasum -a 256 "$PUBLISH_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{prin
   echo "extension_lifecycle=hot-install-enable-disable-update-remove"
   echo "extension_startup_navigation=extension-ready-generation-barrier"
   echo "extension_page_reload=automatic-after-hot-runtime-change"
-  echo "cef_shutdown=after-nsapplication-run"
+  echo "cef_shutdown=nsapplication-run-hook-after-event-loop-return"
   echo "extension_pipe_shutdown=before-cef-shutdown"
   echo "extension_pipe_fd_release=after-cef-shutdown"
   echo "rex_password_integration=absent"
   echo "performance_layer=rex-thorium-hybrid-v1.3"
   echo "devtools=cef-chromium-devtools"
-  echo "signing=ad-hoc"
-  echo "hardened_runtime=disabled-for-ad-hoc-build"
+  echo "signing=$SIGNING_LABEL"
+  echo "hardened_runtime=$HARDENED_RUNTIME"
   echo "arch=arm64"
   echo "archive=$ARCHIVE_NAME"
   echo "sha256=$SHA"

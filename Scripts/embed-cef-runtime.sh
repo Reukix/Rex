@@ -77,12 +77,18 @@ done
 
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" ]]; then
   identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+  codesign_options=(--force --sign "$identity")
+  if [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" && "$identity" != "-" ]]; then
+    codesign_options+=(--options runtime --timestamp)
+  else
+    codesign_options+=(--timestamp=none)
+  fi
   while IFS= read -r library; do
-    /usr/bin/codesign --force --sign "$identity" --timestamp=none "$library"
+    /usr/bin/codesign "${codesign_options[@]}" "$library"
   done < <(/usr/bin/find "$CEF_DESTINATION/Versions/A/Libraries" -type f -name '*.dylib')
-  /usr/bin/codesign --force --sign "$identity" --timestamp=none "$CEF_DESTINATION"
+  /usr/bin/codesign "${codesign_options[@]}" "$CEF_DESTINATION"
   for name in "${HELPER_NAMES[@]}"; do
-    /usr/bin/codesign --force --sign "$identity" --timestamp=none "$FRAMEWORKS_DIR/$name.app"
+    /usr/bin/codesign "${codesign_options[@]}" "$FRAMEWORKS_DIR/$name.app"
   done
 fi
 

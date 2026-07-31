@@ -130,9 +130,7 @@ void ApplyBrowserProcessFlags(CefRefPtr<CefCommandLine> command_line) {
   // Never re-enable zero-copy / RawDraw / native GPU memory buffer compositor.
   AppendIfMissing(command_line, "enable-gpu-rasterization");
   AppendIfMissing(command_line, "canvas-oop-rasterization");
-  MergeCSVSwitch(command_line, "enable-features",
-                 "CanvasOopRasterization,ParallelDownloading,"
-                 "BackForwardCache,PartitionedCookies");
+  MergeCSVSwitch(command_line, "enable-features", kBrowserEnabledFeatures);
   // Rex uses a private DevTools pipe to transact managed extensions, not to
   // automate page content. Keep Blink from exposing that internal transport as
   // navigator.webdriver, which otherwise trips anti-bot pages into debug loops.
@@ -174,7 +172,7 @@ void ApplyBrowserProcessFlags(CefRefPtr<CefCommandLine> command_line) {
 
   // Reduce background noise similar to Thorium privacy defaults.
   MergeCSVSwitch(command_line, "disable-features",
-                 "AutofillServerCommunication,OptimizationHints,MediaRouter");
+                 kBrowserDisabledFeatures);
 }
 
 void ApplyChildProcessFlags(CefRefPtr<CefCommandLine> command_line) {

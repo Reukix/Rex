@@ -325,6 +325,24 @@ actor BrowserSQLitePersistence {
         try step(statement)
     }
 
+    func replaceSitePrivacyPolicies(
+        profileID: UUID,
+        with policies: [SitePrivacyPolicy]
+    ) throws {
+        try openIfNeeded()
+        try withTransaction {
+            let deleteStatement = try prepare(
+                "DELETE FROM site_privacy_policies WHERE profile_id = ?"
+            )
+            defer { sqlite3_finalize(deleteStatement) }
+            try bind(profileID.uuidString, to: deleteStatement, at: 1)
+            try step(deleteStatement)
+            for policy in policies where policy.profileID == profileID {
+                try saveSitePrivacyPolicy(policy)
+            }
+        }
+    }
+
     private func openIfNeeded() throws {
         guard database == nil else { return }
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)

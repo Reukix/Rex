@@ -23,11 +23,19 @@ targets:
   Rex:
     type: application
     platform: macOS
+    configFiles:
+      Debug: Configuration/RexSigning.xcconfig
+      Release: Configuration/RexSigning.xcconfig
     sources:
       - path: Sources/RexApp
         excludes:
           - Resources
       - path: Sources/RexApp/Resources
+        excludes:
+          - InternalExtensions
+        buildPhase: resources
+      - path: Sources/RexApp/Resources/InternalExtensions
+        type: folder
         buildPhase: resources
     info:
       path: Configuration/Rex-Info.plist
@@ -46,12 +54,16 @@ targets:
         NSCameraUsageDescription: "Rex 仅在您允许的网站请求时使用摄像头。"
         NSMicrophoneUsageDescription: "Rex 仅在您允许的网站请求时使用麦克风。"
         NSLocationUsageDescription: "Rex 仅在您允许的网站请求时提供位置信息。"
+        RexAppUpdateEndpoint: "$(REX_APP_UPDATE_ENDPOINT)"
+        RexAppUpdatePublicKey: "$(REX_APP_UPDATE_PUBLIC_KEY)"
+        RexSecurityAssetEndpoint: "$(REX_SECURITY_ASSET_ENDPOINT)"
+        RexSecurityAssetPublicKey: "$(REX_SECURITY_ASSET_PUBLIC_KEY)"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rex.browser
         PRODUCT_NAME: Rex
-        MARKETING_VERSION: 0.9.7
-        CURRENT_PROJECT_VERSION: 970
+        MARKETING_VERSION: 0.9.8
+        CURRENT_PROJECT_VERSION: 982
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "6.0"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) REX_CEF"
@@ -74,7 +86,6 @@ targets:
           - "-framework Security"
           - "-framework CoreFoundation"
           - "-lsqlite3"
-        ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
         ONLY_ACTIVE_ARCH: YES
     preBuildScripts:

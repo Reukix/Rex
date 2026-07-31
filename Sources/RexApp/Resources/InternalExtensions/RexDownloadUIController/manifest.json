@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Rex Download UI Controller",
+  "version": "1.0.0",
+  "description": "Keeps Chromium download transport active while Rex renders the download interface.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmewITvuc6u2RcybgTm5JmmTWlylXPAieXTqRSeEp7Qyl2N27YvF/ng/uqqNCsdIYqgt6Tw/y1m6+k4dmVEQ2MxJBJ5aZUm8DxmBBUe9GLoQw1lWGAnJ/cLKlp+ekKMmFUrRLnCFjIHa89FXm7xH/EVJh9bMd37hb8cEwpx46y76TaOs+N3nQ82iq0tZmnEnGqNzL8Qte111CYZcFWgmKlASInUpb4+1EgIC7KcoNLZFEvF/lPPmwxeXCP5NrYzqk1z6/vpXjQfDN8NpJrXGGB2nVd6ZyFKJFCx+0KDFmkWChFedWn5Ih9zfP3/A9EftdDmKLcf2Gwt38EKKHqQigYQIDAQAB",
+  "permissions": [
+    "downloads",
+    "downloads.ui"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "incognito": "spanning"
+}

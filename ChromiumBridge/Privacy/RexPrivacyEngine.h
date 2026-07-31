@@ -12,6 +12,15 @@
 // Thorium performance flags live in RexThoriumFlags.
 namespace rex::privacy {
 
+// Configures the pinned Mozilla Public Suffix List used for site ownership.
+// Rules include ICANN/private domains plus wildcard and exception entries.
+bool ConfigurePublicSuffixList(const std::string &contents);
+std::string RegistrableDomainForHost(const std::string &host);
+
+// Configures the signed/bundled Rex privacy catalog selected for this launch.
+// Parsing builds a complete snapshot and swaps it atomically after validation.
+bool ConfigurePrivacyCatalog(const std::string &contents);
+
 enum class BlockCategory {
   None,
   Advertisement,

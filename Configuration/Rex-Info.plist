@@ -30,5 +30,13 @@
 	<string>Rex 仅在您允许的网站请求时使用麦克风。</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Rex 仅在您允许的网站请求时提供位置信息。</string>
+	<key>RexAppUpdateEndpoint</key>
+	<string>$(REX_APP_UPDATE_ENDPOINT)</string>
+	<key>RexAppUpdatePublicKey</key>
+	<string>$(REX_APP_UPDATE_PUBLIC_KEY)</string>
+	<key>RexSecurityAssetEndpoint</key>
+	<string>$(REX_SECURITY_ASSET_ENDPOINT)</string>
+	<key>RexSecurityAssetPublicKey</key>
+	<string>$(REX_SECURITY_ASSET_PUBLIC_KEY)</string>
 </dict>
 </plist>

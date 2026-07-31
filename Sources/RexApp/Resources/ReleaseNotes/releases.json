@@ -1,6 +1,49 @@
 {
   "releases": [
     {
+      "version": "0.9.8",
+      "build": 982,
+      "date": "2026-08-01",
+      "channel": "beta",
+      "summary": "继续采用 Rex 可见 UI 与 Chromium 权威后端：Chromium 独占下载生命周期，Rex 映射右侧下载 UI；同时使用固定 Mozilla PSL 统一站点归属，并明确 Cookie、统计与恶意网站检测边界。",
+      "added": [
+        "Rex 右侧下载模块：映射 Chromium 文件名、进度、路径与终态，并在新下载开始时自动弹出",
+        "Mozilla Public Suffix List 2026-07-25 官方快照，覆盖 ICANN、private suffix、IDN、localhost、IPv4/IPv6、通配和例外规则",
+        "Ed25519 签名安全资源包：隐私目录与 PSL 同版本更新、原子安装、last-known-good、失败回退、降级拒绝、吊销与 kill switch"
+      ],
+      "improved": [
+        "Chromium 独占下载请求、重定向、传输、落盘和生命周期；Rex 只映射状态与用户主动取消/重试命令",
+        "通过 Chromium downloads.ui 官方接口关闭原生保存/下载浮层、进度环和开始动画，默认保存到 ~/Downloads/Rex，并保留工作空间自定义目录",
+        "站点隐私策略从精确主机迁移到 PSL eTLD+1，同站记录冲突时保留最近修改并原子替换 SQLite 数据",
+        "同一次安全资源选择同时供 Swift 站点策略与 CEF 第一方/第三方请求分类使用",
+        "CRX、普通下载、安全资源和应用更新使用四个独立验证边界；应用更新要求独立签名、向前 build 和当前 build 的精确回退包",
+        "隐私盾牌明确为当前标签会话累计，已知指纹服务与追踪器分项展示，Cookie 显示为应用级共享限制"
+      ],
+      "changed": [
+        "应用版本更新为 v0.9.8 build 982 Beta",
+        "恶意网站检测选择为当前明确不提供：Rex 不为该能力把访问网址发送给第三方 provider，也不使用安全浏览文案暗示不存在的检测"
+      ],
+      "fixed": [
+        "Chrome runtime 下载完成气泡和下载开始动画错误显示在窗口左上角、与 Rex 下载浮层重复的问题",
+        "GitHub release DMG 点击后因实验性 ParallelDownloading 在 Chrome_IOThread 崩溃的问题",
+        "第一方判断依赖少量手写二级后缀，无法覆盖 private suffix、IDN、通配和例外规则的问题",
+        "旧隐私报告在没有分类资源时按比例伪造广告、追踪和 Cookie 数量的问题"
+      ],
+      "removed": [
+        "会暂停、恢复或重放 Chromium 下载的 Rex 危险文件与隐私落盘确认链路"
+      ],
+      "knownIssues": [
+        "普通下载不包含 Rex 自建的信誉、恶意内容扫描、代码签名或 Safe Browsing",
+        "安全资源更新没有生产 HTTPS 端点、公钥和仓库外私钥发布流程；未配置时只使用 bundle 基线",
+        "隔离 Chromium GUI 下载矩阵仍需完成全部五个本地样本；GitHub release DMG 实机回归已通过",
+        "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁；真实应用替换与失败回退演练尚未完成"
+      ],
+      "inProgress": [
+        "提供安全资源与应用更新的生产端点、公钥和离线签名发布流程",
+        "执行隔离 Chromium GUI 下载实机矩阵并完成 Developer ID、公证、Gatekeeper 和真实更新回退验收"
+      ]
+    },
+    {
       "version": "0.9.7",
       "build": 970,
       "date": "2026-07-30",

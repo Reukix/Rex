@@ -1,8 +1,34 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 namespace rex::thorium {
+
+inline constexpr char kBrowserEnabledFeatures[] =
+    "CanvasOopRasterization,BackForwardCache,PartitionedCookies";
+
+// Rex owns the visible download UI. Chromium continues to own transfers and
+// disk writes, but its Chrome-style DownloadBubble must never be enabled.
+inline constexpr char kBrowserDisabledFeatures[] =
+    "AutofillServerCommunication,OptimizationHints,MediaRouter,DownloadBubble";
+
+constexpr bool ContainsCSVFeature(std::string_view features,
+                                  std::string_view feature) {
+  while (!features.empty()) {
+    const size_t separator = features.find(',');
+    const std::string_view item = features.substr(0, separator);
+    if (item == feature) return true;
+    if (separator == std::string_view::npos) break;
+    features.remove_prefix(separator + 1);
+  }
+  return false;
+}
+
+// CEF 150 crashes on Chrome_IOThread when its experimental segmented transfer
+// feature handles some redirected downloads (including GitHub release assets).
+static_assert(!ContainsCSVFeature(kBrowserEnabledFeatures,
+                                  "ParallelDownloading"));
 
 struct AdaptivePerformancePolicy {
   std::uint32_t renderer_process_limit;

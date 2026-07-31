@@ -72,6 +72,7 @@ final class BrowserStore: ObservableObject {
     @Published var lastError: String?
     @Published private(set) var addressFocusRequest = 0
     @Published private(set) var findFocusRequest = 0
+    @Published private(set) var downloadPanelRequest = 0
 
     private let engine: any BrowserEngine
     private let persistence: BrowserSQLitePersistence
@@ -89,6 +90,8 @@ final class BrowserStore: ObservableObject {
     private var downloadDirectoryURLsBySpace: [UUID: URL] = [:]
     private var securityScopedDownloadDirectoryURLsBySpace: [UUID: URL] = [:]
     private var activeDownloadTabIDsByDownloadID: [UUID: UUID] = [:]
+    private var retryingDownloadIDs = Set<UUID>()
+    private var nonRestorableDownloadURLsByTabID: [UUID: URL] = [:]
     private var activeMediaTabIDs = Set<UUID>()
     private var extensionSourceWebTabIDsByPackage: [String: UUID] = [:]
     private var recentlyClosedTabs: [BrowserTab] = []
@@ -192,7 +195,18 @@ final class BrowserStore: ObservableObject {
             )]
         }
 
-        var configuredInitialTabs = initialTabs
+        let qaInitialURL = Self.isolatedQAInitialURL()
+        let qaDownloadDirectory = Self.isolatedQADownloadDirectory()
+        var configuredInitialTabs: [BrowserTab]
+        if let qaInitialURL, !profile.isPrivate {
+            configuredInitialTabs = [BrowserTab(
+                url: qaInitialURL,
+                title: "Rex QA",
+                spaceID: initialSpaces[0].id
+            )]
+        } else {
+            configuredInitialTabs = initialTabs
+        }
         for index in configuredInitialTabs.indices {
             configuredInitialTabs[index] = Self.userVisibleTab(configuredInitialTabs[index])
             configuredInitialTabs[index].isLoading = false
@@ -222,6 +236,11 @@ final class BrowserStore: ObservableObject {
         self.observedBlockThirdPartyCookies = preferences.blockThirdPartyCookies
         self.newTabFavorites = profile.isPrivate ? [] : newTabFavoritesStore.favorites
         self.isSitePrivacyPolicyReady = profile.isPrivate
+        if let qaDownloadDirectory, !profile.isPrivate {
+            for space in initialSpaces {
+                downloadDirectoryURLsBySpace[space.id] = qaDownloadDirectory
+            }
+        }
 
         createEnginePages(for: configuredInitialTabs.map(\.id))
         let shouldPerformInitialRuntimeSync =
@@ -250,8 +269,18 @@ final class BrowserStore: ObservableObject {
                     let storedPrivacyPolicies = try await databasePersistence
                         .sitePrivacyPolicies(profileID: profile.id)
                     guard !Task.isCancelled else { return }
+                    let normalizedPrivacyPolicies = Self.normalizedSitePrivacyPolicies(
+                        storedPrivacyPolicies,
+                        profileID: profile.id
+                    )
+                    if normalizedPrivacyPolicies != storedPrivacyPolicies {
+                        try await databasePersistence.replaceSitePrivacyPolicies(
+                            profileID: profile.id,
+                            with: normalizedPrivacyPolicies
+                        )
+                    }
                     if let self {
-                        self.mergeLoadedSitePrivacyPolicies(storedPrivacyPolicies)
+                        self.mergeLoadedSitePrivacyPolicies(normalizedPrivacyPolicies)
                         self.finishSitePrivacyPolicyLoading()
                     }
                     self?.finishSessionRestoration()
@@ -396,6 +425,45 @@ final class BrowserStore: ObservableObject {
         updateTabLifecycles()
     }
 
+    static func isolatedQAInitialURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        guard RexQAEnvironment.isolatedHome(environment: environment) != nil,
+              let rawURL = environment["REX_QA_INITIAL_URL"] else { return nil }
+        guard let url = URL(string: rawURL),
+              url.scheme?.lowercased() == "http",
+              url.user == nil,
+              url.password == nil,
+              url.host == "127.0.0.1" || url.host == "localhost" else {
+            return nil
+        }
+        return url
+    }
+
+    static func isolatedQADownloadDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        guard isolatedQAInitialURL(environment: environment) != nil,
+              let home = RexQAEnvironment.isolatedHome(environment: environment),
+              let rawPath = environment["REX_QA_DOWNLOAD_DIRECTORY"] else {
+            return nil
+        }
+        let directory = URL(fileURLWithPath: rawPath).standardizedFileURL
+        guard directory.path == defaultDownloadDirectory(homeDirectory: home).path else {
+            return nil
+        }
+        return directory
+    }
+
+    static func defaultDownloadDirectory(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        homeDirectory
+            .appending(path: "Downloads", directoryHint: .isDirectory)
+            .appending(path: "Rex", directoryHint: .isDirectory)
+            .standardizedFileURL
+    }
+
     convenience init(engine: (any BrowserEngine)? = nil, persistence: BrowserSessionPersistence) {
         let databaseURL = FileManager.default.temporaryDirectory
             .appending(path: "rex-store-tests-\(UUID().uuidString)/Browser.sqlite")
@@ -483,7 +551,12 @@ final class BrowserStore: ObservableObject {
     }
 
     var currentDownloadDirectoryName: String {
-        currentDownloadDirectoryURL?.lastPathComponent ?? "每次询问"
+        currentDownloadDirectoryURL?.lastPathComponent ?? "Rex"
+    }
+
+    var usesDefaultDownloadDirectory: Bool {
+        currentDownloadDirectoryURL?.standardizedFileURL ==
+            Self.defaultDownloadDirectory().standardizedFileURL
     }
 
     var visibleTabs: [BrowserTab] {
@@ -533,7 +606,7 @@ final class BrowserStore: ObservableObject {
         guard let info = siteSecurityInfoByTabID[selectedTabID],
               let infoURL = info.url,
               let tabURL = currentTab?.url else { return nil }
-        return navigationURLsMatch(infoURL, tabURL) ? info : nil
+        return Self.navigationURLsMatch(infoURL, tabURL) ? info : nil
     }
 
     var primaryTab: BrowserTab? {
@@ -1219,6 +1292,7 @@ final class BrowserStore: ObservableObject {
         deferredPageSuspensions.removeValue(forKey: tabID)
         navigationCommandTasks.removeValue(forKey: tabID)?.cancel()
         activeDownloadTabIDsByDownloadID = activeDownloadTabIDsByDownloadID.filter { $0.value != tabID }
+        nonRestorableDownloadURLsByTabID.removeValue(forKey: tabID)
         activeMediaTabIDs.remove(tabID)
         siteSecurityInfoByTabID.removeValue(forKey: tabID)
         faviconDataByTabID.removeValue(forKey: tabID)
@@ -1934,25 +2008,25 @@ final class BrowserStore: ObservableObject {
     }
 
     func retryDownload(_ download: BrowserDownloadTask) {
-        guard download.canRetry, let tabID = currentTab?.id else { return }
+        guard download.canRetry,
+              !retryingDownloadIDs.contains(download.id),
+              let tabID = currentTab?.id else { return }
+        // Do not manufacture a local pending state. Chromium will emit the
+        // replacement lifecycle snapshot and ChromiumBrowserEngine will map it
+        // back onto this task identity.
+        retryingDownloadIDs.insert(download.id)
         activeDownloadTabIDsByDownloadID[download.id] = tabID
-        if let index = downloads.firstIndex(where: { $0.id == download.id }) {
-            downloads[index].receivedBytes = 0
-            downloads[index].expectedBytes = nil
-            downloads[index].state = .pending
-            downloads[index].destinationURL = nil
-            downloads[index].errorDescription = nil
-            if !profile.isPrivate {
-                let pendingDownload = downloads[index]
-                Task { [persistence] in try? await persistence.saveDownload(pendingDownload) }
+        Task { [weak self, engine] in
+            do {
+                try await engine.execute(.retryDownload(
+                    downloadID: download.id,
+                    tabID: tabID,
+                    url: download.sourceURL
+                ))
+            } catch {
+                self?.retryingDownloadIDs.remove(download.id)
+                self?.activeDownloadTabIDsByDownloadID.removeValue(forKey: download.id)
             }
-        }
-        Task { [engine] in
-            try? await engine.execute(.retryDownload(
-                downloadID: download.id,
-                tabID: tabID,
-                url: download.sourceURL
-            ))
         }
     }
 
@@ -2257,6 +2331,23 @@ final class BrowserStore: ObservableObject {
         sitePrivacyPolicies = policiesByHost.values.sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    private static func normalizedSitePrivacyPolicies(
+        _ policies: [SitePrivacyPolicy],
+        profileID: UUID
+    ) -> [SitePrivacyPolicy] {
+        var policiesBySite = [String: SitePrivacyPolicy]()
+        for var policy in policies where policy.profileID == profileID {
+            let site = PublicSuffixList.current.registrableDomain(for: policy.host)
+            guard !site.isEmpty else { continue }
+            policy.host = site
+            if let existing = policiesBySite[site], existing.updatedAt > policy.updatedAt {
+                continue
+            }
+            policiesBySite[site] = policy
+        }
+        return policiesBySite.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     private func apply(_ policy: SitePrivacyPolicy, to tabID: UUID) {
         mutateTab(tabID) { tab in
             tab.privacyState.isEnabled = policy.protectionEnabled
@@ -2290,7 +2381,7 @@ final class BrowserStore: ObservableObject {
               !host.isEmpty else {
             return nil
         }
-        return host
+        return PublicSuffixList.current.registrableDomain(for: host)
     }
 
     func applyPrivacyPreferences() {
@@ -2346,21 +2437,23 @@ final class BrowserStore: ObservableObject {
         let blocked = state?.blockedCount ?? 0
         let resources = state?.resources ?? []
         let ads = resources.filter { $0.category == .advertisement }.reduce(0) { $0 + $1.count }
-        let trackers = resources.filter {
-            $0.category == .tracker || $0.category == .fingerprinting
+        let trackers = resources.filter { $0.category == .tracker }.reduce(0) { $0 + $1.count }
+        let fingerprinting = resources.filter {
+            $0.category == .fingerprinting
         }.reduce(0) { $0 + $1.count }
         let cookies = resources.filter { $0.category == .thirdPartyCookie }.reduce(0) { $0 + $1.count }
         let suspiciousScripts = resources.filter { $0.category == .suspiciousScript }.reduce(0) { $0 + $1.count }
-        let usesLegacyCount = resources.isEmpty
         return PrivacyReport(
             siteHost: tab?.url?.host ?? "新标签页",
-            adsBlocked: usesLegacyCount ? blocked / 3 : ads,
-            trackersBlocked: usesLegacyCount ? blocked / 2 : trackers,
-            thirdPartyCookiesBlocked: usesLegacyCount ? blocked - blocked / 3 - blocked / 2 : cookies,
+            adsBlocked: ads,
+            trackersBlocked: trackers,
+            fingerprintingBlocked: fingerprinting,
+            thirdPartyCookiesBlocked: cookies,
             httpsUpgrades: state?.httpsUpgradeCount ?? 0,
             cleanedParameters: state?.cleanedParameterCount ?? 0,
             suspiciousScriptsBlocked: suspiciousScripts,
-            resources: resources
+            resources: resources,
+            totalBlocked: blocked
         )
     }
 
@@ -2554,6 +2647,7 @@ final class BrowserStore: ObservableObject {
         guard let visibleSourceURL = userVisibleURL(download.sourceURL) else { return nil }
         var visibleDownload = download
         visibleDownload.sourceURL = visibleSourceURL
+        visibleDownload.originalURL = userVisibleURL(download.originalURL)
         visibleDownload.errorDescription = download.errorDescription.map(userVisibleTitle)
         return visibleDownload
     }
@@ -2596,13 +2690,45 @@ final class BrowserStore: ObservableObject {
         _ snapshot: BrowserSessionSnapshot
     ) -> BrowserSessionSnapshot {
         var visibleSnapshot = snapshot
-        visibleSnapshot.tabs = snapshot.tabs.map(userVisibleTab)
+        visibleSnapshot.tabs = snapshot.tabs.map { tab in
+            restorableTabForSession(userVisibleTab(tab))
+        }
+        let replacedTabIDs = Set(snapshot.tabs.compactMap { tab in
+            tab.url.map(isLikelyDirectDownloadNavigation) == true ? tab.id : nil
+        })
         visibleSnapshot.splitPaneStates = snapshot.splitPaneStates.map { paneState in
             var visiblePaneState = paneState
             visiblePaneState.navigation = userVisibleNavigationState(paneState.navigation)
+            if replacedTabIDs.contains(paneState.tabID) {
+                visiblePaneState.navigation.url = BrowserStartPage.url
+                visiblePaneState.navigation.title = BrowserStartPage.title
+                visiblePaneState.navigation.isLoading = false
+                visiblePaneState.navigation.loadingProgress = 1
+            }
             return visiblePaneState
         }
         return visibleSnapshot
+    }
+
+    static func restorableTabForSession(_ tab: BrowserTab) -> BrowserTab {
+        guard let url = tab.url, isLikelyDirectDownloadNavigation(url) else { return tab }
+        return restorableTabAfterDownload(tab, nonRestorableURL: url)
+    }
+
+    static func isLikelyDirectDownloadNavigation(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = url.host?.lowercased() else { return false }
+        let path = url.path.lowercased()
+        if host == "github.com" {
+            return path.contains("/releases/download/")
+                || path.contains("/releases/latest/download/")
+                || path.contains("/archive/refs/")
+        }
+        return [
+            "objects.githubusercontent.com",
+            "release-assets.githubusercontent.com",
+            "github-releases.githubusercontent.com"
+        ].contains(host)
     }
 
     private func addressBarText(for url: URL?) -> String {
@@ -2766,7 +2892,7 @@ final class BrowserStore: ObservableObject {
         )
     }
 
-    private func navigationURLsMatch(_ lhs: URL, _ rhs: URL) -> Bool {
+    private static func navigationURLsMatch(_ lhs: URL, _ rhs: URL) -> Bool {
         if BrowserStartPage.matches(lhs), BrowserStartPage.matches(rhs) {
             return true
         }
@@ -3014,20 +3140,55 @@ final class BrowserStore: ObservableObject {
     }
 
     private func makeSnapshot() -> BrowserSessionSnapshot {
-        Self.userVisibleSnapshot(BrowserSessionSnapshot(
+        var snapshotTabs = tabs
+        var snapshotPaneStates = makeSplitPaneStates()
+        for (tabID, downloadURL) in nonRestorableDownloadURLsByTabID {
+            guard let index = snapshotTabs.firstIndex(where: { $0.id == tabID }) else { continue }
+            let restorableTab = Self.restorableTabAfterDownload(
+                snapshotTabs[index],
+                nonRestorableURL: downloadURL
+            )
+            guard restorableTab != snapshotTabs[index] else { continue }
+            snapshotTabs[index] = restorableTab
+            if let paneIndex = snapshotPaneStates.firstIndex(where: { $0.tabID == tabID }) {
+                snapshotPaneStates[paneIndex].navigation = NavigationState(
+                    url: BrowserStartPage.url,
+                    title: BrowserStartPage.title,
+                    isLoading: false,
+                    loadingProgress: 1,
+                    zoomLevel: snapshotPaneStates[paneIndex].navigation.zoomLevel
+                )
+            }
+        }
+        return Self.userVisibleSnapshot(BrowserSessionSnapshot(
             schemaVersion: BrowserSessionSnapshot.schemaVersion,
             windowID: windowID,
             spaces: spaces,
             groups: groups,
-            tabs: tabs,
+            tabs: snapshotTabs,
             currentSpaceID: currentSpaceID,
             selectedTabID: selectedTabID,
             splitSession: splitSession,
-            splitPaneStates: makeSplitPaneStates(),
+            splitPaneStates: snapshotPaneStates,
             splitSessionsBySpace: Array(splitSessionsBySpace.values),
             savedSplitCompositions: savedSplitCompositions,
             savedAt: .now
         ))
+    }
+
+    static func restorableTabAfterDownload(
+        _ tab: BrowserTab,
+        nonRestorableURL: URL?
+    ) -> BrowserTab {
+        guard let tabURL = tab.url, let nonRestorableURL,
+              Self.navigationURLsMatch(tabURL, nonRestorableURL) else { return tab }
+        var restorableTab = tab
+        restorableTab.url = BrowserStartPage.url
+        restorableTab.title = BrowserStartPage.title
+        restorableTab.faviconURL = nil
+        restorableTab.isLoading = false
+        restorableTab.loadingProgress = 1
+        return restorableTab
     }
 
     private func makeSplitPaneStates() -> [SplitPaneState] {
@@ -3107,6 +3268,7 @@ final class BrowserStore: ObservableObject {
         faviconCacheOrder.removeAll()
         navigationStates.removeAll()
         pendingNavigations.removeAll()
+        nonRestorableDownloadURLsByTabID.removeAll()
         siteSecurityInfoByTabID.removeAll()
         tabs = snapshot.tabs
         for index in tabs.indices {
@@ -3286,7 +3448,7 @@ final class BrowserStore: ObservableObject {
     private func shouldLoadInitialURL(_ initialURL: URL, for tabID: UUID) -> Bool {
         guard pendingNavigations[tabID] == nil,
               let currentURL = tab(withID: tabID)?.url else { return false }
-        return navigationURLsMatch(currentURL, initialURL)
+        return Self.navigationURLsMatch(currentURL, initialURL)
     }
 
     private func configureDownloadDirectories(for tabIDs: [UUID]) {
@@ -3307,7 +3469,7 @@ final class BrowserStore: ObservableObject {
             return cachedURL
         }
         guard let bookmark = spaces.first(where: { $0.id == spaceID })?.downloadDirectoryBookmark else {
-            return nil
+            return Self.defaultDownloadDirectory()
         }
         var isStale = false
         guard let url = try? URL(
@@ -3316,7 +3478,7 @@ final class BrowserStore: ObservableObject {
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ), !isStale else {
-            return nil
+            return Self.defaultDownloadDirectory()
         }
         if url.startAccessingSecurityScopedResource() {
             securityScopedDownloadDirectoryURLsBySpace[spaceID] = url
@@ -3443,11 +3605,11 @@ final class BrowserStore: ObservableObject {
             }
             if let pending = pendingNavigations[tabID] {
                 let matchesRequest = navigationState.url.map {
-                    navigationURLsMatch($0, pending.requestedURL)
+                    Self.navigationURLsMatch($0, pending.requestedURL)
                 } ?? false
                 let movedAwayFromPrevious = navigationState.url.map { eventURL in
                     pending.previousURL.map {
-                        !navigationURLsMatch(eventURL, $0)
+                        !Self.navigationURLsMatch(eventURL, $0)
                     } ?? true
                 } ?? false
                 if let baseline = pending.generationBaseline,
@@ -3472,9 +3634,13 @@ final class BrowserStore: ObservableObject {
             if navigationState.url == nil {
                 navigationState.url = tab(withID: tabID)?.url
             }
+            if let nonRestorableURL = nonRestorableDownloadURLsByTabID[tabID],
+               navigationState.url.map({ !Self.navigationURLsMatch($0, nonRestorableURL) }) == true {
+                nonRestorableDownloadURLsByTabID.removeValue(forKey: tabID)
+            }
             if let url = navigationState.url {
                 let isHTTPFallback = activeHTTPFallbackURLs[tabID].map {
-                    navigationURLsMatch($0, url)
+                    Self.navigationURLsMatch($0, url)
                 } ?? false
                 let policyResult = applyPrivacyURLPolicy(
                     to: url,
@@ -3508,12 +3674,12 @@ final class BrowserStore: ObservableObject {
             if !navigationState.isLoading {
                 if let completedURL = navigationState.url,
                    let attempt = httpsUpgradeAttempts[tabID],
-                   navigationURLsMatch(completedURL, attempt.secureURL) {
+                   Self.navigationURLsMatch(completedURL, attempt.secureURL) {
                     httpsUpgradeAttempts.removeValue(forKey: tabID)
                 }
                 if let completedURL = navigationState.url,
                    let fallbackURL = activeHTTPFallbackURLs[tabID],
-                   navigationURLsMatch(completedURL, fallbackURL) {
+                   Self.navigationURLsMatch(completedURL, fallbackURL) {
                     activeHTTPFallbackURLs.removeValue(forKey: tabID)
                 }
             }
@@ -3541,7 +3707,7 @@ final class BrowserStore: ObservableObject {
                 }
             }
             if !info.isPending, let eventURL = info.url, let tabURL = tab.url,
-               !navigationURLsMatch(eventURL, tabURL) {
+               !Self.navigationURLsMatch(eventURL, tabURL) {
                 return
             }
             guard siteSecurityInfoByTabID[tabID] != info else { return }
@@ -3628,6 +3794,15 @@ final class BrowserStore: ObservableObject {
                   let download = Self.userVisibleDownload(download) else {
                 return
             }
+            let isNewDownload = !downloads.contains { $0.id == download.id }
+            retryingDownloadIDs.remove(download.id)
+            if let tabURL = tab(withID: tabID)?.url,
+               [download.sourceURL, download.originalURL].compactMap({ $0 }).contains(where: {
+                   Self.navigationURLsMatch(tabURL, $0)
+               }) {
+                nonRestorableDownloadURLsByTabID[tabID] = tabURL
+                scheduleSave()
+            }
             if download.canCancel {
                 activeDownloadTabIDsByDownloadID[download.id] = tabID
             } else {
@@ -3635,6 +3810,9 @@ final class BrowserStore: ObservableObject {
             }
             downloads.removeAll { $0.id == download.id }
             downloads.insert(download, at: 0)
+            if isNewDownload {
+                downloadPanelRequest &+= 1
+            }
             if !profile.isPrivate {
                 Task { [persistence] in try? await persistence.saveDownload(download) }
             }
@@ -3649,16 +3827,16 @@ final class BrowserStore: ObservableObject {
                     activeHTTPFallbackURLs[tabID],
                     tab.url
                 ].compactMap { $0 }
-                guard relevantURLs.contains(where: { navigationURLsMatch($0, failedURL) }) else {
+                guard relevantURLs.contains(where: { Self.navigationURLsMatch($0, failedURL) }) else {
                     return
                 }
             }
 
             if let attempt = httpsUpgradeAttempts[tabID] {
                 let failedUpgrade = failedURL.map {
-                    navigationURLsMatch($0, attempt.secureURL)
+                    Self.navigationURLsMatch($0, attempt.secureURL)
                 } ?? pendingNavigations[tabID].map {
-                    navigationURLsMatch($0.requestedURL, attempt.secureURL)
+                    Self.navigationURLsMatch($0.requestedURL, attempt.secureURL)
                 } ?? false
                 if failedUpgrade {
                     httpsUpgradeAttempts.removeValue(forKey: tabID)
@@ -3670,12 +3848,12 @@ final class BrowserStore: ObservableObject {
             }
 
             if let fallbackURL = activeHTTPFallbackURLs[tabID],
-               failedURL == nil || failedURL.map({ navigationURLsMatch($0, fallbackURL) }) == true {
+               failedURL == nil || failedURL.map({ Self.navigationURLsMatch($0, fallbackURL) }) == true {
                 activeHTTPFallbackURLs.removeValue(forKey: tabID)
             }
             if failedURL == nil || failedURL.map({ failedURL in
                 pendingNavigations[tabID].map {
-                    navigationURLsMatch($0.requestedURL, failedURL)
+                    Self.navigationURLsMatch($0.requestedURL, failedURL)
                 } ?? false
             }) == true {
                 pendingNavigations.removeValue(forKey: tabID)

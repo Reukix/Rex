@@ -1,5 +1,46 @@
 # 更新日志
 
+## 0.9.8 (build 982) — 2026-08-01
+
+### Chromium 下载与 Rex 状态映射
+
+- Chromium 独占下载请求、重定向、传输、落盘和生命周期，并提供 URL、原始 URL、文件名、MIME、大小、进度、最终路径和中断原因；Rex 只把这些权威事实映射到右侧下载模块和资料库。状态、按钮可用性与终态不再由 Rex 乐观推断：未知 Chromium 状态不可操作，重试也等待 Chromium 的新任务回调后才更新界面。
+- Chromium 不显示原生保存或下载浮层，默认直接保存到 `~/Downloads/Rex`；新下载开始时自动弹出 Rex 右侧下载模块，同一任务的后续进度与终态更新不会重复弹出。取消和重试由 Rex UI 发出命令，但实际任务仍由 Chromium callback 执行；Rex 不暂停、恢复或重放传输。
+- 修复 Chrome runtime 在隐藏工具栏锚点上显示下载完成气泡、导致窗口左上角出现第二套下载提示的问题；启动时关闭 `download_bubble.partial_view_enabled`，并通过 CEF command handler 隐藏 Chromium 下载按钮，只保留 Rex 下载浮层。
+- 修复 Chromium 150 在隐藏下载按钮后仍显示“下载开始”圆形动画的问题；内置固定 ID 的 MV3 控制扩展调用 `chrome.downloads.setUiOptions({enabled: false})`，并保持普通/隐私窗口的 Chromium 下载传输不变。
+- 移除会介入 Chromium 生命周期的危险文件和隐私窗口落盘确认链路。当前版本不提供下载信誉、内容扫描、代码签名判断或 Safe Browsing。
+- 修复 GitHub release DMG 点击后在 `Chrome_IOThread` 崩溃：CEF 150 与实验性 `ParallelDownloading` 不兼容，正式 profile 已移除该 feature，并加入禁止重新启用的编译期回归门禁。
+
+### PSL 站点归属与隐私语义
+
+- 固定 Mozilla Public Suffix List `2026-07-25_14-20-03_UTC` 官方快照（SHA-256 `084a5674d77c1d14900b16da5fc8afee9765af2f00a638552a8c7aa18f44ae81`），Swift 站点策略与 CEF 请求分类读取同一份资源。
+- 站点归属覆盖 ICANN/private suffix、通配、例外、IDN、localhost 和 IP；旧精确主机策略按 eTLD+1 合并，冲突保留最近修改并在 SQLite 事务内原子替换。
+- CEF 侧 PSL 的 Chromium URL/IDN 规范化延后到 `CefInitialize` 成功后、首个消息泵轮次前执行，避免启动期调用未初始化 URL parser 触发崩溃。
+- 盾牌明确为“当前标签会话累计”，不再在缺少分类资源时按比例伪造广告、追踪与 Cookie 数量；已知指纹服务单独展示。第三方 Cookie 明确为应用级共享 Chromium 设置，不随网站盾牌开关变化。
+- 恶意网站检测边界选择为“当前不提供”：Rex 不为不存在的 Safe Browsing 能力上传访问网址，也不在 UI 中暗示已具备下载信誉或恶意内容检测。
+
+### 签名安全资源与供应链门禁
+
+- 隐私目录从 C++ 硬编码迁移到可审计 `privacy_catalog.json`，并与 PSL 由同一个启动选择交给 Swift 与 CEF。
+- 新增 Ed25519 签名 manifest、HTTPS 同源/重定向限制、大小/哈希/格式验证、单调 sequence、同卷原子安装、candidate/LKG、启动失败回退、吊销、降级拒绝、bundle kill switch 和暂停更新控制；未映射生产端点与公钥时默认离线。
+- CRX、普通下载、安全资源和应用更新建立四个独立验证边界；应用更新要求独立 trust domain、公钥、向前 build 和当前 build 的精确回退包。
+- 新增 Developer ID 正式打包模式与分发门禁，逐项检查嵌套代码的 Developer ID/Team ID/Hardened Runtime、公证票据、Gatekeeper、签名更新清单及更新/回退 ZIP。Apple Development、自签与 ad-hoc 均不能通过正式门禁。
+- 新增只允许隔离 `/tmp/rex-qa-smoke.*` profile 与 loopback HTTP 的 Chromium GUI 下载矩阵 harness；纯隔离启动、退出和真实数据指纹检查通过，但五个下载样本没有被触发，交互结果仍待实机。
+
+### 验证
+
+- Swift Testing `182/182`、Release Notes Validator（28 个功能 ID）、MV3 verifier 语法与 `--self-test` 通过；其中 13 项覆盖安全资源与供应链故障注入。
+- CEF bridge arm64 Release 与完整 Xcode Release 构建通过；App 为 `0.9.8 / 982`，本机 Apple Development 深度签名仅用于开发验证。
+- build 982 通过隔离启动/正常退出烟测，全部 Helper 正常退出，真实 Rex 数据指纹未变化；隔离 harness 使用 CEF 官方 macOS 测试参数 `--use-mock-keychain`，不会读取用户登录 Keychain。GitHub release DMG（53,879,378 bytes）已由 Chromium 完整下载并正常关闭 CEF。
+- 本地 Beta 产物为 `Dist/Rex.app`（`344M` / `352344 KiB`）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（`143,034,126` bytes，`147968 KiB` / `145M`），ZIP SHA-256 为 `d57573e5b5bc441e37ad07270f9e90cb4f7aafd53cc8e8d8f65f7ad372fa2e8e`；11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。隔离 `safe.pdf` 下载矩阵确认 Chromium 开始动画与完成气泡均未显示，Rex 浮层显示 `completed`（33/33 bytes），真实数据指纹未变化。
+- 下载矩阵第一次 GUI 尝试曾错误启动真实 profile Rex 和直接启动 build 981，导致 `~/Library/Application Support/Rex/Chromium` 元数据在 `22:39:46-22:42:14 +0800` 变化；进程均已正常退出，没有执行删除或回滚，详细证据与后续禁用 GUI 控制的要求见 `Documentation/QAProfileSafety.md`。
+
+### 当前限制
+
+- 生产安全资源端点、公钥、离线私钥发布流程尚未提供；未配置时继续使用随应用发布的内置目录与 PSL 基线。
+- 普通下载完全沿用 Chromium 传输链；Rex 当前不增加危险文件确认，也不提供信誉、内容扫描、代码签名或恶意网站检测。
+- v0.9.7 遗留门禁已有严格校验脚本，但当前免费个人团队证书不能获得 Developer ID 或公证；正式更新替换与失败回退演练仍未完成。
+
 ## 0.9.7 (build 970) — 2026-07-30
 
 ### Rex 外壳与 Chromium 权威后端
@@ -24,7 +65,7 @@
 - 持久扩展从停用切回启用时，先由 Chromium `management.setEnabled` 启用，再执行 `developerPrivate.reload` 重新读取受管目录；禁用期间替换的同版本 JS/CSS 即使跨 Rex 重启也不会继续运行旧副本。
 - 扩展事务只有在原生操作成功、最终 Chromium 注册表验证通过且受管包仍匹配本次事务开始时的指纹快照后才提交。事务期间再次换盘会失败并保留下一代 reload 机会，不会把尚未被 Chromium 消费的版本记为已加载。
 - 冷启动导航屏障使用的临时 `about:blank` 会按标签持续标记到真实地址提交；即使屏障已释放，延迟到达的占位地址和标题也不会进入 Rex 可见导航状态或覆盖持久化恢复 URL。
-- 正常退出改为先关闭全部 Chromium browser 并停止 `NSApplication` 主循环，再由显式 SwiftUI 入口排空外部消息泵并调用 `CefShutdown()`；不再从 `applicationWillTerminate` 的 `terminate:` 调用栈内关闭 CEF。
+- 正常退出改为先关闭全部 Chromium browser 并停止 `NSApplication` 主循环；进程级 `NSApplication.run` hook 在原始 event loop 返回后、SwiftUI 调用 `exit()` 前排空外部消息泵并调用 `CefShutdown()`，不再从 `applicationWillTerminate` 的 `terminate:` 调用栈内关闭 CEF。
 - 关闭 Chromium 前先等待全部活动标准窗口的最新会话快照落入 SQLite，跳过隐私窗口；单窗口失败继续处理其他窗口，整体超过 5 秒则记录日志并继续退出，避免修复 CEF 卡死时引入最后 350ms 标签或布局状态丢失。
 - 内部扩展控制 DevTools pipe 会在排空关闭任务前断开，固定 fd 3/4 保留到 `CefShutdown()` 返回后才释放，避免关闭过程中的描述符复用。
 

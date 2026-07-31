@@ -189,7 +189,7 @@ struct PrivacyState: Codable, Hashable, Sendable {
 }
 
 /// Safari-style website privacy exception: the user chooses protection once
-/// for a host and every tab for that host receives the same policy.
+/// for a PSL-derived site and every tab owned by that site receives it.
 struct SitePrivacyPolicy: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let profileID: UUID
@@ -398,15 +398,14 @@ struct PrivacyReport: Codable, Hashable, Sendable {
     var siteHost: String
     var adsBlocked: Int
     var trackersBlocked: Int
+    var fingerprintingBlocked: Int
     var thirdPartyCookiesBlocked: Int
     var httpsUpgrades: Int
     var cleanedParameters: Int
     var suspiciousScriptsBlocked: Int
     var resources: [BlockedResource]
 
-    var totalBlocked: Int {
-        adsBlocked + trackersBlocked + thirdPartyCookiesBlocked + suspiciousScriptsBlocked
-    }
+    var totalBlocked: Int
 }
 
 struct WebsitePermission: Identifiable, Codable, Hashable, Sendable {
@@ -476,7 +475,7 @@ struct ArchivedTab: Identifiable, Codable, Hashable, Sendable {
 
 struct BrowserDownloadTask: Identifiable, Codable, Hashable, Sendable {
     enum State: String, Codable, Sendable {
-        case pending, downloading, scanning, completed, failed, cancelled
+        case pending, downloading, scanning, completed, failed, cancelled, unknown
     }
 
     let id: UUID
@@ -488,8 +487,17 @@ struct BrowserDownloadTask: Identifiable, Codable, Hashable, Sendable {
     var createdAt: Date
     var destinationURL: URL? = nil
     var errorDescription: String? = nil
+    /// Chromium-owned progress and response metadata. Rex maps these facts to
+    /// its own UI; it does not replace Chromium's download lifecycle.
+    var chromiumPercentComplete: Int? = nil
+    var originalURL: URL? = nil
+    var mimeType: String? = nil
 
     var progress: Double? {
+        if let chromiumPercentComplete,
+           (0...100).contains(chromiumPercentComplete) {
+            return Double(chromiumPercentComplete) / 100
+        }
         guard let expectedBytes, expectedBytes > 0 else { return nil }
         return min(max(Double(receivedBytes) / Double(expectedBytes), 0), 1)
     }
@@ -500,6 +508,17 @@ struct BrowserDownloadTask: Identifiable, Codable, Hashable, Sendable {
 
     var canRetry: Bool {
         state == .failed || state == .cancelled
+    }
+
+    /// Chromium has reported a final lifecycle state for this task. Rex uses
+    /// this only to select presentation and never synthesizes a terminal state.
+    var isTerminal: Bool {
+        switch state {
+        case .completed, .failed, .cancelled:
+            true
+        case .pending, .downloading, .scanning, .unknown:
+            false
+        }
     }
 
     var canOpen: Bool {

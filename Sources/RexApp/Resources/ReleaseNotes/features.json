@@ -1,5 +1,5 @@
 {
-  "lastUpdatedVersion": "0.9.7",
+  "lastUpdatedVersion": "0.9.8",
   "categories": [
     {
       "id": "app-shell",
@@ -270,15 +270,16 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.3.0-alpha.1",
-          "updatedIn": "0.8.1",
-          "description": "SQLite 支持历史、收藏和下载记录；历史可按过去 1 小时、24 小时、7 天或所有时间永久删除，收藏与下载空状态从标题栏下方开始布局",
+          "updatedIn": "0.9.8",
+          "description": "Chromium 独占下载请求、重定向、传输、落盘和生命周期；Rex 将权威元数据映射到右侧下载模块与资料库",
           "supportsPrivateWindow": false,
           "supportsSplitView": false,
           "supportsKeyboard": true,
           "requiresRestart": false,
           "settingsPath": "资料库",
           "limitations": [
-            "v0.5.0 及更早的下载记录没有本地路径；危险文件提示与批量清理尚未完成"
+            "v0.5.0 及更早的下载记录没有本地路径",
+            "当前不提供 Rex 自建的下载信誉或恶意内容扫描"
           ]
         }
       ]
@@ -363,8 +364,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.1.0-alpha.1",
-          "updatedIn": "0.9.5",
-          "description": "展示按标签累计的保护状态、拦截分类、HTTPS 升级、参数清理和网站权限；保护开关与级别按 profile/主机名持久化并同步同站标签",
+          "updatedIn": "0.9.8",
+          "description": "展示当前标签会话累计的保护状态、准确拦截分类、HTTPS 升级、参数清理和网站权限；保护策略按 profile 与 PSL 站点持久化并同步同站标签",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -417,8 +418,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.5.0-beta.1",
-          "description": "使用独立内存 RequestContext，不恢复或写入普通会话资料",
+          "updatedIn": "0.9.8",
+          "description": "使用独立内存 RequestContext，不恢复或写入普通会话资料；下载保存前明确提示磁盘落盘，文件可保留但不写入普通下载资料库",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -434,8 +435,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.6.0-beta.1",
-          "updatedIn": "0.8.1",
-          "description": "Swift 顶层导航执行追踪参数清理和 HTTPS 尝试；CEF 子资源按标签页目录策略分类并取消命中请求；第三方 Cookie 使用 profile 级全局设置",
+          "updatedIn": "0.9.8",
+          "description": "Swift 顶层导航执行追踪参数清理和 HTTPS 尝试；CEF 子资源读取与 Swift 同次选择的签名隐私目录/PSL 快照并按标签策略取消命中请求；第三方 Cookie 使用应用级共享 Chromium 设置",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": false,
@@ -443,7 +444,7 @@
           "settingsPath": "隐私盾牌",
           "limitations": [
             "完整 brave-core 组件源码融合仍在后续版本",
-            "第一方判断不是完整 PSL/eTLD+1 实现"
+            "生产安全资源端点、公钥和离线私钥发布流程尚未配置；缺省使用 2026-07-25 PSL bundle 基线"
           ]
         },
         {

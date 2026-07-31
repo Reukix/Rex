@@ -2,6 +2,25 @@ import AppKit
 import Combine
 import Foundation
 
+enum RexQAEnvironment {
+    static var isIsolated: Bool {
+        isolatedHome() != nil
+    }
+
+    static func isolatedHome(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        guard environment["REX_QA_ISOLATED"] == "1",
+              let fixedHome = environment["CFFIXED_USER_HOME"] else { return nil }
+        let home = URL(fileURLWithPath: fixedHome).standardizedFileURL
+        guard (home.path.hasPrefix("/tmp/") || home.path.hasPrefix("/private/tmp/")),
+              home.pathComponents.contains(where: { $0.hasPrefix("rex-qa-smoke.") }) else {
+            return nil
+        }
+        return home
+    }
+}
+
 enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable {
     case google
     case bing
@@ -133,7 +152,9 @@ enum BrowserAppearance: String, CaseIterable, Codable, Identifiable, Sendable {
 
 @MainActor
 final class BrowserPreferences: ObservableObject {
-    static let shared = BrowserPreferences()
+    static let shared = BrowserPreferences(
+        defaults: RexQAEnvironment.isIsolated ? nil : .standard
+    )
 
     @Published private(set) var searchEngine: SearchEngine
     @Published private(set) var appearance: BrowserAppearance
@@ -146,7 +167,7 @@ final class BrowserPreferences: ObservableObject {
     @Published private(set) var httpsUpgradeEnabled: Bool
     @Published private(set) var contentBlockingEnabled: Bool
 
-    private let defaults: UserDefaults
+    private let defaults: UserDefaults?
 
     private enum Key {
         static let appearance = "Rex.appearance"
@@ -182,12 +203,12 @@ final class BrowserPreferences: ObservableObject {
     static let defaultHTTPSUpgradeEnabled = true
     static let defaultContentBlockingEnabled = true
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults? = .standard) {
         self.defaults = defaults
-        searchEngine = defaults.string(forKey: SearchEngine.defaultsKey)
+        searchEngine = defaults?.string(forKey: SearchEngine.defaultsKey)
             .flatMap(SearchEngine.init(rawValue:))
             ?? .defaultValue
-        appearance = defaults.string(forKey: Key.appearance)
+        appearance = defaults?.string(forKey: Key.appearance)
             .flatMap(BrowserAppearance.init(rawValue:))
             ?? .defaultValue
         restorePreviousSession = Self.bool(
@@ -211,7 +232,7 @@ final class BrowserPreferences: ObservableObject {
             fallback: Self.defaultAutomaticTabSleeping
         )
         tabSleepDelayMinutes = Self.clampedSleepDelay(
-            defaults.object(forKey: Key.tabSleepDelayMinutes) as? Int
+            defaults?.object(forKey: Key.tabSleepDelayMinutes) as? Int
                 ?? Self.defaultTabSleepDelayMinutes
         )
         blockThirdPartyCookies = Self.bool(
@@ -234,67 +255,67 @@ final class BrowserPreferences: ObservableObject {
     func setSearchEngine(_ searchEngine: SearchEngine) {
         guard self.searchEngine != searchEngine else { return }
         self.searchEngine = searchEngine
-        defaults.set(searchEngine.rawValue, forKey: SearchEngine.defaultsKey)
+        defaults?.set(searchEngine.rawValue, forKey: SearchEngine.defaultsKey)
     }
 
     func setAppearance(_ appearance: BrowserAppearance) {
         guard self.appearance != appearance else { return }
         self.appearance = appearance
-        defaults.set(appearance.rawValue, forKey: Key.appearance)
+        defaults?.set(appearance.rawValue, forKey: Key.appearance)
     }
 
     func setRestorePreviousSession(_ enabled: Bool) {
         guard restorePreviousSession != enabled else { return }
         restorePreviousSession = enabled
-        defaults.set(enabled, forKey: Key.restorePreviousSession)
+        defaults?.set(enabled, forKey: Key.restorePreviousSession)
     }
 
     func setDefaultSidebarCollapsed(_ collapsed: Bool) {
         guard defaultSidebarCollapsed != collapsed else { return }
         defaultSidebarCollapsed = collapsed
-        defaults.set(collapsed, forKey: Key.defaultSidebarCollapsed)
+        defaults?.set(collapsed, forKey: Key.defaultSidebarCollapsed)
     }
 
     func setShowPerformanceMetrics(_ visible: Bool) {
         guard showPerformanceMetrics != visible else { return }
         showPerformanceMetrics = visible
-        defaults.set(visible, forKey: Key.showPerformanceMetrics)
+        defaults?.set(visible, forKey: Key.showPerformanceMetrics)
     }
 
     func setAutomaticTabSleeping(_ enabled: Bool) {
         guard automaticTabSleeping != enabled else { return }
         automaticTabSleeping = enabled
-        defaults.set(enabled, forKey: Key.automaticTabSleeping)
+        defaults?.set(enabled, forKey: Key.automaticTabSleeping)
     }
 
     func setTabSleepDelayMinutes(_ minutes: Int) {
         let value = Self.clampedSleepDelay(minutes)
         guard tabSleepDelayMinutes != value else { return }
         tabSleepDelayMinutes = value
-        defaults.set(value, forKey: Key.tabSleepDelayMinutes)
+        defaults?.set(value, forKey: Key.tabSleepDelayMinutes)
     }
 
     func setBlockThirdPartyCookies(_ enabled: Bool) {
         guard blockThirdPartyCookies != enabled else { return }
         blockThirdPartyCookies = enabled
-        defaults.set(enabled, forKey: Key.blockThirdPartyCookies)
+        defaults?.set(enabled, forKey: Key.blockThirdPartyCookies)
     }
 
     func setHTTPSUpgradeEnabled(_ enabled: Bool) {
         guard httpsUpgradeEnabled != enabled else { return }
         httpsUpgradeEnabled = enabled
-        defaults.set(enabled, forKey: Key.httpsUpgradeEnabled)
+        defaults?.set(enabled, forKey: Key.httpsUpgradeEnabled)
     }
 
     func setContentBlockingEnabled(_ enabled: Bool) {
         guard contentBlockingEnabled != enabled else { return }
         contentBlockingEnabled = enabled
-        defaults.set(enabled, forKey: Key.contentBlockingEnabled)
+        defaults?.set(enabled, forKey: Key.contentBlockingEnabled)
     }
 
     func resetToDefaults() {
         for key in Key.all {
-            defaults.removeObject(forKey: key)
+            defaults?.removeObject(forKey: key)
         }
 
         searchEngine = .defaultValue
@@ -311,10 +332,10 @@ final class BrowserPreferences: ObservableObject {
 
     private static func bool(
         forKey key: String,
-        defaults: UserDefaults,
+        defaults: UserDefaults?,
         fallback: Bool
     ) -> Bool {
-        defaults.object(forKey: key) as? Bool ?? fallback
+        defaults?.object(forKey: key) as? Bool ?? fallback
     }
 
     private static func clampedSleepDelay(_ minutes: Int) -> Int {

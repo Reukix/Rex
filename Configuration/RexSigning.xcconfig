@@ -1,0 +1,16 @@
+// Repository default: local builds remain ad-hoc unless a developer provides
+// an ignored machine-local signing identity.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+ENABLE_HARDENED_RUNTIME = YES
+
+// Online security assets remain disabled until a release build maps both an
+// HTTPS directory and its 32-byte Ed25519 public key (base64). The private key
+// is never a build setting and must remain outside the repository.
+REX_SECURITY_ASSET_ENDPOINT =
+REX_SECURITY_ASSET_PUBLIC_KEY =
+REX_APP_UPDATE_ENDPOINT =
+REX_APP_UPDATE_PUBLIC_KEY =
+
+#include? "RexSigning.local.xcconfig"

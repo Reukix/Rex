@@ -86,6 +86,10 @@ final class RexWindowCoordinator: ObservableObject {
         self.persistence = persistence
         self.preferences = preferences
         let defaultsKey = "Rex.primaryWindowID"
+        if RexQAEnvironment.isIsolated {
+            primaryWindowID = UUID()
+            return
+        }
         if let rawID = UserDefaults.standard.string(forKey: defaultsKey),
            let savedID = UUID(uuidString: rawID) {
             primaryWindowID = savedID

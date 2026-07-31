@@ -303,6 +303,7 @@ private struct BrowserToolbar: View {
     @FocusState private var addressFocused: Bool
     @State private var isSavingComposition = false
     @State private var compositionName = ""
+    @State private var isDownloadsPanelPresented = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -319,6 +320,7 @@ private struct BrowserToolbar: View {
                     if extensionActionPanel.isPresented {
                         extensionActionPanel.dismiss()
                     } else {
+                        isDownloadsPanelPresented = false
                         presentExtensionsList()
                     }
                 }
@@ -450,6 +452,37 @@ private struct BrowserToolbar: View {
                 isSelected: store.developerToolsTabID != nil
             ) { store.openDeveloperTools() }
 
+            LiquidGlassIconButton(
+                systemName: downloadButtonSymbol,
+                label: "下载",
+                isSelected: isDownloadsPanelPresented
+            ) {
+                if !isDownloadsPanelPresented {
+                    extensionActionPanel.dismiss()
+                }
+                isDownloadsPanelPresented.toggle()
+            }
+            .popover(isPresented: $isDownloadsPanelPresented, arrowEdge: .bottom) {
+                BrowserDownloadsPanel(
+                    onShowAll: {
+                        isDownloadsPanelPresented = false
+                        store.presentLibrary(.downloads)
+                    },
+                    onOpenSettings: {
+                        isDownloadsPanelPresented = false
+                        store.presentSettings(.downloads)
+                    },
+                    onClose: {
+                        isDownloadsPanelPresented = false
+                    }
+                )
+                .environmentObject(store)
+                .frame(
+                    width: BrowserDownloadsPanel.preferredSize.width,
+                    height: BrowserDownloadsPanel.preferredSize.height
+                )
+            }
+
             if !store.profile.isPrivate {
                 LiquidGlassIconButton(
                     systemName: store.isCurrentPageBookmarked ? "star.fill" : "star",
@@ -574,8 +607,14 @@ private struct BrowserToolbar: View {
             BrowserTitlebarCardSurface()
         }
         .onChange(of: store.addressFocusRequest) { _, _ in addressFocused = true }
+        .onChange(of: store.downloadPanelRequest) { _, _ in
+            guard !isDownloadsPanelPresented else { return }
+            extensionActionPanel.dismiss()
+            isDownloadsPanelPresented = true
+        }
         .onDisappear {
             extensionActionPanel.dismiss()
+            isDownloadsPanelPresented = false
         }
         .alert("保存分屏组合", isPresented: $isSavingComposition) {
             TextField("组合名称", text: $compositionName)
@@ -598,6 +637,16 @@ private struct BrowserToolbar: View {
 
     private var zoomPercentage: Int {
         Int(((store.navigationStates[store.selectedTabID]?.zoomLevel ?? 1) * 100).rounded())
+    }
+
+    private var downloadButtonSymbol: String {
+        if store.downloads.contains(where: \.canCancel) {
+            return "arrow.down.circle.fill"
+        }
+        if store.downloads.first?.state == .failed {
+            return "exclamationmark.circle"
+        }
+        return "arrow.down.circle"
     }
 
     private var siteSecuritySymbol: String {

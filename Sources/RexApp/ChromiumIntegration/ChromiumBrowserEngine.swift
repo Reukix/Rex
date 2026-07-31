@@ -298,10 +298,7 @@ final class ChromiumBrowserEngine: BrowserEngine {
             ))
         case "download":
             guard let source = payload["url"] as? String,
-                  let rawSourceURL = URL(string: source),
-                  let sourceURL = RexExtensionResourceURL.userVisibleURL(
-                      from: rawSourceURL
-                  ),
+                  let sourceURL = Self.userVisibleURL(from: source),
                   let cefID = (payload["downloadID"] as? NSNumber)?.intValue else { return }
             let key = "\(tabID.uuidString):\(cefID)"
             let retryKey = downloadRetryKey(tabID: tabID, url: sourceURL)
@@ -315,14 +312,23 @@ final class ChromiumBrowserEngine: BrowserEngine {
                     pendingRetryIDs.removeValue(forKey: retryKey)
                 }
             }
-            let rawState = payload["state"] as? String ?? "pending"
-            let state = BrowserDownloadTask.State(rawValue: rawState) ?? .pending
+            // Preserve Chromium's authoritative lifecycle. An unexpected
+            // value must not become a locally cancellable pending download.
+            let rawState = payload["state"] as? String ?? "unknown"
+            let state = BrowserDownloadTask.State(rawValue: rawState) ?? .unknown
             let expected = (payload["expectedBytes"] as? NSNumber)?.int64Value
             let received = (payload["receivedBytes"] as? NSNumber)?.int64Value ?? 0
             let createdAt = (payload["createdAt"] as? NSNumber)?.doubleValue
             let fullPath = payload["fullPath"] as? String
             let destinationURL = fullPath.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
             let interruptReason = (payload["interruptReason"] as? NSNumber)?.intValue ?? 0
+            let chromiumPercentComplete: Int?
+            if let reportedPercent = (payload["percentComplete"] as? NSNumber)?.intValue,
+               (0...100).contains(reportedPercent) {
+                chromiumPercentComplete = reportedPercent
+            } else {
+                chromiumPercentComplete = nil
+            }
             let task = BrowserDownloadTask(
                 id: downloadID,
                 sourceURL: sourceURL,
@@ -334,10 +340,15 @@ final class ChromiumBrowserEngine: BrowserEngine {
                 destinationURL: destinationURL,
                 errorDescription: state == .failed && interruptReason != 0
                     ? "下载中断（代码 \(interruptReason)）"
-                    : nil
+                    : nil,
+                chromiumPercentComplete: chromiumPercentComplete,
+                originalURL: (payload["originalURL"] as? String).flatMap {
+                    Self.userVisibleURL(from: $0)
+                },
+                mimeType: payload["mimeType"] as? String
             )
             emit(.downloadUpdated(tabID: tabID, download: task))
-            if [.completed, .failed, .cancelled].contains(state) {
+            if task.isTerminal {
                 downloadIDs.removeValue(forKey: key)
                 activeDownloads.removeValue(forKey: downloadID)
             }
@@ -678,10 +689,12 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
     private var initializationError: Error?
     private var shouldTerminateAfterNormalEarlyExit = false
     private var isPreparingTermination = false
-    private var isTerminationReady = false
+    private var didStopApplicationRunLoop = false
     private var didFinishSessionPreparation = false
     private var sessionFlushTask: Task<Void, Never>?
     private var sessionFlushTimeoutTask: Task<Void, Never>?
+    private var securityAssetManager: SecurityAssetManager?
+    private var securityAssetStateReady = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         installApplicationIcon()
@@ -693,24 +706,70 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
                 appropriateFor: nil,
                 create: true
             )
-            let cacheRoot = support.appending(path: "Rex/Chromium", directoryHint: .isDirectory)
+            let rexSupport = support.appending(path: "Rex", directoryHint: .isDirectory)
+            let cacheRoot = rexSupport.appending(path: "Chromium", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+            let assetManager = try SecurityAssetManager.applicationManager(
+                supportRoot: rexSupport
+            )
+            securityAssetManager = assetManager
+            let selection: SecurityAssetSelection
+            do {
+                selection = try assetManager.prepareForLaunch()
+                securityAssetStateReady = true
+            } catch {
+                securityAssetStateReady = false
+                selection = try assetManager.bundledSelection()
+                NSLog("[Rex] Security asset state rejected; using bundled baseline: %@", String(describing: error))
+            }
+            let publicSuffixContents = try String(
+                contentsOf: selection.publicSuffixListURL,
+                encoding: .utf8
+            )
+            try PublicSuffixList.selectCurrent(contents: publicSuffixContents)
             try RexChromiumRuntime.shared.start(
                 withCacheRoot: cacheRoot,
                 locale: "zh-CN",
+                publicSuffixListURL: selection.publicSuffixListURL,
+                privacyCatalogURL: selection.privacyCatalogURL,
                 managedExtensionPaths: BrowserExtensionsStore.shared.managedRuntimeExtensionPaths,
                 enabledExtensionPaths: BrowserExtensionsStore.shared.startupExtensionPaths
             )
+            if securityAssetStateReady {
+                do {
+                    try assetManager.markLaunchHealthy()
+                } catch {
+                    securityAssetStateReady = false
+                    NSLog("[Rex] Unable to mark security assets healthy: %@", String(describing: error))
+                }
+            }
             // Initial content-blocking state; window stores re-push on toggle changes.
             RexChromiumRuntime.shared.setContentBlockingEnabled(
                 BrowserPreferences.shared.contentBlockingEnabled
             )
+            if securityAssetStateReady {
+                Task { @MainActor [weak self, assetManager] in
+                    do {
+                        let result = try await assetManager.checkForUpdates()
+                        NSLog("[Rex] Security asset update result: %@", String(describing: result))
+                    } catch {
+                        NSLog("[Rex] Security asset update rejected: %@", String(describing: error))
+                    }
+                    _ = self
+                }
+            }
         } catch {
             if RexChromiumErrorIsNormalEarlyExit(error as NSError) {
+                if securityAssetStateReady {
+                    try? securityAssetManager?.deferLaunchValidation()
+                }
                 shouldTerminateAfterNormalEarlyExit = true
                 NSLog("[Rex] Existing process handled launch; exiting relaunch process.")
                 NSApplication.shared.terminate(nil)
             } else {
+                if securityAssetStateReady {
+                    try? securityAssetManager?.rollbackFailedLaunch()
+                }
                 initializationError = error
             }
         }
@@ -735,11 +794,47 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // CEF owns hidden AppKit windows that are destroyed inside CefShutdown.
+        // Treating one of those as the last user window can re-enter the Cocoa
+        // termination transaction while Chromium is finalizing. Rex also keeps
+        // the standard macOS behavior of remaining available after windows close.
+        false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Rex replaces NSApplication.terminate(_:) with CEF's required macOS
+        // termination path. Keep this delegate callback as a defensive fallback
+        // for framework code that invokes it directly.
+        rexTryToTerminateApplication(sender)
+        return .terminateCancel
+    }
+
+    @objc(rexTryToTerminateApplication:)
+    func rexTryToTerminateApplication(_ sender: NSApplication) {
+        if RexChromiumRuntime.shared.isFinalizingShutdown {
+            NSLog("[Rex] Ignoring a Cocoa quit while CEF shutdown is finalizing.")
+            return
+        }
+        NSLog(
+            "[Rex] Termination requested (ready=%@, preparing=%@, runLoopStopped=%@).",
+            RexChromiumRuntime.shared.isReady.description,
+            isPreparingTermination.description,
+            didStopApplicationRunLoop.description
+        )
         RexApplicationLifecycle.beginTermination()
-        if isTerminationReady { return .terminateNow }
-        guard RexChromiumRuntime.shared.isReady else { return .terminateNow }
-        guard !isPreparingTermination else { return .terminateCancel }
+        if didStopApplicationRunLoop {
+            return
+        }
+        guard RexChromiumRuntime.shared.isReady else {
+            NSLog("[Rex] Chromium is not active; stopping the application run loop.")
+            stopApplicationRunLoop(sender)
+            return
+        }
+        guard !isPreparingTermination else {
+            NSLog("[Rex] Termination preparation is already in progress.")
+            return
+        }
         isPreparingTermination = true
         sessionFlushTask = Task { @MainActor [weak self] in
             let report = await RexActiveWindowSessionRegistry.shared
@@ -755,7 +850,6 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
             }
             self?.finishSessionPreparation(report: nil, sender: sender, timedOut: true)
         }
-        return .terminateCancel
     }
 
     private func finishSessionPreparation(
@@ -765,6 +859,12 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
     ) {
         guard !didFinishSessionPreparation else { return }
         didFinishSessionPreparation = true
+        NSLog(
+            "[Rex] Session preparation finished (timedOut=%@, saved=%lu, failed=%lu).",
+            timedOut.description,
+            report?.savedWindowIDs.count ?? 0,
+            report?.failedWindows.count ?? 0
+        )
         sessionFlushTimeoutTask?.cancel()
         sessionFlushTimeoutTask = nil
         if timedOut {
@@ -779,17 +879,33 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
 
         RexChromiumRuntime.shared.prepare(forApplicationTermination: {
             MainActor.assumeIsolated {
-                self.isTerminationReady = true
-                // CEF must leave NSApplication.run before CefShutdown. The
-                // explicit main entry point performs final shutdown afterward.
-                DispatchQueue.main.async {
-                    sender.stop(nil)
-                }
+                NSLog("[Rex] Chromium browsers closed; stopping the application run loop.")
+                self.stopApplicationRunLoop(sender)
             }
         })
     }
 
+    private func stopApplicationRunLoop(_ sender: NSApplication) {
+        guard !didStopApplicationRunLoop else { return }
+        didStopApplicationRunLoop = true
+        sender.stop(nil)
+        if let wakeEvent = NSEvent.otherEvent(
+            with: .applicationDefined,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            subtype: 0,
+            data1: 0,
+            data2: 0
+        ) {
+            sender.postEvent(wakeEvent, atStart: true)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        NSLog("[Rex] Cocoa will terminate.")
         RexApplicationLifecycle.beginTermination()
     }
 }

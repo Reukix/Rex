@@ -19,6 +19,10 @@ let package = Package(
             name: "RexReleaseValidator",
             path: "Tools/ReleaseValidator"
         ),
+        .executableTarget(
+            name: "RexDistributionGate",
+            path: "Tools/DistributionGate"
+        ),
         .plugin(
             name: "ReleaseNotesValidationPlugin",
             capability: .buildTool(),

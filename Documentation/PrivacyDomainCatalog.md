@@ -1,6 +1,6 @@
 # 隐私盾牌内置请求目录
 
-本文档列出 `ChromiumBridge/Privacy/RexPrivacyEngine.cpp` 当前编译进 CEF 请求层的全部规则。目录共包含 104 条原始规则：45 条广告、41 条追踪、10 条指纹和 8 条社交规则。其中 3 条是 `host + path` 规则，并非纯域名；跨类别去重后共有 101 个不同的规则字符串。
+本文档列出 `Sources/RexApp/Resources/Privacy/privacy_catalog.json` 随应用发布的可审计基线。CEF 启动时解析由安全资源管理器选中的完整快照，不再在 C++ 中维护另一份硬编码目录。基线共包含 104 条原始规则：45 条广告、41 条追踪、10 条指纹和 8 条社交规则。其中 3 条是 `host + path` 规则，并非纯域名；跨类别去重后共有 101 个不同的规则字符串。签名在线更新、LKG 与回退策略见[安全资源在线更新](SecurityAssetUpdates.md)。
 
 ## 广告目录（45 条）
 
