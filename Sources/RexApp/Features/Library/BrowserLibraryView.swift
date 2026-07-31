@@ -27,6 +27,7 @@ struct BrowserLibraryView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = BrowserLibraryViewModel()
     @State private var pendingBrowsingDataRange: BrowsingDataTimeRange?
+    @State private var isConfirmingDownloadRecordClear = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,6 +66,14 @@ struct BrowserLibraryView: View {
                             .lineLimit(1)
                     }
                     .help("当前工作空间的下载位置")
+
+                    Button {
+                        isConfirmingDownloadRecordClear = true
+                    } label: {
+                        Label("清空记录", systemImage: "trash")
+                    }
+                    .disabled(!store.hasClearableDownloadRecords)
+                    .help("清空所有非活动下载记录")
                 }
 
                 Spacer(minLength: 20)
@@ -134,6 +143,18 @@ struct BrowserLibraryView: View {
             }
         } message: {
             Text("此操作无法撤销。收藏和下载记录不会受到影响。")
+        }
+        .confirmationDialog(
+            "清空所有下载记录？",
+            isPresented: $isConfirmingDownloadRecordClear,
+            titleVisibility: .visible
+        ) {
+            Button("清空记录", role: .destructive) {
+                store.clearDownloadRecords()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("只清除 Rex 中的记录，不会删除已下载文件。Chromium 当前仍在处理的任务会保留。")
         }
     }
 
@@ -300,7 +321,7 @@ struct BrowserDownloadsPanel: View {
     }
 
     private var activeDownloadCount: Int {
-        store.downloads.count(where: \.canCancel)
+        store.downloads.count(where: { store.isDownloadActive($0) })
     }
 }
 
@@ -357,6 +378,9 @@ private struct DownloadRow: View {
     let download: BrowserDownloadTask
 
     var body: some View {
+        let canCancel = store.canCancelDownload(download)
+        let isActive = store.isDownloadActive(download)
+        let isRetrying = store.isDownloadRetrying(download)
         HStack(spacing: 12) {
             Image(systemName: stateSymbol)
                 .foregroundStyle(stateColor)
@@ -370,7 +394,7 @@ private struct DownloadRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if download.canCancel {
+                if canCancel {
                     if let progress = download.progress {
                         ProgressView(value: progress)
                             .progressViewStyle(.linear)
@@ -385,14 +409,14 @@ private struct DownloadRow: View {
                     .lineLimit(1)
             }
             HStack(spacing: 8) {
-                if download.canCancel {
+                if canCancel {
                     Button {
                         store.cancelDownload(download)
                     } label: {
                         Image(systemName: "xmark")
                     }
                     .help("取消下载")
-                } else if download.canRetry {
+                } else if download.canRetry && !isRetrying {
                     Button {
                         store.retryDownload(download)
                     } label: {
@@ -414,7 +438,7 @@ private struct DownloadRow: View {
                     }
                     .help("在 Finder 中显示")
                 }
-                if !download.canCancel {
+                if !isActive {
                     Button(role: .destructive) {
                         store.removeDownload(download)
                     } label: {
@@ -445,14 +469,15 @@ private struct DownloadRow: View {
     }
 
     private var stateText: String {
+        if store.isDownloadRetrying(download) { return "正在重试" }
         switch download.state {
-        case .pending: "等待中"
-        case .downloading: "下载中"
-        case .scanning: "检查中"
-        case .completed: "已完成"
-        case .failed: "失败"
-        case .cancelled: "已取消"
-        case .unknown: "状态未知"
+        case .pending: return "等待中"
+        case .downloading: return "下载中"
+        case .scanning: return "检查中"
+        case .completed: return "已完成"
+        case .failed: return "失败"
+        case .cancelled: return "已取消"
+        case .unknown: return "状态未知"
         }
     }
 

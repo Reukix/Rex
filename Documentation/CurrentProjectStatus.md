@@ -1,7 +1,7 @@
 # Rex 当前项目状态与问题清单
 
 最后更新：2026-08-01
-当前基线：v0.9.8（build 983 本地 Beta 候选）
+当前基线：v0.9.8（build 984 本地 Beta 候选）
 发布通道：Beta
 
 本文用于集中说明 Rex 当前能做什么、工程处于什么阶段、哪些问题仍未解决，以及最近哪些高风险问题已经修复。具体需求、实现细节和历史变化仍分别以 `ProductRequirements.md`、`Architecture.md`、`FEATURES.md`、`ROADMAP.md` 和版本发布说明为准。
@@ -18,15 +18,15 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 |---|---|
 | 系统 | macOS 14 或更高版本 |
 | 架构 | 仅 Apple Silicon（arm64） |
-| 应用版本 | v0.9.8（build 983） |
+| 应用版本 | v0.9.8（build 984） |
 | Chromium | 150.0.7871.129 |
 | CEF | 150.0.14，官方 standard ARM64 发行包 |
 | 产品外壳 | SwiftUI + AppKit |
 | 浏览器桥 | Swift `BrowserEngine` + Objective-C++ CEF facade |
 | 数据存储 | SQLite，会话、历史、收藏、下载、权限和网站策略 |
 | 当前签名 | `Dist` 的 11 个 Mach-O 均为同一 Apple Development 个人团队签名；Hardened Runtime 关闭，只用于开发/本地 Beta |
-| 当前产物 | `Dist/Rex.app`（344M / 352312 KiB）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,035,796 bytes，147520 KiB / 144M） |
-| ZIP SHA-256 | `d1c58812160421f80a4b35c24d81b128550afb4211866b9817e5df4dfeecff78` |
+| 当前产物 | `Dist/Rex.app`（344M / 352348 KiB）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,051,091 bytes，147492 KiB / 144M） |
+| ZIP SHA-256 | `70de7cc138764b7686c61d62325d69916e539f981244cfcdcaa3b9b5634a4084` |
 
 ## 2. 技术架构概览
 
@@ -137,16 +137,16 @@ Rex 是一款面向 macOS 的原生桌面浏览器工程原型，核心方向是
 
 ## 4. 当前验证状态
 
-v0.9.8 build 983 当前完成源码层安全与隐私主线：
+v0.9.8 build 984 当前完成源码层安全与隐私主线：
 
 - Chromium 下载事实到 Rex 右侧模块的映射已实现：进度优先使用 Chromium 百分比，状态、按钮可用性与终态只映射 Chromium 快照，未知状态不可操作；GitHub release DMG 崩溃定位为 `ParallelDownloading` 兼容性问题并已修复。
 - Mozilla PSL `2026-07-25_14-20-03_UTC` 与 JSON 隐私目录是 bundle 基线；两者可由 Ed25519 签名包同版本更新，并实施同源下载、原子安装、LKG、失败回退、降级拒绝、吊销和 kill switch。旧站点策略按最近更新时间原子迁移。
 - CRX、普通下载、安全资源和应用更新四类供应链使用独立验证权威；应用更新 manifest 还要求独立 trust domain、公钥、向前 build 与当前 build 的精确回退包。
 - 隐私统计、应用级 Cookie、已知指纹服务与恶意网站检测边界已在 UI、结构化发布数据和文档统一。
-- Swift Testing `183/183`、Release Notes Validator（28 个功能 ID）以及 MV3 verifier 语法与自测通过；13 个新增测试覆盖安全资源与供应链故障注入，工具栏结构测试禁止重新使用 SwiftUI popover。
-- CEF bridge arm64 Release 和完整 Xcode Release 通过；App 为 `0.9.8 / 983`。最终本地 Beta 包的 11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。打包后的 `Dist/Rex.app` 隔离烟测通过，真实数据指纹不变且 Helper 全部退出。
-- 新版隔离下载矩阵确认内置 Chromium 下载 UI 控制扩展已启动，`safe.pdf` 由 Chromium 完成下载到隔离 `Downloads/Rex`；截图确认左上角开始动画和 Chromium 完成气泡均未显示，Rex 右侧浮层显示完成状态，CEF 正常关闭且真实数据指纹不变。
-- 隔离 harness 使用 CEF 官方 macOS `--use-mock-keychain` 参数；Chromium 下载矩阵的 loopback fixture 与隔离启动器已完成。GitHub release DMG 已完整下载 53,879,378 bytes，CEF 正常关闭且真实数据指纹不变。
+- Swift Testing `185/185`、Release Notes Validator（28 个功能 ID）以及 MV3 verifier 语法与自测通过；13 个新增测试覆盖安全资源与供应链故障注入，工具栏结构测试禁止重新使用 SwiftUI popover，下载记录测试覆盖旧快照恢复与批量删除。
+- CEF bridge arm64 Release 和完整 Xcode Release 通过；App 为 `0.9.8 / 984`。最终本地 Beta 包的 11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。打包后的 `Dist/Rex.app` 隔离烟测通过，真实数据指纹不变且 Helper 全部退出。
+- 上一 build 983 的隔离下载矩阵确认内置 Chromium 下载 UI 控制扩展已启动，`safe.pdf` 由 Chromium 完成下载到隔离 `Downloads/Rex`；截图确认左上角开始动画和 Chromium 完成气泡均未显示，Rex 右侧浮层显示完成状态，CEF 正常关闭且真实数据指纹不变。build 984 尚未重复该 GUI 下载矩阵。
+- 隔离 harness 使用 CEF 官方 macOS `--use-mock-keychain` 参数；Chromium 下载矩阵的 loopback fixture 与隔离启动器已完成。build 983 已完整下载 GitHub release DMG 53,879,378 bytes，CEF 正常关闭且真实数据指纹不变。
 - 本轮第一次 GUI 操作曾因相同 bundle ID 绕过隔离意外启动真实 profile Rex，随后还直接启动过 build 981；两次均已正常退出，但 `~/Library/Application Support/Rex/Chromium` 的元数据在 `22:39:46-22:42:14 +0800` 发生变化。未删除、恢复或回滚真实数据，证据保留于 `/tmp/rex-download-matrix.gGKMWW` 与 `/tmp/rex-qa-smoke.HmCiQD`；后续纯隔离证据为 `/tmp/rex-download-matrix.w2vfqU` 与 `/tmp/rex-qa-smoke.JPjsZd`。
 
 v0.9.7 build 970 已完成历史本地 Beta 的构建、管理界面与产物门禁：

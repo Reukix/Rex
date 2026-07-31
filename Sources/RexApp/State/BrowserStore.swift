@@ -91,6 +91,7 @@ final class BrowserStore: ObservableObject {
     private var securityScopedDownloadDirectoryURLsBySpace: [UUID: URL] = [:]
     private var activeDownloadTabIDsByDownloadID: [UUID: UUID] = [:]
     private var retryingDownloadIDs = Set<UUID>()
+    private var suppressedDownloadIDs = Set<UUID>()
     private var nonRestorableDownloadURLsByTabID: [UUID: URL] = [:]
     private var activeMediaTabIDs = Set<UUID>()
     private var extensionSourceWebTabIDsByPackage: [String: UUID] = [:]
@@ -324,7 +325,9 @@ final class BrowserStore: ObservableObject {
                     }
                     let storedDownloads = try await databasePersistence.downloads()
                     guard !Task.isCancelled else { return }
-                    let persistedDownloads = storedDownloads.compactMap(Self.userVisibleDownload)
+                    let persistedDownloads = storedDownloads.compactMap { storedDownload in
+                        Self.userVisibleDownload(storedDownload).map(Self.restoredDownloadSnapshot)
+                    }
                     for storedDownload in storedDownloads {
                         guard let visibleDownload = Self.userVisibleDownload(storedDownload) else {
                             try? await databasePersistence.removeDownload(id: storedDownload.id)
@@ -338,6 +341,7 @@ final class BrowserStore: ObservableObject {
                         let liveDownloadIDs = Set(self.downloads.map(\.id))
                         self.downloads.append(contentsOf: persistedDownloads.filter {
                             !liveDownloadIDs.contains($0.id)
+                                && !self.suppressedDownloadIDs.contains($0.id)
                         })
                         self.downloads.sort { $0.createdAt > $1.createdAt }
                     }
@@ -2001,10 +2005,26 @@ final class BrowserStore: ObservableObject {
     }
 
     func cancelDownload(_ download: BrowserDownloadTask) {
-        guard download.canCancel else { return }
+        guard canCancelDownload(download) else { return }
         Task { [engine] in
             try? await engine.execute(.cancelDownload(downloadID: download.id))
         }
+    }
+
+    func isDownloadActive(_ download: BrowserDownloadTask) -> Bool {
+        activeDownloadTabIDsByDownloadID[download.id] != nil
+    }
+
+    func canCancelDownload(_ download: BrowserDownloadTask) -> Bool {
+        download.canCancel && isDownloadActive(download)
+    }
+
+    func isDownloadRetrying(_ download: BrowserDownloadTask) -> Bool {
+        retryingDownloadIDs.contains(download.id)
+    }
+
+    var hasClearableDownloadRecords: Bool {
+        downloads.contains { !isDownloadActive($0) }
     }
 
     func retryDownload(_ download: BrowserDownloadTask) {
@@ -2049,10 +2069,44 @@ final class BrowserStore: ObservableObject {
     }
 
     func removeDownload(_ download: BrowserDownloadTask) {
-        guard !download.canCancel else { return }
+        guard !isDownloadActive(download) else { return }
+        let removed = downloads.filter { $0.id == download.id }
+        guard !removed.isEmpty else { return }
+        suppressedDownloadIDs.formUnion(removed.map(\.id))
         downloads.removeAll { $0.id == download.id }
         guard !profile.isPrivate else { return }
-        Task { [persistence] in try? await persistence.removeDownload(id: download.id) }
+        Task { @MainActor [weak self, persistence] in
+            do {
+                try await persistence.removeDownload(id: download.id)
+            } catch {
+                guard let self else { return }
+                suppressedDownloadIDs.subtract(removed.map(\.id))
+                downloads.append(contentsOf: removed)
+                downloads.sort { $0.createdAt > $1.createdAt }
+                lastError = "删除下载记录失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func clearDownloadRecords() {
+        let removed = downloads.filter { !isDownloadActive($0) }
+        guard !removed.isEmpty else { return }
+        let removedIDs = removed.map(\.id)
+        suppressedDownloadIDs.formUnion(removedIDs)
+        downloads.removeAll { removedIDs.contains($0.id) }
+        guard !profile.isPrivate else { return }
+        Task { @MainActor [weak self, persistence] in
+            do {
+                try await persistence.removeDownloads(ids: removedIDs)
+            } catch {
+                guard let self else { return }
+                suppressedDownloadIDs.subtract(removedIDs)
+                let existingIDs = Set(downloads.map(\.id))
+                downloads.append(contentsOf: removed.filter { !existingIDs.contains($0.id) })
+                downloads.sort { $0.createdAt > $1.createdAt }
+                lastError = "清空下载记录失败：\(error.localizedDescription)"
+            }
+        }
     }
 
     func toggleSplit() {
@@ -2650,6 +2704,16 @@ final class BrowserStore: ObservableObject {
         visibleDownload.originalURL = userVisibleURL(download.originalURL)
         visibleDownload.errorDescription = download.errorDescription.map(userVisibleTitle)
         return visibleDownload
+    }
+
+    private static func restoredDownloadSnapshot(
+        _ download: BrowserDownloadTask
+    ) -> BrowserDownloadTask {
+        guard !download.isTerminal else { return download }
+        var restored = download
+        restored.state = .unknown
+        restored.errorDescription = "上次运行未完成，当前没有活动下载任务。"
+        return restored
     }
 
     private static func userVisiblePermission(
@@ -3794,6 +3858,7 @@ final class BrowserStore: ObservableObject {
                   let download = Self.userVisibleDownload(download) else {
                 return
             }
+            suppressedDownloadIDs.remove(download.id)
             let isNewDownload = !downloads.contains { $0.id == download.id }
             retryingDownloadIDs.remove(download.id)
             if let tabURL = tab(withID: tabID)?.url,

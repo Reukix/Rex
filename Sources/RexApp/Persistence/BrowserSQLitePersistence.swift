@@ -246,6 +246,21 @@ actor BrowserSQLitePersistence {
         try step(statement)
     }
 
+    func removeDownloads(ids: [UUID]) throws {
+        guard !ids.isEmpty else { return }
+        try openIfNeeded()
+        try withTransaction {
+            let statement = try prepare("DELETE FROM downloads WHERE download_id = ?")
+            defer { sqlite3_finalize(statement) }
+            for id in ids {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                try bind(id.uuidString, to: statement, at: 1)
+                try step(statement)
+            }
+        }
+    }
+
     func permissions(profileID: UUID) throws -> [WebsitePermission] {
         try openIfNeeded()
         let statement = try prepare("""

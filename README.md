@@ -2,7 +2,7 @@
 
 Rex 是一款面向 macOS 的原生桌面浏览器设计与工程原型，围绕垂直标签页、工作空间、双页面分屏和默认隐私保护展开。
 
-当前版本为 **v0.9.8 build 983 Beta**。Rex 的 SwiftUI/AppKit 层拥有用户能看到的浏览器外壳、导航、标签、右侧下载模块和 `rex://extensions` 扩展管理界面；CEF/Chromium 是网页、导航、下载、扩展执行、权限和配置的权威后端。下载请求、重定向、传输、落盘与生命周期全部由 Chromium 处理，Rex 只映射其 URL、原始 URL、文件名、MIME、字节数、进度百分比、路径、状态和终态；Rex 不预先推断生命周期。Chromium 原生保存/下载浮层和开始动画保持关闭，文件默认保存到 `~/Downloads/Rex`，新下载开始时自动弹出独立的 Rex 下载浮层。下载、隐私、站点信息和扩展工具栏浮层均使用独立 AppKit `NSPanel`，不附着到 CEF 子窗口。Swift Package 保留预览构建，真实 Chromium 构建使用生成的 Xcode 工程。
+当前版本为 **v0.9.8 build 984 Beta**。Rex 的 SwiftUI/AppKit 层拥有用户能看到的浏览器外壳、导航、标签、右侧下载模块和 `rex://extensions` 扩展管理界面；CEF/Chromium 是网页、导航、下载、扩展执行、权限和配置的权威后端。下载请求、重定向、传输、落盘与生命周期全部由 Chromium 处理，Rex 只映射其 URL、原始 URL、文件名、MIME、字节数、进度百分比、路径、状态和终态；Rex 不预先推断生命周期。Chromium 原生保存/下载浮层和开始动画保持关闭，文件默认保存到 `~/Downloads/Rex`，新下载开始时自动弹出独立的 Rex 下载浮层。下载、隐私、站点信息和扩展工具栏浮层均使用独立 AppKit `NSPanel`，不附着到 CEF 子窗口。Swift Package 保留预览构建，真实 Chromium 构建使用生成的 Xcode 工程。
 
 隐私盾牌分为三层：Swift 只在顶层导航时清理已知追踪参数并尝试把 HTTP 升级为 HTTPS；CEF 请求层使用内置的 45 个广告、41 个追踪、10 个指纹和 8 个社交目录条目取消命中的子资源请求；第三方 Cookie 则由 CEF profile 的全局 Cookie 设置限制。标准模式拦截第三方广告与追踪目录，并在默认开启的指纹保护下拦截第三方已知指纹服务；严格模式再加入社交目录；自定义模式映射为 CEF aggressive 策略，允许广告/追踪目录匹配第一方请求，并对第三方请求使用路径启发式。扩展声明的 DNR 由 Chromium 扩展运行时独立执行，不并入 Rex 隐私引擎。内置 104 条规则见[隐私盾牌内置请求目录](Documentation/PrivacyDomainCatalog.md)。开发者工具使用 CEF 150 自带的同版本 Chromium DevTools 前端。
 
@@ -30,13 +30,13 @@ open Rex.xcodeproj
 REX_PACKAGE_SIGNING_MODE=apple-development \
 REX_APPLE_DEVELOPMENT_IDENTITY='Apple Development: name@example.com (XXXXXXXXXX)' \
 REX_APPLE_DEVELOPMENT_TEAM_ID=XXXXXXXXXX \
-Scripts/package-chromium-app.sh 0.9.8 983 Release
+Scripts/package-chromium-app.sh 0.9.8 984 Release
 # 产物：Dist/Rex.app 与 Dist/Rex-v0.9.8-macos-arm64-chromium.zip
 ```
 
-build 983 的本地 Beta 包已经生成：`Dist/Rex.app`（344M）与
-`Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,035,796 bytes / 144M），ZIP
-SHA-256 为 `d1c58812160421f80a4b35c24d81b128550afb4211866b9817e5df4dfeecff78`。
+build 984 的本地 Beta 包已经生成：`Dist/Rex.app`（344M）与
+`Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（143,051,091 bytes / 144M），ZIP
+SHA-256 为 `70de7cc138764b7686c61d62325d69916e539f981244cfcdcaa3b9b5634a4084`。
 该包的主程序、CEF、Helper 和 CEF 动态库全部使用同一台机器的个人团队 Apple
 Development 证书签名，Hardened Runtime 关闭。它仍只用于本地测试，不能替代
 Developer ID、公证、Gatekeeper、应用自动替换和失败回退门禁。

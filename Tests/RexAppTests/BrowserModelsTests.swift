@@ -1087,6 +1087,38 @@ func sqliteHistoryRangeDeletionUsesInclusiveCutoff() async throws {
     #expect(try await persistence.history() == [older])
 }
 
+@Test("SQLite removes selected download records without touching the others")
+func sqliteRemovesSelectedDownloadRecords() async throws {
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let first = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/first.zip")!,
+        suggestedFilename: "first.zip",
+        receivedBytes: 1,
+        expectedBytes: 1,
+        state: .completed,
+        createdAt: Date(timeIntervalSince1970: 1_700_000_010)
+    )
+    let second = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/second.zip")!,
+        suggestedFilename: "second.zip",
+        receivedBytes: 2,
+        expectedBytes: 2,
+        state: .cancelled,
+        createdAt: Date(timeIntervalSince1970: 1_700_000_011)
+    )
+    try await persistence.saveDownload(first)
+    try await persistence.saveDownload(second)
+
+    try await persistence.removeDownloads(ids: [first.id])
+
+    #expect(try await persistence.downloads() == [second])
+}
+
 @Test("SQLite all-time history deletion clears every record")
 func sqliteAllTimeHistoryDeletionClearsAllRecords() async throws {
     let persistence = BrowserSQLitePersistence(databaseURL: temporaryDatabaseURL(), legacyPersistence: nil)
@@ -1227,6 +1259,98 @@ func downloadManagerDispatchesCancelAndRetry() async throws {
         tabID: tabID,
         url: sourceURL
     )))
+    await engine.finish()
+}
+
+@Test("Restored unfinished downloads become unknown and clearing preserves active work")
+@MainActor
+func restoredUnfinishedDownloadsBecomeUnknownAndCanBeCleared() async throws {
+    let engine = ControlledBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let stale = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/stale.zip")!,
+        suggestedFilename: "stale.zip",
+        receivedBytes: 0,
+        expectedBytes: 100,
+        state: .downloading,
+        createdAt: .now
+    )
+    let completed = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/completed.zip")!,
+        suggestedFilename: "completed.zip",
+        receivedBytes: 10,
+        expectedBytes: 10,
+        state: .completed,
+        createdAt: .now.addingTimeInterval(-1)
+    )
+    try await persistence.saveDownload(stale)
+    try await persistence.saveDownload(completed)
+
+    let suiteName = "RexTests.RestoredDownloads.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        preferences: preferences
+    )
+    await engine.waitForSubscriber()
+
+    for _ in 0..<100 {
+        if store.downloads.count == 2 { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    let restoredStale = try #require(store.downloads.first(where: { $0.id == stale.id }))
+    #expect(restoredStale.state == .unknown)
+    #expect(!store.isDownloadActive(restoredStale))
+    #expect(store.hasClearableDownloadRecords)
+
+    store.removeDownload(restoredStale)
+    for _ in 0..<100 {
+        if try await persistence.downloads().count == 1 { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(try await persistence.downloads().map(\.id) == [completed.id])
+
+    let active = BrowserDownloadTask(
+        id: UUID(),
+        sourceURL: URL(string: "https://example.com/active.zip")!,
+        suggestedFilename: "active.zip",
+        receivedBytes: 5,
+        expectedBytes: 20,
+        state: .downloading,
+        createdAt: .now.addingTimeInterval(1)
+    )
+    await engine.emit(.downloadUpdated(tabID: store.selectedTabID, download: active))
+    for _ in 0..<100 {
+        let persistedIDs = try await persistence.downloads().map(\.id)
+        if store.downloads.contains(where: { $0.id == active.id }),
+           persistedIDs.contains(active.id) {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    let liveActive = try #require(store.downloads.first(where: { $0.id == active.id }))
+    #expect(store.isDownloadActive(liveActive))
+
+    store.clearDownloadRecords()
+    for _ in 0..<100 {
+        let persistedDownloads = try await persistence.downloads()
+        if store.downloads.map(\.id) == [active.id],
+           persistedDownloads.map(\.id) == [active.id] {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(store.downloads.map(\.id) == [active.id])
+    #expect(try await persistence.downloads().map(\.id) == [active.id])
     await engine.finish()
 }
 
