@@ -573,6 +573,23 @@ final class BrowserStore: ObservableObject {
         }
     }
 
+    var sidebarBookmarks: [BrowserBookmark] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return bookmarks }
+        return bookmarks.filter {
+            $0.title.localizedCaseInsensitiveContains(query) ||
+            $0.url.absoluteString.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var sidebarPinnedTabs: [BrowserTab] {
+        visibleTabs.filter(\.isPinned)
+    }
+
+    var sidebarRegularTabs: [BrowserTab] {
+        visibleTabs.filter { !$0.isPinned }
+    }
+
     var archivedTabs: [BrowserTab] {
         tabs.filter { $0.spaceID == currentSpaceID && $0.isArchived }
     }
@@ -1909,7 +1926,35 @@ final class BrowserStore: ObservableObject {
             bookmarks.insert(bookmark, at: 0)
             Task { [persistence] in try? await persistence.saveBookmark(bookmark) }
         }
-        mutateTab(tab.id) { $0.isFavorite = bookmarks.contains { $0.url == url } }
+        let isFavorite = bookmarks.contains { $0.url == url }
+        for index in tabs.indices where tabs[index].url == url {
+            tabs[index].isFavorite = isFavorite
+        }
+        scheduleSave()
+    }
+
+    func openBookmark(_ bookmark: BrowserBookmark) {
+        guard !profile.isPrivate,
+              bookmarks.contains(where: { $0.id == bookmark.id }) else { return }
+        if let existing = tabs.first(where: {
+            $0.spaceID == currentSpaceID && !$0.isArchived &&
+            $0.url.map { Self.navigationURLsMatch($0, bookmark.url) } == true
+        }) {
+            selectTab(existing.id)
+            return
+        }
+        guard let tabID = openPopup(
+            url: bookmark.url,
+            sourceTabID: selectedTabID,
+            foreground: true
+        ) else {
+            lastError = "无法打开这个收藏"
+            return
+        }
+        mutateTab(tabID) {
+            $0.title = bookmark.title
+            $0.isFavorite = true
+        }
         scheduleSave()
     }
 
@@ -3748,8 +3793,12 @@ final class BrowserStore: ObservableObject {
                 }
             }
             navigationStates[tabID] = navigationState
+            let isFavorite = navigationState.url.map { url in
+                bookmarks.contains { $0.url == url }
+            } ?? false
             mutateTab(tabID) { tab in
                 tab.url = navigationState.url ?? tab.url
+                tab.isFavorite = isFavorite
                 tab.isLoading = navigationState.isLoading
                 tab.loadingProgress = navigationState.loadingProgress
                 if tab.lifecycle == .crashed { tab.lifecycle = .active }

@@ -1,12 +1,13 @@
 # 更新日志
 
-## 0.9.8 (build 984) — 2026-08-01
+## 0.9.8 (build 985) — 2026-08-01
 
 ### Chromium 下载与 Rex 状态映射
 
 - Chromium 独占下载请求、重定向、传输、落盘和生命周期，并提供 URL、原始 URL、文件名、MIME、大小、进度、最终路径和中断原因；Rex 只把这些权威事实映射到右侧下载模块和资料库。状态、按钮可用性与终态不再由 Rex 乐观推断：未知 Chromium 状态不可操作，重试也等待 Chromium 的新任务回调后才更新界面。
 - Chromium 不显示原生保存或下载浮层，默认直接保存到 `~/Downloads/Rex`；新下载开始时自动弹出 Rex 右侧下载模块，同一任务的后续进度与终态更新不会重复弹出。取消和重试由 Rex UI 发出命令，但实际任务仍由 Chromium callback 执行；Rex 不暂停、恢复或重放传输。
 - 修复上次运行遗留的未完成下载快照无法删除的问题：重启恢复时将没有当前 Chromium 活动任务的旧快照映射为 `unknown`，并显示删除记录按钮；资料库新增清空所有非活动下载记录的按钮。清理只删除 Rex SQLite 记录，不删除下载文件，当前活动任务保留。
+- 侧栏收藏改为读取独立持久书签，不再依赖仍然打开的标签页；关闭已收藏页面后收藏继续保留，点击可在当前工作空间重新打开。收窄侧栏按收藏、固定和普通标签分区显示，固定标签保持置顶。
 - 修复 build 982 在自动弹出下载面板或打开站点信息/隐私盾牌时，SwiftUI `NSPopover` 与 CEF `NSRemoteView` 子窗口同时参与 `addChildWindow` 排序而触发 AppKit `EXC_BREAKPOINT` 的问题。三个工具栏浮层现在与扩展入口共用独立无边框 Rex `NSPanel` 路径，不再附着到 Chromium 子窗口；源码回归门禁禁止 `BrowserRootView` 重新引入 `.popover`。
 - 修复 Chrome runtime 在隐藏工具栏锚点上显示下载完成气泡、导致窗口左上角出现第二套下载提示的问题；启动时关闭 `download_bubble.partial_view_enabled`，并通过 CEF command handler 隐藏 Chromium 下载按钮，只保留 Rex 下载浮层。
 - 修复 Chromium 150 在隐藏下载按钮后仍显示“下载开始”圆形动画的问题；内置固定 ID 的 MV3 控制扩展调用 `chrome.downloads.setUiOptions({enabled: false})`，并保持普通/隐私窗口的 Chromium 下载传输不变。
@@ -31,10 +32,10 @@
 
 ### 验证
 
-- Swift Testing `185/185`、Release Notes Validator（28 个功能 ID）、MV3 verifier 语法与 `--self-test` 通过；其中 13 项覆盖安全资源与供应链故障注入，工具栏结构测试禁止重新使用 SwiftUI popover，新增 2 项覆盖旧下载快照与批量记录删除。
-- CEF bridge arm64 Release 与完整 Xcode Release 构建通过；App 为 `0.9.8 / 984`，本机 Apple Development 深度签名仅用于开发验证。
-- build 984 通过隔离启动/正常退出烟测，全部 Helper 正常退出，真实 Rex 数据指纹未变化；隔离 harness 使用 CEF 官方 macOS 测试参数 `--use-mock-keychain`，不会读取用户登录 Keychain。
-- 本地 Beta 产物为 `Dist/Rex.app`（`344M` / `352348 KiB`）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（`143,051,091` bytes，`147492 KiB` / `144M`），ZIP SHA-256 为 `70de7cc138764b7686c61d62325d69916e539f981244cfcdcaa3b9b5634a4084`；11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。上一 build 983 的隔离 `safe.pdf` 下载矩阵确认 Chromium 开始动画与完成气泡均未显示，Rex 浮层显示 `completed`（33/33 bytes），GitHub release DMG（53,879,378 bytes）也已由 Chromium 完整下载并正常关闭 CEF；build 984 尚未重复这两项 GUI 下载证据。
+- Swift Testing `186/186`、Release Notes Validator（28 个功能 ID）、MV3 verifier 语法与 `--self-test` 通过；其中 13 项覆盖安全资源与供应链故障注入，工具栏结构测试禁止重新使用 SwiftUI popover，下载记录测试覆盖旧快照与批量删除，新增 1 项覆盖收藏关闭后保留与收窄侧栏固定分区。
+- CEF bridge arm64 Release 与完整 Xcode Release 构建通过；App 为 `0.9.8 / 985`，本机 Apple Development 深度签名仅用于开发验证。
+- build 985 通过隔离启动/正常退出烟测，全部 Helper 正常退出，真实 Rex 数据指纹未变化；隔离 harness 使用 CEF 官方 macOS 测试参数 `--use-mock-keychain`，不会读取用户登录 Keychain。
+- 本地 Beta 产物为 `Dist/Rex.app`（`344M` / `352408 KiB`）与 `Dist/Rex-v0.9.8-macos-arm64-chromium.zip`（`143,061,961` bytes，`148172 KiB` / `145M`），ZIP SHA-256 为 `680079eacab39fe2907132cc91e1eb9c1dff8e9c9fed29adb5c437993cb99651`；11 个 Mach-O 均为 arm64，并使用同一 Apple Development 个人团队 Authority 与 Team ID；deep/strict codesign、ZIP 完整性和 SHA 清单通过。上一 build 983 的隔离 `safe.pdf` 下载矩阵确认 Chromium 开始动画与完成气泡均未显示，Rex 浮层显示 `completed`（33/33 bytes），GitHub release DMG（53,879,378 bytes）也已由 Chromium 完整下载并正常关闭 CEF；build 985 尚未重复这两项 GUI 下载证据。
 - 下载矩阵第一次 GUI 尝试曾错误启动真实 profile Rex 和直接启动 build 981，导致 `~/Library/Application Support/Rex/Chromium` 元数据在 `22:39:46-22:42:14 +0800` 变化；进程均已正常退出，没有执行删除或回滚，详细证据与后续禁用 GUI 控制的要求见 `Documentation/QAProfileSafety.md`。
 - build 983 隔离矩阵通过后的 Computer Use 验收仍因相同 bundle ID 另行启动了未隔离的 `Dist/Rex.app`；`02:19:05-02:21:25 +0800` 可确认真实 Rex profile 中 68 个文件的元数据发生变化。进程与全部 Helper 已通过 Cocoa 正常退出，没有读取数据库内容、删除或回滚用户数据；此后 Rex 运行态 QA 禁止使用 Computer Use 或 Launch Services，只允许隔离脚本直接启动 executable。
 

@@ -1717,6 +1717,61 @@ func storeOrganizationActions() {
     #expect(store.tab(withID: tab.id)?.groupID == nil)
 }
 
+@Test("Closing a tab keeps its durable sidebar bookmark and compact pinned tabs")
+@MainActor
+func closingTabKeepsSidebarBookmarkAndCompactPinnedTabs() async throws {
+    let engine = ControlledBrowserEngine()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(),
+        legacyPersistence: nil
+    )
+    let suiteName = "RexTests.SidebarBookmarks.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: persistence,
+        preferences: preferences
+    )
+    await engine.waitForSubscriber()
+
+    let bookmarkedURL = try #require(URL(string: "https://example.com/permanent"))
+    store.addressText = bookmarkedURL.absoluteString
+    store.submitAddress()
+    let bookmarkedTabID = store.selectedTabID
+    store.toggleBookmark()
+    let bookmark = try #require(store.sidebarBookmarks.first)
+
+    for _ in 0..<100 {
+        if try await persistence.bookmarks().contains(where: { $0.id == bookmark.id }) {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    store.closeTab(bookmarkedTabID)
+
+    #expect(store.sidebarBookmarks.map(\.id) == [bookmark.id])
+    #expect(try await persistence.bookmarks().map(\.id) == [bookmark.id])
+    #expect(!store.tabs.contains(where: { $0.id == bookmarkedTabID }))
+
+    store.openBookmark(bookmark)
+    let reopened = try #require(store.currentTab)
+    #expect(reopened.url == bookmarkedURL)
+    #expect(reopened.isFavorite)
+
+    store.togglePinned(reopened.id)
+    #expect(store.sidebarPinnedTabs.map(\.id) == [reopened.id])
+    #expect(!store.sidebarRegularTabs.contains(where: { $0.id == reopened.id }))
+
+    store.searchQuery = "permanent"
+    #expect(store.sidebarBookmarks.map(\.id) == [bookmark.id])
+    store.searchQuery = "no-match"
+    #expect(store.sidebarBookmarks.isEmpty)
+    await engine.finish()
+}
+
 @Test("Archiving suspends the Chromium page and restoring resumes it")
 @MainActor
 func archivedTabsDispatchSuspendAndResume() async {

@@ -109,8 +109,37 @@ struct BrowserSidebar: View {
     private var collapsedTabs: some View {
         ScrollView {
             LazyVStack(spacing: 6) {
-                ForEach(store.visibleTabs) { tab in
-                    CollapsedTabButton(tab: tab)
+                if !store.sidebarBookmarks.isEmpty {
+                    collapsedSectionHeader("收藏", symbol: "star.fill")
+                    ForEach(store.sidebarBookmarks) { bookmark in
+                        SidebarBookmarkButton(bookmark: bookmark, size: 34)
+                            .frame(width: 38, height: 38)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                if !store.sidebarPinnedTabs.isEmpty {
+                    collapsedSectionHeader("固定", symbol: "pin.fill")
+                    ForEach(store.sidebarPinnedTabs) { tab in
+                        CollapsedTabButton(tab: tab)
+                    }
+                }
+
+                if !store.sidebarRegularTabs.isEmpty {
+                    if !store.sidebarBookmarks.isEmpty || !store.sidebarPinnedTabs.isEmpty {
+                        collapsedSectionHeader("标签页", symbol: "rectangle.stack")
+                    }
+                    ForEach(store.sidebarRegularTabs) { tab in
+                        CollapsedTabButton(tab: tab)
+                    }
+                }
+
+                if store.sidebarBookmarks.isEmpty && store.visibleTabs.isEmpty &&
+                    !store.searchQuery.isEmpty {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, height: 34)
+                        .help("没有匹配结果")
                 }
             }
             .padding(.vertical, 6)
@@ -121,19 +150,12 @@ struct BrowserSidebar: View {
     private var expandedTabs: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 4) {
-                let favorites = store.visibleTabs.filter(\.isFavorite)
+                let favorites = store.sidebarBookmarks
                 if !favorites.isEmpty {
                     sectionHeader("收藏", symbol: "star.fill")
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 36), spacing: 8)], alignment: .leading, spacing: 8) {
-                        ForEach(favorites) { tab in
-                            Button { store.selectTab(tab.id) } label: {
-                                TabFavicon(tab: tab)
-                                    .frame(width: 36, height: 36)
-                                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-                            }
-                            .buttonStyle(.plain)
-                            .help(tab.title)
-                            .contextMenu { TabContextActions(tab: tab) }
+                        ForEach(favorites) { bookmark in
+                            SidebarBookmarkButton(bookmark: bookmark, size: 36)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -174,7 +196,8 @@ struct BrowserSidebar: View {
                     }
                 }
 
-                if store.visibleTabs.isEmpty && !store.searchQuery.isEmpty {
+                if store.visibleTabs.isEmpty && store.sidebarBookmarks.isEmpty &&
+                    !store.searchQuery.isEmpty {
                     ContentUnavailableView.search(text: store.searchQuery)
                         .controlSize(.small)
                         .frame(maxWidth: .infinity)
@@ -233,6 +256,61 @@ struct BrowserSidebar: View {
             .textCase(.uppercase)
             .padding(.horizontal, 12)
             .padding(.top, 7)
+    }
+
+    private func collapsedSectionHeader(_ title: String, symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 34, height: 16)
+            .help(title)
+            .accessibilityLabel(title)
+    }
+}
+
+private struct SidebarBookmarkButton: View {
+    @EnvironmentObject private var store: BrowserStore
+    let bookmark: BrowserBookmark
+    let size: CGFloat
+
+    var body: some View {
+        Button {
+            store.openBookmark(bookmark)
+        } label: {
+            BookmarkFavicon(bookmark: bookmark)
+                .frame(width: size, height: size)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .help(bookmark.title)
+        .contextMenu {
+            Button("打开") { store.openBookmark(bookmark) }
+            Button("取消收藏", role: .destructive) {
+                store.removeBookmark(bookmark)
+            }
+        }
+        .accessibilityLabel(bookmark.title)
+    }
+}
+
+private struct BookmarkFavicon: View {
+    @EnvironmentObject private var store: BrowserStore
+    let bookmark: BrowserBookmark
+
+    var body: some View {
+        Group {
+            if let tab = store.tabs.first(where: { $0.url == bookmark.url }),
+               let data = store.faviconData(for: tab.id),
+               let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(1)
+            } else {
+                FallbackFavicon(title: bookmark.title, url: bookmark.url)
+            }
+        }
+        .frame(width: 19, height: 19)
     }
 }
 
@@ -545,10 +623,19 @@ struct TabFavicon: View {
     }
 
     private var fallbackFavicon: some View {
+        FallbackFavicon(title: tab.title, url: tab.url)
+    }
+}
+
+private struct FallbackFavicon: View {
+    let title: String
+    let url: URL?
+
+    var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(faviconColor.opacity(0.2))
-            Text(String(tab.title.prefix(1)).uppercased())
+            Text(String(title.prefix(1)).uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(faviconColor)
         }
@@ -558,7 +645,7 @@ struct TabFavicon: View {
         let colors: [Color] = [.indigo, .cyan, .pink, .orange, .green]
         // Swift 的 hashValue 每次启动都会变化；用稳定的 FNV-1a 使同一站点
         // 在多次启动间保持相同的后备色。
-        let seed = tab.url?.host ?? tab.title
+        let seed = url?.host ?? title
         let hash = seed.utf8.reduce(UInt64(1_469_598_103_934_665_603)) { hash, byte in
             (hash ^ UInt64(byte)) &* 1_099_511_628_211
         }
