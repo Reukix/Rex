@@ -145,6 +145,8 @@ final class ChromiumBrowserEngine: BrowserEngine {
             runtime.configureDownloadDirectoryURL(directoryURL, tabID: tabID.uuidString)
         case let .recoverCrashedPage(tabID):
             runtime.reloadTabID(tabID.uuidString)
+        case let .exitFullscreen(tabID):
+            runtime.exitFullscreen(forTabID: tabID.uuidString)
         case let .setPagePriority(tabID, isFocused):
             runtime.setFocused(isFocused, tabID: tabID.uuidString)
         case let .setPageSuspended(tabID, isSuspended):
@@ -354,6 +356,11 @@ final class ChromiumBrowserEngine: BrowserEngine {
             }
         case "crashed":
             emit(.pageCrashed(tabID: tabID, reason: payload["message"] as? String ?? "Renderer terminated"))
+        case "fullscreen":
+            emit(.pageFullscreenChanged(
+                tabID: tabID,
+                isFullscreen: payload["isFullscreen"] as? Bool ?? false
+            ))
         case "blockedResource":
             guard let categoryValue = payload["category"] as? String,
                   let category = BlockedResource.Category(rawValue: categoryValue),

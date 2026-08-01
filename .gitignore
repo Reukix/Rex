@@ -11,3 +11,10 @@ xcuserdata/
 /Configuration/RexSigning.local.xcconfig
 __pycache__/
 *.pyc
+
+# Local project documentation; README files and LICENSE remain public.
+/AGENTS.md
+/CHANGELOG.md
+/Documentation/
+/FEATURES.md
+/ROADMAP.md

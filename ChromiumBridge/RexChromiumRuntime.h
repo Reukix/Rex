@@ -123,6 +123,7 @@ FOUNDATION_EXPORT BOOL RexOrderAuxiliaryWindowFrontSafely(NSWindow *window);
 - (void)reloadTabID:(NSString *)tabID;
 - (void)reloadIgnoringCacheForTabID:(NSString *)tabID;
 - (void)stopTabID:(NSString *)tabID;
+- (void)exitFullscreenForTabID:(NSString *)tabID;
 - (void)printTabID:(NSString *)tabID;
 - (void)setAudioMuted:(BOOL)muted tabID:(NSString *)tabID;
 /// Per-tab shield policy. Gates catalog-based blocking per tab together with

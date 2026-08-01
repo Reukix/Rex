@@ -164,6 +164,8 @@ struct RexWindowScene: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store: BrowserStore
     @State private var windowChromeState = BrowserWindowChromeState.initial
+    @State private var browserWindowNumber: Int?
+    @State private var webFullscreenOwnsWindow = false
 
     init(
         windowID: UUID,
@@ -192,7 +194,10 @@ struct RexWindowScene: View {
             .focusedObject(store)
             .frame(minWidth: 980, minHeight: 640)
             .background {
-                RexWindowChromeConfigurator(windowChromeState: $windowChromeState)
+                RexWindowChromeConfigurator(
+                    windowChromeState: $windowChromeState,
+                    windowNumber: $browserWindowNumber
+                )
             }
             .onAppear {
                 RexMenuLocalization.schedule()
@@ -209,6 +214,15 @@ struct RexWindowScene: View {
                     store.flushSession()
                 }
             }
+            .onChange(of: store.webFullscreenTabID) { _, _ in
+                synchronizeWebFullscreen()
+            }
+            .onChange(of: browserWindowNumber) { _, _ in
+                synchronizeWebFullscreen()
+            }
+            .onChange(of: windowChromeState.isFullScreen) { _, _ in
+                handleNativeFullscreenChange()
+            }
             .onDisappear {
                 RexActiveWindowSessionRegistry.shared.unregister(store)
                 let removesPersistedSession = coordinator.shouldRemovePersistedSession(
@@ -221,13 +235,45 @@ struct RexWindowScene: View {
                 store.closeWindow(removingPersistedSession: removesPersistedSession)
             }
     }
+
+    private var browserWindow: NSWindow? {
+        guard let browserWindowNumber else { return nil }
+        return NSApp.window(withWindowNumber: browserWindowNumber)
+    }
+
+    private func synchronizeWebFullscreen() {
+        guard let window = browserWindow else { return }
+        if store.webFullscreenTabID != nil {
+            guard !window.styleMask.contains(.fullScreen) else { return }
+            webFullscreenOwnsWindow = true
+            window.toggleFullScreen(nil)
+        } else if webFullscreenOwnsWindow,
+                  window.styleMask.contains(.fullScreen) {
+            webFullscreenOwnsWindow = false
+            window.toggleFullScreen(nil)
+        }
+    }
+
+    private func handleNativeFullscreenChange() {
+        guard let window = browserWindow else { return }
+        let isFullScreen = window.styleMask.contains(.fullScreen)
+        if !isFullScreen, store.webFullscreenTabID != nil {
+            webFullscreenOwnsWindow = false
+            store.exitWebFullscreen()
+        } else if isFullScreen, webFullscreenOwnsWindow,
+                  store.webFullscreenTabID == nil {
+            webFullscreenOwnsWindow = false
+            window.toggleFullScreen(nil)
+        }
+    }
 }
 
 private struct RexWindowChromeConfigurator: NSViewRepresentable {
     @Binding var windowChromeState: BrowserWindowChromeState
+    @Binding var windowNumber: Int?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(windowChromeState: $windowChromeState)
+        Coordinator(windowChromeState: $windowChromeState, windowNumber: $windowNumber)
     }
 
     func makeNSView(context: Context) -> WindowProbeView {
@@ -240,6 +286,7 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
 
     func updateNSView(_ nsView: WindowProbeView, context: Context) {
         context.coordinator.windowChromeState = $windowChromeState
+        context.coordinator.windowNumber = $windowNumber
         context.coordinator.scheduleRefresh()
     }
 
@@ -256,12 +303,17 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
         }
 
         var windowChromeState: Binding<BrowserWindowChromeState>
+        var windowNumber: Binding<Int?>
         private weak var window: NSWindow?
         private var notificationTokens: [NSObjectProtocol] = []
         private var trafficLightPositions: [ObjectIdentifier: TrafficLightPosition] = [:]
 
-        init(windowChromeState: Binding<BrowserWindowChromeState>) {
+        init(
+            windowChromeState: Binding<BrowserWindowChromeState>,
+            windowNumber: Binding<Int?>
+        ) {
             self.windowChromeState = windowChromeState
+            self.windowNumber = windowNumber
         }
 
         func attach(to window: NSWindow?) {
@@ -271,6 +323,7 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
             }
             detach()
             self.window = window
+            windowNumber.wrappedValue = window?.windowNumber
             guard let window else { return }
 
             configure(window)
@@ -304,6 +357,7 @@ private struct RexWindowChromeConfigurator: NSViewRepresentable {
             }
             notificationTokens.removeAll()
             window = nil
+            windowNumber.wrappedValue = nil
         }
 
         func scheduleRefresh() {

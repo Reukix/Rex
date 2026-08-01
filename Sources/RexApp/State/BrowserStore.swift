@@ -42,6 +42,8 @@ final class BrowserStore: ObservableObject {
     @Published private(set) var permissions: [WebsitePermission] = []
     @Published private(set) var sitePrivacyPolicies: [SitePrivacyPolicy] = []
     @Published private(set) var pendingPermissionPrompts: [WebsitePermissionPrompt] = []
+    @Published private(set) var pageCrashReasonsByTabID: [UUID: String] = [:]
+    @Published private(set) var webFullscreenTabID: UUID?
     @Published private(set) var extensionRuntimeConfigurations: [String: BrowserExtensionRuntimeConfiguration] = [:]
     @Published private(set) var extensionRuntimeConfigurationLoadingIDs = Set<String>()
     @Published private(set) var extensionRuntimeConfigurationErrors: [String: String] = [:]
@@ -1278,6 +1280,10 @@ final class BrowserStore: ObservableObject {
 
     func closeTab(_ tabID: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        if webFullscreenTabID == tabID {
+            webFullscreenTabID = nil
+            Task { [engine] in try? await engine.execute(.exitFullscreen(tabID: tabID)) }
+        }
         if developerToolsTabID == tabID {
             closeDeveloperTools()
         }
@@ -1316,6 +1322,7 @@ final class BrowserStore: ObservableObject {
         nonRestorableDownloadURLsByTabID.removeValue(forKey: tabID)
         activeMediaTabIDs.remove(tabID)
         siteSecurityInfoByTabID.removeValue(forKey: tabID)
+        pageCrashReasonsByTabID.removeValue(forKey: tabID)
         faviconDataByTabID.removeValue(forKey: tabID)
         faviconCacheOrder.removeAll { $0 == tabID }
         Task { [engine] in try? await engine.execute(.destroyPage(tabID: tabID)) }
@@ -1482,6 +1489,25 @@ final class BrowserStore: ObservableObject {
 
     func reloadTab(_ tabID: UUID) {
         Task { [engine] in try? await engine.execute(.reload(tabID: tabID)) }
+    }
+
+    func recoverCrashedPage(_ tabID: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }),
+              tabs[index].lifecycle == .crashed else { return }
+        pageCrashReasonsByTabID.removeValue(forKey: tabID)
+        tabs[index].lifecycle = .active
+        tabs[index].isLoading = true
+        tabs[index].loadingProgress = 0
+        Task { [engine] in
+            try? await engine.execute(.recoverCrashedPage(tabID: tabID))
+        }
+    }
+
+    func exitWebFullscreen() {
+        guard let tabID = webFullscreenTabID else { return }
+        Task { [engine] in
+            try? await engine.execute(.exitFullscreen(tabID: tabID))
+        }
     }
 
     func reloadOrStop() {
@@ -3803,6 +3829,9 @@ final class BrowserStore: ObservableObject {
                 tab.loadingProgress = navigationState.loadingProgress
                 if tab.lifecycle == .crashed { tab.lifecycle = .active }
             }
+            if pageCrashReasonsByTabID[tabID] != nil && navigationState.isLoading {
+                pageCrashReasonsByTabID.removeValue(forKey: tabID)
+            }
             if tabID == selectedTabID { addressText = addressBarText(for: navigationState.url) }
             scheduleSave()
         case let .siteSecurityChanged(tabID, info):
@@ -3930,10 +3959,9 @@ final class BrowserStore: ObservableObject {
             if !profile.isPrivate {
                 Task { [persistence] in try? await persistence.saveDownload(download) }
             }
-        case let .navigationFailed(tabID, failedURL, errorCode, reason):
+        case let .navigationFailed(tabID, failedURL, errorCode, _):
             guard let tab = tab(withID: tabID) else { return }
             let failedURL = Self.userVisibleURL(failedURL)
-            let reason = Self.userVisibleTitle(reason)
             if let failedURL {
                 let relevantURLs = [
                     pendingNavigations[tabID]?.requestedURL,
@@ -3980,7 +4008,6 @@ final class BrowserStore: ObservableObject {
                 tab.isLoading = false
                 tab.loadingProgress = 0
             }
-            if tabID == selectedTabID { lastError = reason }
         case let .pageCrashed(tabID, reason):
             guard tab(withID: tabID) != nil else { return }
             let reason = Self.userVisibleTitle(reason)
@@ -3993,7 +4020,24 @@ final class BrowserStore: ObservableObject {
                 tab.lifecycle = .crashed
                 tab.isLoading = false
             }
-            if tabID == selectedTabID { lastError = reason }
+            pageCrashReasonsByTabID[tabID] = reason
+            if webFullscreenTabID == tabID { webFullscreenTabID = nil }
+        case let .pageFullscreenChanged(tabID, isFullscreen):
+            guard tab(withID: tabID) != nil else { return }
+            if isFullscreen {
+                webFullscreenTabID = tabID
+                if selectedTabID != tabID, tab(withID: tabID)?.spaceID == currentSpaceID {
+                    selectedTabID = tabID
+                }
+                isFindPresented = false
+                isSiteInfoPresented = false
+                isPrivacyPresented = false
+                isLibraryPresented = false
+                isSettingsPresented = false
+                isExtensionsPresented = false
+            } else if webFullscreenTabID == tabID {
+                webFullscreenTabID = nil
+            }
         case let .pageClosed(tabID):
             pageSuspensionTasks.removeValue(forKey: tabID)?.cancel()
             activeDownloadTabIDsByDownloadID = activeDownloadTabIDsByDownloadID.filter {
@@ -4005,6 +4049,8 @@ final class BrowserStore: ObservableObject {
             activeHTTPFallbackURLs.removeValue(forKey: tabID)
             navigationStates.removeValue(forKey: tabID)
             siteSecurityInfoByTabID.removeValue(forKey: tabID)
+            pageCrashReasonsByTabID.removeValue(forKey: tabID)
+            if webFullscreenTabID == tabID { webFullscreenTabID = nil }
             if developerToolsTabID == tabID {
                 closeDeveloperTools()
             }

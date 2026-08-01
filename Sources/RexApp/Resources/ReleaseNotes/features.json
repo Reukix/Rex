@@ -1,5 +1,5 @@
 {
-  "lastUpdatedVersion": "0.9.8",
+  "lastUpdatedVersion": "0.9.9",
   "categories": [
     {
       "id": "app-shell",
@@ -61,16 +61,14 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
-          "updatedIn": "0.9.6",
-          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签；加载、进度、前进后退及刷新/停止直接使用 Chromium 导航代次和状态",
+          "updatedIn": "0.9.9",
+          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签；加载、进度、前进后退及刷新/停止直接使用 Chromium 导航代次和状态，文件选择、JavaScript 对话框、网页全屏与 Renderer 恢复由 Chromium 语义驱动并由 Rex 承载可见 UI",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
           "requiresRestart": false,
           "settingsPath": "浏览",
-          "limitations": [
-            "原生文件选择、JavaScript 对话框和全屏仍在 v0.5.x 完善"
-          ]
+          "limitations": []
         },
         {
           "id": "settings-and-search-engine",

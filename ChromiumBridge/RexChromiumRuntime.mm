@@ -35,6 +35,7 @@
 #include "include/cef_dialog_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_life_span_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/cef_navigation_entry.h"
@@ -2620,8 +2621,10 @@ class RexBrowserClient final : public CefClient,
                                public CefCommandHandler,
                                public CefCookieAccessFilter,
                                public CefContextMenuHandler,
+                               public CefDialogHandler,
                                public CefDisplayHandler,
                                public CefDownloadHandler,
+                               public CefJSDialogHandler,
                                public CefLoadHandler,
                                public CefLifeSpanHandler,
                                public CefPermissionHandler,
@@ -2633,9 +2636,11 @@ class RexBrowserClient final : public CefClient,
 
   CefRefPtr<CefAudioHandler> GetAudioHandler() override { return this; }
   CefRefPtr<CefCommandHandler> GetCommandHandler() override { return this; }
+  CefRefPtr<CefDialogHandler> GetDialogHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
@@ -2740,6 +2745,28 @@ class RexBrowserClient final : public CefClient,
                             int command_id,
                             EventFlags event_flags) override;
 
+  bool OnFileDialog(
+      CefRefPtr<CefBrowser> browser,
+      FileDialogMode mode,
+      const CefString &title,
+      const CefString &default_file_path,
+      const std::vector<CefString> &accept_filters,
+      const std::vector<CefString> &accept_extensions,
+      const std::vector<CefString> &accept_descriptions,
+      CefRefPtr<CefFileDialogCallback> callback) override;
+  bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+                  const CefString &origin_url,
+                  JSDialogType dialog_type,
+                  const CefString &message_text,
+                  const CefString &default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback,
+                  bool &suppress_message) override;
+  bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
+                            const CefString &message_text,
+                            bool is_reload,
+                            CefRefPtr<CefJSDialogCallback> callback) override;
+  void OnResetDialogState(CefRefPtr<CefBrowser> browser) override;
+
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
                        CefRefPtr<CefFrame> frame,
                        const CefString &url) override;
@@ -2752,6 +2779,8 @@ class RexBrowserClient final : public CefClient,
       const std::vector<CefString> &icon_urls) override;
   void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
                                double progress) override;
+  void OnFullscreenModeChange(CefRefPtr<CefBrowser> browser,
+                              bool fullscreen) override;
   void OnMediaAccessChange(CefRefPtr<CefBrowser> browser,
                            bool has_video_access,
                            bool has_audio_access) override;
@@ -2801,6 +2830,8 @@ class RexBrowserClient final : public CefClient,
   void EmitBlockedResource(NSString *category, const std::string &host);
   void EmitMediaAccess(bool has_video_access, bool has_audio_access);
   void EmitSecuritySnapshot(CefRefPtr<CefBrowser> browser);
+  void CancelFileDialog();
+  void CancelJSDialog();
 
   __weak RexChromiumRuntime *runtime_;
   NSString *tab_id_;
@@ -2810,6 +2841,10 @@ class RexBrowserClient final : public CefClient,
   int pending_auto_resize_height_ = 0;
   bool has_video_access_ = false;
   bool has_audio_access_ = false;
+  __strong NSSavePanel *active_file_panel_ = nil;
+  CefRefPtr<CefFileDialogCallback> pending_file_dialog_callback_;
+  __strong NSAlert *active_js_alert_ = nil;
+  CefRefPtr<CefJSDialogCallback> pending_js_dialog_callback_;
   IMPLEMENT_REFCOUNTING(RexBrowserClient);
 };
 
@@ -2908,6 +2943,7 @@ class RexDevToolsClient final : public CefClient,
         didCloseForTabID:(NSString *)tabID;
 - (void)browser:(CefRefPtr<CefBrowser>)browser
         didCloseForTabID:(NSString *)tabID;
+- (nullable NSWindow *)hostWindowForTabID:(NSString *)tabID;
 - (void)finishTerminationIfReady;
 - (void)emitEvent:(NSDictionary<NSString *, id> *)event;
 - (void)registerMediaPermissionRequestID:(NSString *)requestID
@@ -4706,6 +4742,11 @@ struct RexPendingPermission {
   return iterator == _browsers.end() ? nullptr : iterator->second;
 }
 
+- (nullable NSWindow *)hostWindowForTabID:(NSString *)tabID {
+  NSAssert(NSThread.isMainThread, @"CEF dialogs are main-thread only");
+  return _views[tabID].window;
+}
+
 - (CefRefPtr<CefBrowser>)developerToolsBrowserForTabID:(NSString *)tabID {
   auto iterator = _developerToolsBrowsers.find(RexUTF8(tabID));
   return iterator == _developerToolsBrowsers.end() ? nullptr : iterator->second;
@@ -5097,6 +5138,14 @@ struct RexPendingPermission {
 }
 - (void)stopTabID:(NSString *)tabID {
   [self onMain:^{ CefRefPtr<CefBrowser> b = [self browserForTabID:tabID]; if (b) b->StopLoad(); }];
+}
+- (void)exitFullscreenForTabID:(NSString *)tabID {
+  [self onMain:^{
+    CefRefPtr<CefBrowser> b = [self browserForTabID:tabID];
+    if (b && b->GetHost()->IsFullscreen()) {
+      b->GetHost()->ExitFullscreen(true);
+    }
+  }];
 }
 - (void)printTabID:(NSString *)tabID {
   [self onMain:^{ CefRefPtr<CefBrowser> b = [self browserForTabID:tabID]; if (b) b->GetHost()->Print(); }];
@@ -7335,6 +7384,271 @@ bool RexBrowserClient::OnContextMenuCommand(
   }
 }
 
+bool RexBrowserClient::OnFileDialog(
+    CefRefPtr<CefBrowser> browser,
+    FileDialogMode mode,
+    const CefString &title,
+    const CefString &default_file_path,
+    const std::vector<CefString> &accept_filters,
+    const std::vector<CefString> &accept_extensions,
+    const std::vector<CefString> &accept_descriptions,
+    CefRefPtr<CefFileDialogCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser) || !callback) {
+    return false;
+  }
+  if (mode < FILE_DIALOG_OPEN || mode >= FILE_DIALOG_NUM_VALUES) {
+    callback->Cancel();
+    return true;
+  }
+  if (pending_file_dialog_callback_) {
+    callback->Cancel();
+    return true;
+  }
+
+  RexChromiumRuntime *runtime = runtime_;
+  NSWindow *window = runtime ? [runtime hostWindowForTabID:tab_id_] : nil;
+  if (!window) {
+    callback->Cancel();
+    return true;
+  }
+
+  NSSavePanel *panel = mode == FILE_DIALOG_SAVE
+      ? [NSSavePanel savePanel]
+      : [NSOpenPanel openPanel];
+  panel.title = RexNSString(title).length ? RexNSString(title) : @"选择文件";
+  panel.canCreateDirectories = mode == FILE_DIALOG_SAVE;
+  panel.treatsFilePackagesAsDirectories = NO;
+
+  if ([panel isKindOfClass:NSOpenPanel.class]) {
+    NSOpenPanel *openPanel = (NSOpenPanel *)panel;
+    openPanel.allowsMultipleSelection = mode == FILE_DIALOG_OPEN_MULTIPLE;
+    openPanel.canChooseDirectories = mode == FILE_DIALOG_OPEN_FOLDER;
+    openPanel.canChooseFiles = mode != FILE_DIALOG_OPEN_FOLDER;
+    openPanel.resolvesAliases = YES;
+  }
+
+  NSMutableOrderedSet<NSString *> *allowedTypes =
+      [[NSMutableOrderedSet alloc] init];
+  for (const CefString &expanded : accept_extensions) {
+    NSArray<NSString *> *parts =
+        [RexNSString(expanded) componentsSeparatedByString:@";"];
+    for (NSString *part in parts) {
+      NSString *value = [part stringByTrimmingCharactersInSet:
+          NSCharacterSet.whitespaceAndNewlineCharacterSet];
+      while ([value hasPrefix:@"."]) value = [value substringFromIndex:1];
+      if (value.length && ![value isEqualToString:@"*"]) {
+        [allowedTypes addObject:value.lowercaseString];
+      }
+    }
+  }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  if (allowedTypes.count) panel.allowedFileTypes = allowedTypes.array;
+#pragma clang diagnostic pop
+
+  NSString *defaultPath = RexNSString(default_file_path);
+  if (defaultPath.length) {
+    BOOL isDirectory = NO;
+    if ([NSFileManager.defaultManager fileExistsAtPath:defaultPath
+                                           isDirectory:&isDirectory] &&
+        isDirectory) {
+      panel.directoryURL = [NSURL fileURLWithPath:defaultPath isDirectory:YES];
+    } else {
+      NSURL *defaultURL = [NSURL fileURLWithPath:defaultPath];
+      panel.directoryURL = defaultURL.URLByDeletingLastPathComponent;
+      if (mode == FILE_DIALOG_SAVE && defaultURL.lastPathComponent.length) {
+        panel.nameFieldStringValue = defaultURL.lastPathComponent;
+      }
+    }
+  }
+
+  active_file_panel_ = panel;
+  pending_file_dialog_callback_ = callback;
+  CefRefPtr<RexBrowserClient> retained(this);
+  [panel beginSheetModalForWindow:window
+                completionHandler:^(NSModalResponse response) {
+    if (retained->pending_file_dialog_callback_.get() != callback.get()) return;
+    CefRefPtr<CefFileDialogCallback> completion =
+        retained->pending_file_dialog_callback_;
+    retained->pending_file_dialog_callback_ = nullptr;
+    retained->active_file_panel_ = nil;
+    if (response != NSModalResponseOK) {
+      completion->Cancel();
+      return;
+    }
+
+    NSArray<NSURL *> *urls = [panel isKindOfClass:NSOpenPanel.class]
+        ? ((NSOpenPanel *)panel).URLs
+        : (panel.URL ? @[panel.URL] : @[]);
+    std::vector<CefString> paths;
+    paths.reserve(urls.count);
+    for (NSURL *url in urls) {
+      if (url.isFileURL && url.path.length) {
+        paths.emplace_back(RexUTF8(url.path));
+      }
+    }
+    if (paths.empty()) completion->Cancel();
+    else completion->Continue(paths);
+  }];
+  return true;
+}
+
+bool RexBrowserClient::OnJSDialog(
+    CefRefPtr<CefBrowser> browser,
+    const CefString &origin_url,
+    JSDialogType dialog_type,
+    const CefString &message_text,
+    const CefString &default_prompt_text,
+    CefRefPtr<CefJSDialogCallback> callback,
+    bool &suppress_message) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser) || !callback) {
+    return false;
+  }
+  if (dialog_type < JSDIALOGTYPE_ALERT ||
+      dialog_type >= JSDIALOGTYPE_NUM_VALUES) {
+    callback->Continue(false, CefString());
+    return true;
+  }
+  if (pending_js_dialog_callback_) {
+    suppress_message = true;
+    callback->Continue(false, CefString());
+    return true;
+  }
+
+  RexChromiumRuntime *runtime = runtime_;
+  NSWindow *window = runtime ? [runtime hostWindowForTabID:tab_id_] : nil;
+  if (!window) {
+    callback->Continue(false, CefString());
+    return true;
+  }
+
+  NSAlert *alert = [[NSAlert alloc] init];
+  NSString *origin = RexNSString(CefFormatUrlForSecurityDisplay(origin_url));
+  alert.messageText = origin.length ? origin : @"网页消息";
+  NSString *message = RexNSString(message_text);
+  alert.informativeText = message.length ? message : @"此网页发来一条消息。";
+  [alert addButtonWithTitle:@"好"];
+
+  NSTextField *promptField = nil;
+  if (dialog_type == JSDIALOGTYPE_CONFIRM ||
+      dialog_type == JSDIALOGTYPE_PROMPT) {
+    [alert addButtonWithTitle:@"取消"];
+  }
+  if (dialog_type == JSDIALOGTYPE_PROMPT) {
+    promptField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 24)];
+    promptField.stringValue = RexNSString(default_prompt_text);
+    promptField.accessibilityLabel = @"网页输入";
+    alert.accessoryView = promptField;
+  }
+
+  active_js_alert_ = alert;
+  pending_js_dialog_callback_ = callback;
+  CefRefPtr<RexBrowserClient> retained(this);
+  [alert beginSheetModalForWindow:window
+               completionHandler:^(NSModalResponse response) {
+    if (retained->pending_js_dialog_callback_.get() != callback.get()) return;
+    CefRefPtr<CefJSDialogCallback> completion =
+        retained->pending_js_dialog_callback_;
+    retained->pending_js_dialog_callback_ = nullptr;
+    retained->active_js_alert_ = nil;
+    const bool accepted = response == NSAlertFirstButtonReturn;
+    completion->Continue(
+        accepted,
+        accepted && promptField
+            ? CefString(RexUTF8(promptField.stringValue))
+            : CefString());
+  }];
+  return true;
+}
+
+bool RexBrowserClient::OnBeforeUnloadDialog(
+    CefRefPtr<CefBrowser> browser,
+    const CefString &message_text,
+    bool is_reload,
+    CefRefPtr<CefJSDialogCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser) || !callback) return false;
+  if (pending_js_dialog_callback_) {
+    callback->Continue(false, CefString());
+    return true;
+  }
+
+  RexChromiumRuntime *runtime = runtime_;
+  NSWindow *window = runtime ? [runtime hostWindowForTabID:tab_id_] : nil;
+  if (!window) {
+    callback->Continue(false, CefString());
+    return true;
+  }
+
+  NSAlert *alert = [[NSAlert alloc] init];
+  CefRefPtr<CefFrame> mainFrame = browser ? browser->GetMainFrame() : nullptr;
+  NSString *origin = mainFrame
+      ? RexNSString(CefFormatUrlForSecurityDisplay(mainFrame->GetURL()))
+      : @"";
+  alert.messageText = origin.length
+      ? origin
+      : (is_reload ? @"要重新加载此页面吗？" : @"要离开此页面吗？");
+  NSString *message = RexNSString(message_text);
+  alert.informativeText = message.length
+      ? message
+      : @"此页面可能有尚未保存的更改。";
+  [alert addButtonWithTitle:is_reload ? @"重新加载" : @"离开"];
+  [alert addButtonWithTitle:@"取消"];
+
+  active_js_alert_ = alert;
+  pending_js_dialog_callback_ = callback;
+  CefRefPtr<RexBrowserClient> retained(this);
+  [alert beginSheetModalForWindow:window
+               completionHandler:^(NSModalResponse response) {
+    if (retained->pending_js_dialog_callback_.get() != callback.get()) return;
+    CefRefPtr<CefJSDialogCallback> completion =
+        retained->pending_js_dialog_callback_;
+    retained->pending_js_dialog_callback_ = nullptr;
+    retained->active_js_alert_ = nil;
+    completion->Continue(response == NSAlertFirstButtonReturn, CefString());
+  }];
+  return true;
+}
+
+void RexBrowserClient::CancelFileDialog() {
+  CEF_REQUIRE_UI_THREAD();
+  NSSavePanel *panel = active_file_panel_;
+  active_file_panel_ = nil;
+  CefRefPtr<CefFileDialogCallback> callback = pending_file_dialog_callback_;
+  pending_file_dialog_callback_ = nullptr;
+  if (panel.sheetParent) {
+    [panel.sheetParent endSheet:panel returnCode:NSModalResponseCancel];
+  } else {
+    [panel orderOut:nil];
+  }
+  if (callback) callback->Cancel();
+}
+
+void RexBrowserClient::CancelJSDialog() {
+  CEF_REQUIRE_UI_THREAD();
+  NSAlert *alert = active_js_alert_;
+  active_js_alert_ = nil;
+  CefRefPtr<CefJSDialogCallback> callback = pending_js_dialog_callback_;
+  pending_js_dialog_callback_ = nullptr;
+  NSWindow *panel = alert.window;
+  if (panel.sheetParent) {
+    [panel.sheetParent endSheet:panel returnCode:NSModalResponseCancel];
+  } else {
+    [panel orderOut:nil];
+  }
+  if (callback) callback->Continue(false, CefString());
+}
+
+void RexBrowserClient::OnResetDialogState(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (IsPrimaryBrowser(browser)) {
+    CancelFileDialog();
+    CancelJSDialog();
+  }
+}
+
 CefResourceRequestHandler::ReturnValue RexBrowserClient::OnBeforeResourceLoad(
     CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefFrame> frame,
@@ -7365,6 +7679,12 @@ bool RexBrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
                                       bool is_redirect) {
   CEF_REQUIRE_UI_THREAD();
   if (!frame || !frame->IsMain() || !request) return false;
+  if (IsPrimaryBrowser(browser)) {
+    // A new main-frame navigation invalidates any Rex-owned chooser or JS
+    // dialog from the previous document before Chromium starts the reset.
+    CancelFileDialog();
+    CancelJSDialog();
+  }
 
   // User-visible tabs never own Chromium WebUI. The hidden extension
   // management host uses RexDefaultChromeClient and is intentionally outside
@@ -7505,6 +7825,10 @@ bool RexBrowserClient::DoClose(CefRefPtr<CefBrowser> browser) {
 void RexBrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   RexChromiumRuntime *runtime = runtime_;
+  if (IsPrimaryBrowser(browser)) {
+    CancelFileDialog();
+    CancelJSDialog();
+  }
   if (browser && browser->IsPopup()) {
     if (runtime) [runtime chromePopupBrowserDidClose:browser];
     return;
@@ -7793,6 +8117,13 @@ void RexBrowserClient::OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
     @"progress": @(progress),
     @"navigationGeneration": @(navigation_generation_)
   });
+}
+
+void RexBrowserClient::OnFullscreenModeChange(CefRefPtr<CefBrowser> browser,
+                                              bool fullscreen) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!IsPrimaryBrowser(browser)) return;
+  Emit(@"fullscreen", @{ @"isFullscreen": @(fullscreen) });
 }
 
 void RexBrowserClient::OnMediaAccessChange(CefRefPtr<CefBrowser> browser,

@@ -6,39 +6,55 @@ import WebKit
 struct BrowserContentView: View {
     @EnvironmentObject private var store: BrowserStore
     let windowSize: CGSize
+    let webFullscreenTabID: UUID?
+
+    init(windowSize: CGSize, webFullscreenTabID: UUID? = nil) {
+        self.windowSize = windowSize
+        self.webFullscreenTabID = webFullscreenTabID
+    }
 
     var body: some View {
-        LiquidGlassPanel(cornerRadius: 18, clipsContent: false, showsShadow: false) {
-            GeometryReader { proxy in
-                let layoutGeometry = SplitLayoutGeometry(
-                    size: proxy.size,
-                    ratio: store.splitSession?.ratio ?? 0.5,
-                    dividerWidth: RexMetrics.dividerHitWidth
-                )
-
-                Group {
-                    if store.isRestoringSession {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .accessibilityLabel("正在恢复会话")
-                    } else if store.currentTab != nil {
-                        browserLayout(geometry: layoutGeometry)
-                    } else {
-                        ContentUnavailableView("没有打开的标签页", systemImage: "rectangle.on.rectangle.slash")
+        Group {
+            if webFullscreenTabID != nil {
+                browserViewport
+            } else {
+                LiquidGlassPanel(cornerRadius: 18, clipsContent: false, showsShadow: false) {
+                    browserViewport
+                }
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay {
+                    ZStack {
+                        WindowedCEFViewportCornerCover(cornerRadius: 18, windowSize: windowSize)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(.white.opacity(0.22), lineWidth: 0.75)
                     }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
             }
         }
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            ZStack {
-                WindowedCEFViewportCornerCover(cornerRadius: 18, windowSize: windowSize)
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(.white.opacity(0.22), lineWidth: 0.75)
+    }
+
+    private var browserViewport: some View {
+        GeometryReader { proxy in
+            let layoutGeometry = SplitLayoutGeometry(
+                size: proxy.size,
+                ratio: store.splitSession?.ratio ?? 0.5,
+                dividerWidth: RexMetrics.dividerHitWidth
+            )
+
+            Group {
+                if store.isRestoringSession {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("正在恢复会话")
+                } else if store.currentTab != nil {
+                    browserLayout(geometry: layoutGeometry)
+                } else {
+                    ContentUnavailableView("没有打开的标签页", systemImage: "rectangle.on.rectangle.slash")
+                }
             }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
         }
     }
 
@@ -73,6 +89,17 @@ struct BrowserContentView: View {
     }
 
     private func splitLayoutItems(geometry: SplitLayoutGeometry) -> [SplitLayoutItem] {
+        if let webFullscreenTabID,
+           let tab = store.tab(withID: webFullscreenTabID) {
+            return [
+                SplitLayoutItem(
+                    tab: tab,
+                    pane: nil,
+                    frame: CGRect(origin: .zero, size: geometry.size),
+                    isFocused: true
+                )
+            ]
+        }
         if let session = store.splitSession,
            let primary = store.primaryTab,
            let secondary = store.secondaryTab {
@@ -137,7 +164,14 @@ private struct BrowserPane: View {
 
     var body: some View {
         Group {
-            if BrowserStartPage.matches(tab.url) {
+            if tab.lifecycle == .crashed {
+                BrowserCrashRecoveryView(
+                    tab: tab,
+                    reason: store.pageCrashReasonsByTabID[tab.id] ?? "Chromium 渲染进程已终止。",
+                    onRecover: { store.recoverCrashedPage(tab.id) },
+                    onClose: { store.closeTab(tab.id) }
+                )
+            } else if BrowserStartPage.matches(tab.url) {
                 BrowserStartPageView(tabID: tab.id)
             } else if RexExtensionsPage.matches(tab.url) {
                 RexExtensionsPageView(url: tab.url)
@@ -168,6 +202,41 @@ private struct BrowserPane: View {
             if let pane { store.focus(pane) }
         })
         .accessibilityLabel("\(tab.title)网页，\(isFocused ? "已聚焦" : "未聚焦")")
+    }
+}
+
+private struct BrowserCrashRecoveryView: View {
+    let tab: BrowserTab
+    let reason: String
+    let onRecover: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 32, weight: .medium))
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text("页面暂时不可用")
+                .font(.system(size: 20, weight: .semibold))
+            Text(reason)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+            HStack(spacing: 10) {
+                Button("重新加载", action: onRecover)
+                    .buttonStyle(.borderedProminent)
+                Button("关闭标签", action: onClose)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: 440)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+        .background(Color(nsColor: .textBackgroundColor))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("页面崩溃恢复")
     }
 }
 

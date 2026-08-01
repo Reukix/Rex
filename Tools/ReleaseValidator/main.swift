@@ -22,21 +22,6 @@ func capture(_ pattern: String, in text: String, field: String) throws -> String
     return String(text[captureRange])
 }
 
-func firstReleaseHeading(in changelog: String) throws -> (version: String, build: Int) {
-    let regex = try NSRegularExpression(
-        pattern: #"^##\s+v?([^\s]+)\s+\(build\s+([0-9]+)\)"#,
-        options: [.anchorsMatchLines]
-    )
-    let range = NSRange(changelog.startIndex..., in: changelog)
-    guard let match = regex.firstMatch(in: changelog, range: range),
-          let versionRange = Range(match.range(at: 1), in: changelog),
-          let buildRange = Range(match.range(at: 2), in: changelog),
-          let build = Int(changelog[buildRange]) else {
-        throw ValidationFailure(description: "CHANGELOG.md has no version/build release heading")
-    }
-    return (String(changelog[versionRange]), build)
-}
-
 do {
     guard CommandLine.arguments.count == 3 || CommandLine.arguments.count == 5 else {
         throw ValidationFailure(
@@ -48,7 +33,9 @@ do {
     let appVersionURL = root.appendingPathComponent("Sources/RexApp/Application/AppVersion.swift")
     let featuresURL = root.appendingPathComponent("Sources/RexApp/Resources/ReleaseNotes/features.json")
     let releasesURL = root.appendingPathComponent("Sources/RexApp/Resources/ReleaseNotes/releases.json")
-    let changelogURL = root.appendingPathComponent("CHANGELOG.md")
+    let readmeURL = root.appendingPathComponent("README.md")
+    let englishReadmeURL = root.appendingPathComponent("README_EN.md")
+    let licenseURL = root.appendingPathComponent("LICENSE")
 
     let versionSource = try String(contentsOf: appVersionURL, encoding: .utf8)
     let appVersion = try capture(
@@ -78,7 +65,9 @@ do {
     }
     let features = try readJSON(featuresURL)
     let releases = try readJSON(releasesURL)
-    let changelog = try String(contentsOf: changelogURL, encoding: .utf8)
+    let readme = try String(contentsOf: readmeURL, encoding: .utf8)
+    let englishReadme = try String(contentsOf: englishReadmeURL, encoding: .utf8)
+    let license = try String(contentsOf: licenseURL, encoding: .utf8)
 
     guard features["lastUpdatedVersion"] as? String == appVersion else {
         throw ValidationFailure(description: "features.json version does not match AppVersion \(appVersion)")
@@ -103,12 +92,17 @@ do {
         }
     }
 
-    let changelogRelease = try firstReleaseHeading(in: changelog)
-    guard changelogRelease.version == appVersion, changelogRelease.build == appBuild else {
-        throw ValidationFailure(
-            description: "First CHANGELOG.md release is \(changelogRelease.version) build \(changelogRelease.build); "
-                + "expected \(appVersion) build \(appBuild)"
-        )
+    let releaseIdentity = "v\(appVersion) build \(appBuild)"
+    guard readme.contains(releaseIdentity), englishReadme.contains(releaseIdentity) else {
+        throw ValidationFailure(description: "Both README files must identify \(releaseIdentity)")
+    }
+    guard readme.contains("[English](README_EN.md)"),
+          englishReadme.contains("[简体中文](README.md)") else {
+        throw ValidationFailure(description: "README language links are missing")
+    }
+    guard license.contains("GNU AFFERO GENERAL PUBLIC LICENSE"),
+          license.contains("Version 3, 19 November 2007") else {
+        throw ValidationFailure(description: "LICENSE must contain GNU Affero General Public License v3.0")
     }
 
     var featureIDs = Set<String>()
@@ -134,23 +128,13 @@ do {
         }
     }
 
-    let releaseDocument = root.appendingPathComponent("Documentation/Releases/v\(appVersion).md")
-    guard FileManager.default.fileExists(atPath: releaseDocument.path) else {
-        throw ValidationFailure(description: "Missing release document: \(releaseDocument.lastPathComponent)")
-    }
-    for required in ["CHANGELOG.md", "FEATURES.md", "ROADMAP.md"] {
-        guard FileManager.default.fileExists(atPath: root.appendingPathComponent(required).path) else {
-            throw ValidationFailure(description: "Missing required release file: \(required)")
-        }
-    }
-
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
     try "validated \(appVersion) build \(appBuild)\n".write(
         to: output.appendingPathComponent("release-notes-validation.txt"),
         atomically: true,
         encoding: .utf8
     )
-    print("Rex release notes validated for v\(appVersion) build \(appBuild) (\(featureIDs.count) features)")
+    print("Rex public release metadata validated for v\(appVersion) build \(appBuild) (\(featureIDs.count) features)")
 } catch {
     FileHandle.standardError.write(Data("Release validation failed: \(error)\n".utf8))
     exit(1)

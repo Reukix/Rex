@@ -545,6 +545,6 @@ func qaInitialNavigationCannotTargetProductionOrRemoteSites() throws {
         "CFFIXED_USER_HOME": "/private/tmp/rex-qa-smoke.ABC123",
         "REX_QA_ISOLATED": "1",
         "REX_QA_INITIAL_URL": "http://localhost:18765/installer.pkg",
-        "REX_QA_DOWNLOAD_DIRECTORY": "/Users/yuki/Downloads"
+        "REX_QA_DOWNLOAD_DIRECTORY": "/tmp/rex-qa-downloads"
     ]) == nil)
 }

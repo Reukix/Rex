@@ -4,8 +4,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="${1:-0.9.8}"
-BUILD_NUMBER="${2:-985}"
+VERSION="${1:-0.9.9}"
+BUILD_NUMBER="${2:-990}"
 CONFIGURATION="${3:-Release}"
 SIGNING_MODE="${REX_PACKAGE_SIGNING_MODE:-adhoc}"
 

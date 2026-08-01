@@ -27,7 +27,14 @@ struct BrowserRootView: View {
             ZStack(alignment: .top) {
                 RexWindowBackground()
 
-                VStack(spacing: 4) {
+                if let fullscreenTabID = store.webFullscreenTabID {
+                    BrowserContentView(
+                        windowSize: windowProxy.size,
+                        webFullscreenTabID: fullscreenTabID
+                    )
+                    .ignoresSafeArea()
+                } else {
+                    VStack(spacing: 4) {
                     BrowserToolbar(
                         preferences: store.preferences,
                         certificateViewerSnapshot: $certificateViewerSnapshot,
@@ -110,14 +117,15 @@ struct BrowserRootView: View {
                         .animation(nil, value: developerToolsWidth)
                     }
                     .padding(.horizontal, 8)
-                    .padding(.bottom, 6)
-                }
+                        .padding(.bottom, 6)
+                    }
 
-                if let prompt = store.pendingPermissionPrompts.first {
-                    WebsitePermissionPromptBar(prompt: prompt)
-                        .padding(.top, 48)
-                        .padding(.horizontal, 24)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    if let prompt = store.pendingPermissionPrompts.first {
+                        WebsitePermissionPromptBar(prompt: prompt)
+                            .padding(.top, 48)
+                            .padding(.horizontal, 24)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
             }
             .coordinateSpace(name: RexCoordinateSpace.window)

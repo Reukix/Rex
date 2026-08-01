@@ -104,6 +104,7 @@ enum BrowserCommand: Sendable, Equatable {
     case retryDownload(downloadID: UUID, tabID: UUID, url: URL)
     case setDownloadDirectory(tabID: UUID, directoryURL: URL?)
     case recoverCrashedPage(tabID: UUID)
+    case exitFullscreen(tabID: UUID)
     case setPagePriority(tabID: UUID, isFocused: Bool)
     case setPageSuspended(tabID: UUID, isSuspended: Bool)
 }
@@ -128,6 +129,7 @@ enum BrowserEvent: Sendable, Equatable {
     case downloadUpdated(tabID: UUID, download: BrowserDownloadTask)
     case navigationFailed(tabID: UUID, url: URL?, errorCode: Int?, reason: String)
     case pageCrashed(tabID: UUID, reason: String)
+    case pageFullscreenChanged(tabID: UUID, isFullscreen: Bool)
     case pageClosed(tabID: UUID)
 }
 
@@ -240,6 +242,7 @@ actor PrototypeBrowserEngine: BrowserEngine {
              let .stopFinding(tabID),
              let .openDeveloperTools(tabID), let .openDeveloperToolsConsole(tabID),
              let .openDeveloperToolsInspect(tabID), let .recoverCrashedPage(tabID),
+             let .exitFullscreen(tabID),
              let .setPagePriority(tabID, _), let .setPageSuspended(tabID, _):
             try requireKnown(tabID)
         case .respondToPermission:

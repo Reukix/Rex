@@ -230,7 +230,7 @@ func browserStoreTracksSiteSecurityByTab() async throws {
     for _ in 0..<5 { await Task.yield() }
     #expect(store.currentSiteSecurityInfo == newest)
     #expect(store.currentTab?.lifecycle != .crashed)
-    #expect(store.lastError == "certificate rejected")
+    #expect(store.lastError == nil)
 
     store.closeTab(tabID)
     #expect(store.siteSecurityInfoByTabID[tabID] == nil)
@@ -291,7 +291,7 @@ func httpsUpgradeFallbackIsBoundedAndCertificateSafe() async throws {
     ))
     for _ in 0..<10 { await Task.yield() }
     #expect(await fallbackEngine.loadURLs() == [httpsURL, httpURL])
-    #expect(fallbackStore.lastError == "HTTP fallback failed")
+    #expect(fallbackStore.lastError == nil)
 
     let certificateEngine = SiteSecurityTestEngine()
     let certificateStore = BrowserStore(

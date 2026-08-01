@@ -2760,6 +2760,65 @@ func chromiumPageEventsUpdateTabs() async throws {
     await engine.finish()
 }
 
+@Test("Renderer recovery and web fullscreen remain Chromium authoritative")
+@MainActor
+func rendererRecoveryAndFullscreenMapChromiumState() async {
+    let engine = ControlledBrowserEngine()
+    let store = BrowserStore(
+        engine: engine,
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+        )
+    )
+    await engine.waitForSubscriber()
+    let tabID = store.selectedTabID
+
+    await engine.emit(.pageCrashed(tabID: tabID, reason: "Renderer terminated"))
+    for _ in 0..<100 {
+        if store.tab(withID: tabID)?.lifecycle == .crashed { break }
+        await Task.yield()
+    }
+    #expect(store.pageCrashReasonsByTabID[tabID] == "Renderer terminated")
+    #expect(store.tab(withID: tabID)?.lifecycle == .crashed)
+    #expect(store.lastError == nil)
+
+    store.recoverCrashedPage(tabID)
+    for _ in 0..<100 {
+        if await engine.recordedCommands().contains(.recoverCrashedPage(tabID: tabID)) {
+            break
+        }
+        await Task.yield()
+    }
+    #expect(store.pageCrashReasonsByTabID[tabID] == nil)
+    #expect(store.tab(withID: tabID)?.lifecycle == .active)
+    #expect(await engine.recordedCommands().contains(.recoverCrashedPage(tabID: tabID)))
+
+    await engine.emit(.pageFullscreenChanged(tabID: tabID, isFullscreen: true))
+    for _ in 0..<100 {
+        if store.webFullscreenTabID == tabID { break }
+        await Task.yield()
+    }
+    #expect(store.webFullscreenTabID == tabID)
+
+    store.exitWebFullscreen()
+    for _ in 0..<100 {
+        if await engine.recordedCommands().contains(.exitFullscreen(tabID: tabID)) {
+            break
+        }
+        await Task.yield()
+    }
+    #expect(await engine.recordedCommands().contains(.exitFullscreen(tabID: tabID)))
+    #expect(store.webFullscreenTabID == tabID)
+
+    await engine.emit(.pageFullscreenChanged(tabID: tabID, isFullscreen: false))
+    for _ in 0..<100 {
+        if store.webFullscreenTabID == nil { break }
+        await Task.yield()
+    }
+    #expect(store.webFullscreenTabID == nil)
+    await engine.finish()
+}
+
 @Test("Privacy URL policy upgrades HTTPS and removes known tracking parameters")
 func privacyURLPolicySanitizesPublicURLs() throws {
     let input = try #require(URL(string: "http://example.org/docs?utm_source=newsletter&keep=1&FBCLID=abc&utm_source=duplicate#section"))
