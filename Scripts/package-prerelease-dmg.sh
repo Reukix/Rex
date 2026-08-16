@@ -97,8 +97,8 @@ echo "==> Preparing pre-release disk image contents"
   echo "Drag Rex.app to Applications to install it."
   echo
   echo "Architecture: Apple Silicon arm64"
-  echo "Chromium: 150.0.7871.129"
-  echo "CEF: 150.0.14"
+  echo "Chromium: 151.0.7922.138"
+  echo "CEF: 151.3.18"
 } > "$STAGING_DIR/PRE-RELEASE.txt"
 
 echo "==> Creating compressed DMG"

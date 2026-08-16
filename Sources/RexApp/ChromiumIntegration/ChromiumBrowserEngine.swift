@@ -801,6 +801,10 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        RexActiveWindowSessionRegistry.shared.openExternalURLs(urls)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // CEF owns hidden AppKit windows that are destroyed inside CefShutdown.
         // Treating one of those as the last user window can re-enter the Cocoa

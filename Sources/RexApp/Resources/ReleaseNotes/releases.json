@@ -2,11 +2,64 @@
   "releases": [
     {
       "version": "0.9.9",
-      "build": 990,
-      "date": "2026-08-01",
+      "build": 995,
+      "date": "2026-08-17",
+      "channel": "beta",
+      "summary": "全量编译 CEF/Chromium 源码并开启专有编解码器支持，彻底修复抖音等流媒体站点的视频播放问题。",
+      "added": [],
+      "improved": [],
+      "changed": [
+        "应用版本更新为 v0.9.9 build 995 Beta",
+        "CEF 运行时从 SpotifyCDN 标准发行包切换为本地全量源码编译版本，GN 参数设置为 proprietary_codecs=true ffmpeg_branding=Chrome is_official_build=true chrome_pgo_phase=0 target_cpu=arm64"
+      ],
+      "fixed": [
+        "抖音等流媒体站点视频无限加载或提示浏览器版本过低：CEF 标准发行包编译时未开启 proprietary_codecs，导致 H.264/AAC/HEVC 的 MediaSource.isTypeSupported()、canPlayType() 返回 false 且 EnableBitstreamConverter RPC 被拒绝；全量编译后 FFmpeg 含 Chrome 品牌专有编解码器，比特流转换器正常工作，H.264/AAC 通过 macOS VideoToolbox/AudioToolbox 原生解码"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "Chrome Web Store 扩展自动更新和更广真实样本矩阵仍未完成，不宣称完整 Chrome 兼容",
+        "默认浏览器状态检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
+        "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁"
+      ],
+      "inProgress": [
+        "完成官方来源扩展自动更新的验签、generation 和 journal 回退实测",
+        "补齐文件选择、网页对话框、全屏和 Renderer 恢复的隔离实机矩阵"
+      ]
+    },
+    {
+      "version": "0.9.9",
+      "build": 994,
+      "date": "2026-08-15",
+      "channel": "beta",
+      "summary": "修复抖音等流媒体站点因 CEF 标准发行包缺少专有编解码器声明而被判定为浏览器版本过低的问题。",
+      "added": [],
+      "improved": [],
+      "changed": [
+        "应用版本更新为 v0.9.9 build 994 Beta"
+      ],
+      "fixed": [
+        "抖音等流媒体站点提示浏览器版本过低无法播放视频：CEF 标准发行包编译时未开启 proprietary_codecs，导致 MediaSource.isTypeSupported() 和 HTMLMediaElement.canPlayType() 对 H.264/AAC/HEVC 返回 false；在渲染进程 V8 上下文创建时注入编解码器兼容 shim，使能力探测接口返回支持，实际解码仍由 macOS VideoToolbox/AudioToolbox 原生处理"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "Chrome Web Store 扩展自动更新和更广真实样本矩阵仍未完成，不宣称完整 Chrome 兼容",
+        "默认浏览器状态检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
+        "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁"
+      ],
+      "inProgress": [
+        "完成官方来源扩展自动更新的验签、generation 和 journal 回退实测",
+        "补齐文件选择、网页对话框、全屏和 Renderer 恢复的隔离实机矩阵"
+      ]
+    },
+    {
+      "version": "0.9.9",
+      "build": 993,
+      "date": "2026-08-03",
       "channel": "beta",
       "summary": "继续采用 Rex 可见 UI 与 Chromium 权威后端：文件选择、JavaScript 对话框、网页全屏和 Renderer 恢复完成首批稳定版基础链路。",
       "added": [
+        "macOS 浏览器注册：声明 http/https URL scheme 与 HTML/XHTML Viewer 文档角色，使 Rex 可进入系统设置的默认网页浏览器候选列表",
+        "系统外部网页链接入口：冷启动时排队，窗口就绪后在当前普通窗口的新标签页中打开",
         "Rex 原生文件选择面板：单文件、多文件、文件夹、保存和取消均由 Chromium 请求触发并由 Rex AppKit 承载",
         "Rex 原生 JavaScript alert、confirm、prompt 与 beforeunload 对话框，保留 Chromium 回调语义",
         "网页 Fullscreen API 到 Rex 窗口全屏的状态映射，支持分屏中仅显示请求全屏的页面并由 Escape 退出",
@@ -18,10 +71,13 @@
         "网页全屏时隐藏 Rex 浏览器工具栏和侧栏，退出后恢复原分屏布局"
       ],
       "changed": [
-        "应用版本更新为 v0.9.9 build 990 Beta",
+        "应用版本更新为 v0.9.9 build 993 Beta",
+        "网页与扩展运行内核升级至 Chromium 151.0.7922.138 / CEF 151.3.18 stable ARM64 standard 发行包",
         "基础浏览能力的发布口径更新为 Rex 外壳、Chromium 语义，不把 Chromium WebUI 作为可见产品界面"
       ],
       "fixed": [
+        "抖音将最新版 CEF 误判为低版本浏览器并导致视频鉴权失败的问题：仅在 douyin.com 首个请求前同步 Chrome UA 与请求头 Client Hints，并在页面脚本前补齐一致的 NavigatorUAData 接口，离站后恢复 Rex 默认身份",
+        "嵌入式 Chromium DevTools 无法通过快捷键、应用编辑菜单或右键菜单执行复制粘贴等编辑操作，以及单次键盘输入被重复投递的问题",
         "Renderer 终止后仍显示旧网页内容、缺少可操作恢复入口的问题",
         "网页全屏退出后 Rex 窗口仍停留在全屏或分屏状态不同步的问题",
         "导航期间 JavaScript 对话框和文件选择器未随页面关闭而取消的问题",
@@ -30,7 +86,7 @@
       "removed": [],
       "knownIssues": [
         "Chrome Web Store 扩展自动更新和更广真实样本矩阵仍未完成，不宣称完整 Chrome 兼容",
-        "默认浏览器注册/检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
+        "默认浏览器状态检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
         "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁"
       ],
       "inProgress": [

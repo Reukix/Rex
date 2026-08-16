@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 VERSION="${1:-0.9.9}"
-BUILD_NUMBER="${2:-990}"
+BUILD_NUMBER="${2:-993}"
 CONFIGURATION="${3:-Release}"
 SIGNING_MODE="${REX_PACKAGE_SIGNING_MODE:-adhoc}"
 
@@ -163,7 +163,48 @@ BLUETOOTH_USAGE_DESCRIPTION="$(
     "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
 )"
 if [[ -z "$BLUETOOTH_USAGE_DESCRIPTION" ]]; then
-  echo "Rex.app must declare NSBluetoothAlwaysUsageDescription for Chromium Web Bluetooth and security-key requests." >&2
+    echo "Rex.app must declare NSBluetoothAlwaysUsageDescription for Chromium Web Bluetooth and security-key requests." >&2
+    exit 9
+fi
+
+HTTP_SCHEME="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+HTTPS_SCHEME="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:1' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+if [[ "$HTTP_SCHEME" != "http" || "$HTTPS_SCHEME" != "https" ]]; then
+  echo "Rex.app must declare http and https URL schemes for default-browser registration." >&2
+  exit 9
+fi
+
+HTML_CONTENT_TYPE="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleDocumentTypes:0:LSItemContentTypes:0' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+HTML_ROLE="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleDocumentTypes:0:CFBundleTypeRole' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+XHTML_CONTENT_TYPE="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleDocumentTypes:1:LSItemContentTypes:0' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+XHTML_ROLE="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleDocumentTypes:1:CFBundleTypeRole' \
+    "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+)"
+if [[ "$HTML_CONTENT_TYPE" != "public.html" || "$HTML_ROLE" != "Viewer" ||
+      "$XHTML_CONTENT_TYPE" != "public.xhtml" || "$XHTML_ROLE" != "Viewer" ]]; then
+  echo "Rex.app must declare HTML and XHTML Viewer document roles for default-browser selection." >&2
   exit 9
 fi
 
@@ -300,8 +341,8 @@ SHA="$(/usr/bin/shasum -a 256 "$PUBLISH_DIR/$ARCHIVE_NAME" | /usr/bin/awk '{prin
   echo "version=$VERSION"
   echo "build=$BUILD_NUMBER"
   echo "configuration=$CONFIGURATION"
-  echo "chromium=150.0.7871.129"
-  echo "cef=150.0.14+g7c1aa68+chromium-150.0.7871.129"
+  echo "chromium=151.0.7922.138"
+  echo "cef=151.3.18+gbeff58d+chromium-151.0.7922.138"
   echo "cef_distribution=standard"
   echo "content_blocking=rex-curated-domain-catalog+chromium-extension-dnr"
   echo "extension_runtime=chromium-native-extension-api+browser-target-cdp-pipe"

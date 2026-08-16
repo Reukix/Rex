@@ -30,14 +30,41 @@ final class RexActiveWindowSessionRegistry {
     }
 
     private var storesByWindowID: [UUID: WeakStore] = [:]
+    private var activeStandardWindowID: UUID?
+    private var pendingExternalURLs: [URL] = []
 
     func register(_ store: BrowserStore) {
         storesByWindowID[store.windowID] = WeakStore(store)
+        guard !store.profile.isPrivate else { return }
+        if activeStandardWindowID == nil {
+            activeStandardWindowID = store.windowID
+        }
+        routePendingExternalURLsIfPossible()
     }
 
     func unregister(_ store: BrowserStore) {
         guard storesByWindowID[store.windowID]?.value === store else { return }
         storesByWindowID.removeValue(forKey: store.windowID)
+        if activeStandardWindowID == store.windowID {
+            activeStandardWindowID = nil
+        }
+    }
+
+    func markActive(_ store: BrowserStore) {
+        guard !store.profile.isPrivate,
+              storesByWindowID[store.windowID]?.value === store else { return }
+        activeStandardWindowID = store.windowID
+    }
+
+    func openExternalURLs(_ urls: [URL]) {
+        let webURLs = urls.filter(Self.isSupportedExternalURL)
+        guard !webURLs.isEmpty else { return }
+        pendingExternalURLs.append(contentsOf: webURLs)
+        routePendingExternalURLsIfPossible()
+    }
+
+    var hasPendingExternalURLs: Bool {
+        !pendingExternalURLs.isEmpty
     }
 
     func flushStandardWindowSessionsForApplicationTermination() async
@@ -67,6 +94,33 @@ final class RexActiveWindowSessionRegistry {
             failedWindows: failedWindows,
             skippedPrivateWindowIDs: privateWindowIDs
         )
+    }
+
+    private func routePendingExternalURLsIfPossible() {
+        storesByWindowID = storesByWindowID.filter { $0.value.value != nil }
+        guard !pendingExternalURLs.isEmpty,
+              let store = preferredStandardStore() else { return }
+        let urls = pendingExternalURLs
+        pendingExternalURLs.removeAll()
+        store.openExternalURLs(urls)
+    }
+
+    private func preferredStandardStore() -> BrowserStore? {
+        if let activeStandardWindowID,
+           let store = storesByWindowID[activeStandardWindowID]?.value,
+           !store.profile.isPrivate {
+            return store
+        }
+        return storesByWindowID.values
+            .compactMap(\.value)
+            .filter { !$0.profile.isPrivate }
+            .sorted { $0.windowID.uuidString < $1.windowID.uuidString }
+            .first
+    }
+
+    private static func isSupportedExternalURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
     }
 }
 
@@ -103,11 +157,20 @@ final class RexWindowCoordinator: ObservableObject {
     func restoreOtherWindows(using openWindow: OpenWindowAction) {
         guard !didRestoreWindows else { return }
         didRestoreWindows = true
-        guard preferences.restorePreviousSession else { return }
+        // When Rex is the default browser and another app opens a link, the
+        // external URL arrives around the same time the primary window appears.
+        // Restoring previous-session windows in that launch path stacks many
+        // windows on top of the one tab the user actually wanted to open, so
+        // skip session restoration while an external URL is pending.
+        guard !RexActiveWindowSessionRegistry.shared.hasPendingExternalURLs,
+              preferences.restorePreviousSession else { return }
         let persistence = persistence
         let primaryWindowID = primaryWindowID
         Task { @MainActor [weak self] in
             guard let self else { return }
+            // Re-check after the async gap: an external URL may have arrived
+            // between the synchronous guard above and the database load.
+            guard !RexActiveWindowSessionRegistry.shared.hasPendingExternalURLs else { return }
             do {
                 let sessions = try await persistence.loadAllWindows()
                 for session in sessions
@@ -219,6 +282,13 @@ struct RexWindowScene: View {
             }
             .onChange(of: browserWindowNumber) { _, _ in
                 synchronizeWebFullscreen()
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: NSWindow.didBecomeKeyNotification
+            )) { notification in
+                guard let window = notification.object as? NSWindow,
+                      window.windowNumber == browserWindowNumber else { return }
+                RexActiveWindowSessionRegistry.shared.markActive(store)
             }
             .onChange(of: windowChromeState.isFullScreen) { _, _ in
                 handleNativeFullscreenChange()

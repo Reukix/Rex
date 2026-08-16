@@ -199,6 +199,8 @@ echo "  profile: $rex_isolated_profile"
 # Match CEF's macOS test clients: isolated QA must not query or modify the
 # user's login keychain for Chromium profile encryption state.
 CFFIXED_USER_HOME="$rex_smoke_home" \
+  CFPREFERENCES_AVOID_DAEMON=1 \
+  ApplePersistenceIgnoreState=YES \
   REX_QA_ISOLATED=1 \
   REX_QA_INITIAL_URL="$rex_initial_url" \
   REX_QA_DOWNLOAD_DIRECTORY="$rex_smoke_home/Downloads/Rex" \

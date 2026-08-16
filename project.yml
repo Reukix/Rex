@@ -48,6 +48,20 @@ targets:
         CFBundlePackageType: APPL
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleURLTypes:
+          - CFBundleURLName: Web site URL
+            CFBundleURLSchemes:
+              - http
+              - https
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: HTML document
+            CFBundleTypeRole: Viewer
+            LSItemContentTypes:
+              - public.html
+          - CFBundleTypeName: XHTML document
+            CFBundleTypeRole: Viewer
+            LSItemContentTypes:
+              - public.xhtml
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHighResolutionCapable: true
         NSBluetoothAlwaysUsageDescription: "Rex 仅在您允许的网站请求时使用蓝牙连接安全密钥或附近设备。"
@@ -63,7 +77,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.rex.browser
         PRODUCT_NAME: Rex
         MARKETING_VERSION: 0.9.9
-        CURRENT_PROJECT_VERSION: 990
+        CURRENT_PROJECT_VERSION: 993
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "6.0"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) REX_CEF"

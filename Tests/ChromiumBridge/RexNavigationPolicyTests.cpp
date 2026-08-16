@@ -1,4 +1,5 @@
 #include "RexNavigationPolicy.h"
+#include "RexSiteCompatibilityPolicy.h"
 #include "Privacy/RexThoriumPolicy.h"
 
 #include <array>
@@ -47,6 +48,18 @@ static_assert(!rex::thorium::ContainsCSVFeature(
     rex::thorium::kBrowserEnabledFeatures, "ParallelDownloading"));
 static_assert(rex::thorium::ContainsCSVFeature(
     rex::thorium::kBrowserDisabledFeatures, "DownloadBubble"));
+static_assert(rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+    "https://www.douyin.com/"));
+static_assert(rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+    "HTTPS://WWW.DOUYIN.COM:443/video/123"));
+static_assert(rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+    "https://user@example.douyin.com./"));
+static_assert(!rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+    "https://douyin.com.example.com/"));
+static_assert(!rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+    "https://douyincdn.com/"));
+static_assert(!rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+    "ftp://www.douyin.com/"));
 
 struct StartupPlaceholderCase {
   bool awaits_real_address;

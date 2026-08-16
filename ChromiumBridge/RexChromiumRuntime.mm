@@ -11,12 +11,14 @@
 
 #include <atomic>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cctype>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -34,6 +36,7 @@
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_dialog_handler.h"
 #include "include/cef_display_handler.h"
+#include "include/cef_devtools_message_observer.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_jsdialog_handler.h"
 #include "include/cef_life_span_handler.h"
@@ -61,6 +64,7 @@
 #include "RexExtensionReconcilePolicy.h"
 #include "RexMessagePumpPolicy.h"
 #include "RexNavigationPolicy.h"
+#include "RexSiteCompatibilityPolicy.h"
 #include "Privacy/RexThoriumFlags.h"
 // Privacy engine types kept for shield UI policy storage only; request blocking is disabled.
 #include "Privacy/RexPrivacyEngine.h"
@@ -189,6 +193,27 @@ typedef void (^RexExtensionOperationsCompletion)(NSError *_Nullable error);
                                                           (nullable NSString *)payload
                                                  errorMessage:
                                                      (nullable NSString *)message;
+
+@end
+
+typedef NS_ENUM(NSInteger, RexDeveloperToolsEditingCommand) {
+  RexDeveloperToolsEditingCommandNone,
+  RexDeveloperToolsEditingCommandUndo,
+  RexDeveloperToolsEditingCommandRedo,
+  RexDeveloperToolsEditingCommandCut,
+  RexDeveloperToolsEditingCommandCopy,
+  RexDeveloperToolsEditingCommandPaste,
+  RexDeveloperToolsEditingCommandPasteAndMatchStyle,
+  RexDeveloperToolsEditingCommandDelete,
+  RexDeveloperToolsEditingCommandSelectAll,
+};
+
+@interface RexChromiumRuntime (DeveloperToolsEditingPrivate)
+
+- (BOOL)handleDeveloperToolsEditingShortcutForEvent:(NSEvent *)event;
+- (BOOL)executeDeveloperToolsEditingCommand:
+            (RexDeveloperToolsEditingCommand)command
+                                      tabID:(NSString *)tabID;
 
 @end
 
@@ -1010,7 +1035,7 @@ static_assert(!RexShouldAcceptManagedExtensionFolderDialog(
     true, true, false, 7, 8, FILE_DIALOG_OPEN_FOLDER));
 static_assert(!RexShouldAcceptManagedExtensionFolderDialog(
     true, false, false, 7, 7, FILE_DIALOG_OPEN_FOLDER));
-// CEF 150 maps Chromium's SELECT_EXISTING_FOLDER to FILE_DIALOG_OPEN. Accept
+// CEF may map Chromium's SELECT_EXISTING_FOLDER to FILE_DIALOG_OPEN. Accept
 // that compatibility mode only inside the token-bound hidden host operation.
 static_assert(RexShouldAcceptManagedExtensionFolderDialog(
     true, true, false, 7, 7, FILE_DIALOG_OPEN));
@@ -1290,6 +1315,80 @@ bool RexHostMatches(const std::string &host, const std::string &domain) {
   return host.size() > domain.size() &&
       host.compare(host.size() - domain.size(), domain.size(), domain) == 0 &&
       host[host.size() - domain.size() - 1] == '.';
+}
+
+std::string RexChromiumVersionString() {
+  return std::to_string(CHROME_VERSION_MAJOR) + "." +
+      std::to_string(CHROME_VERSION_MINOR) + "." +
+      std::to_string(CHROME_VERSION_BUILD) + "." +
+      std::to_string(CHROME_VERSION_PATCH);
+}
+
+std::string RexChromeCompatibilityUserAgent() {
+  return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" +
+      std::to_string(CHROME_VERSION_MAJOR) + ".0.0.0 Safari/537.36";
+}
+
+CefRefPtr<CefListValue> RexChromeBrandVersionList(bool fullVersion) {
+  const std::string version = fullVersion
+      ? RexChromiumVersionString()
+      : std::to_string(CHROME_VERSION_MAJOR);
+  const std::string greaseVersion = fullVersion ? "99.0.0.0" : "99";
+  struct BrandVersion {
+    const char *brand;
+    std::string version;
+  };
+  const std::array<BrandVersion, 3> values = {{
+      {"Not=A?Brand", greaseVersion},
+      {"Google Chrome", version},
+      {"Chromium", version},
+  }};
+  CefRefPtr<CefListValue> list = CefListValue::Create();
+  list->SetSize(values.size());
+  for (size_t index = 0; index < values.size(); ++index) {
+    CefRefPtr<CefDictionaryValue> value = CefDictionaryValue::Create();
+    value->SetString("brand", values[index].brand);
+    value->SetString("version", values[index].version);
+    list->SetDictionary(index, value);
+  }
+  return list;
+}
+
+CefRefPtr<CefDictionaryValue> RexChromeCompatibilityIdentityParameters() {
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetString("userAgent", RexChromeCompatibilityUserAgent());
+  params->SetString("platform", "MacIntel");
+
+  NSOperatingSystemVersion osVersion =
+      NSProcessInfo.processInfo.operatingSystemVersion;
+  const std::string platformVersion =
+      std::to_string(osVersion.majorVersion) + "." +
+      std::to_string(osVersion.minorVersion) + "." +
+      std::to_string(osVersion.patchVersion);
+  CefRefPtr<CefDictionaryValue> metadata = CefDictionaryValue::Create();
+  metadata->SetList("brands", RexChromeBrandVersionList(false));
+  metadata->SetList("fullVersionList", RexChromeBrandVersionList(true));
+  metadata->SetString("fullVersion", RexChromiumVersionString());
+  metadata->SetString("platform", "macOS");
+  metadata->SetString("platformVersion", platformVersion);
+  metadata->SetString("architecture", "arm");
+  metadata->SetString("model", "");
+  metadata->SetBool("mobile", false);
+  metadata->SetString("bitness", "64");
+  metadata->SetBool("wow64", false);
+  CefRefPtr<CefListValue> formFactors = CefListValue::Create();
+  formFactors->SetSize(1);
+  formFactors->SetString(0, "Desktop");
+  metadata->SetList("formFactors", formFactors);
+  params->SetDictionary("userAgentMetadata", metadata);
+  return params;
+}
+
+CefRefPtr<CefDictionaryValue> RexDefaultCompatibilityIdentityParameters() {
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetString("userAgent", "");
+  return params;
 }
 
 std::string RexRegistrableDomain(const std::string &host) {
@@ -1723,6 +1822,10 @@ class RexCEFApp final : public CefApp, public CefBrowserProcessHandler {
 
       command_line->RemoveSwitch("remote-debugging-port");
       command_line->RemoveSwitch("remote-debugging-address");
+      // DEBUG: temporarily enable remote debugging port
+      if (!command_line->HasSwitch("remote-debugging-port")) {
+        command_line->AppendSwitchWithValue("remote-debugging-port", "9223");
+      }
       command_line->RemoveSwitch("remote-debugging-pipe");
       command_line->RemoveSwitch("disable-extensions");
       command_line->RemoveSwitch("disable-extensions-except");
@@ -2490,6 +2593,53 @@ RexSendEventImplementation gOriginalSendEvent = nullptr;
 RexRunImplementation gOriginalRun = nullptr;
 RexTerminateImplementation gOriginalTerminate = nullptr;
 
+constexpr RexDeveloperToolsEditingCommand
+RexDeveloperToolsEditingCommandForKeyCode(
+    unsigned short key_code,
+    NSEventModifierFlags modifiers) {
+  constexpr NSEventModifierFlags command = NSEventModifierFlagCommand;
+  constexpr NSEventModifierFlags shiftCommand =
+      NSEventModifierFlagShift | NSEventModifierFlagCommand;
+  constexpr NSEventModifierFlags optionShiftCommand =
+      NSEventModifierFlagOption | shiftCommand;
+  if (key_code == 6 && modifiers == command) {
+    return RexDeveloperToolsEditingCommandUndo;
+  }
+  if (key_code == 6 && modifiers == shiftCommand) {
+    return RexDeveloperToolsEditingCommandRedo;
+  }
+  if (key_code == 7 && modifiers == command) {
+    return RexDeveloperToolsEditingCommandCut;
+  }
+  if (key_code == 8 && modifiers == command) {
+    return RexDeveloperToolsEditingCommandCopy;
+  }
+  if (key_code == 9 && modifiers == command) {
+    return RexDeveloperToolsEditingCommandPaste;
+  }
+  if (key_code == 9 &&
+      (modifiers == shiftCommand || modifiers == optionShiftCommand)) {
+    return RexDeveloperToolsEditingCommandPasteAndMatchStyle;
+  }
+  if (key_code == 0 && modifiers == command) {
+    return RexDeveloperToolsEditingCommandSelectAll;
+  }
+  return RexDeveloperToolsEditingCommandNone;
+}
+
+static_assert(RexDeveloperToolsEditingCommandForKeyCode(
+                  8, NSEventModifierFlagCommand) ==
+              RexDeveloperToolsEditingCommandCopy);
+static_assert(RexDeveloperToolsEditingCommandForKeyCode(
+                  9, NSEventModifierFlagCommand) ==
+              RexDeveloperToolsEditingCommandPaste);
+static_assert(RexDeveloperToolsEditingCommandForKeyCode(
+                  6, NSEventModifierFlagCommand | NSEventModifierFlagShift) ==
+              RexDeveloperToolsEditingCommandRedo);
+static_assert(RexDeveloperToolsEditingCommandForKeyCode(
+                  8, NSEventModifierFlagCommand | NSEventModifierFlagShift) ==
+              RexDeveloperToolsEditingCommandNone);
+
 BOOL RexIsHandlingSendEvent(id application, SEL command) {
   NSNumber *value = objc_getAssociatedObject(application, kRexHandlingSendEventKey);
   return value.boolValue;
@@ -2511,6 +2661,11 @@ void RexSendEvent(id application, SEL command, NSEvent *event) {
     // the application menu. Enter Cocoa's normal two-phase termination path
     // here, outside CefScopedSendingEvent.
     [(NSApplication *)application terminate:nil];
+    return;
+  }
+  if (event.type == NSEventTypeKeyDown &&
+      [RexChromiumRuntime.shared
+          handleDeveloperToolsEditingShortcutForEvent:event]) {
     return;
   }
   if (event.type == NSEventTypeKeyDown && event.keyCode == 111 && commandModifiers == 0 &&
@@ -2621,6 +2776,7 @@ class RexBrowserClient final : public CefClient,
                                public CefCommandHandler,
                                public CefCookieAccessFilter,
                                public CefContextMenuHandler,
+                               public CefDevToolsMessageObserver,
                                public CefDialogHandler,
                                public CefDisplayHandler,
                                public CefDownloadHandler,
@@ -2631,8 +2787,12 @@ class RexBrowserClient final : public CefClient,
                                public CefRequestHandler,
                                public CefResourceRequestHandler {
  public:
-  RexBrowserClient(__weak RexChromiumRuntime *runtime, NSString *tabID)
-      : runtime_(runtime), tab_id_([tabID copy]) {}
+  RexBrowserClient(__weak RexChromiumRuntime *runtime,
+                   NSString *tabID,
+                   NSString *initialCompatibilityURL)
+      : runtime_(runtime),
+        tab_id_([tabID copy]),
+        initial_site_compatibility_url_([initialCompatibilityURL copy]) {}
 
   CefRefPtr<CefAudioHandler> GetAudioHandler() override { return this; }
   CefRefPtr<CefCommandHandler> GetCommandHandler() override { return this; }
@@ -2745,6 +2905,12 @@ class RexBrowserClient final : public CefClient,
                             int command_id,
                             EventFlags event_flags) override;
 
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                              int message_id,
+                              bool success,
+                              const void *result,
+                              size_t result_size) override;
+
   bool OnFileDialog(
       CefRefPtr<CefBrowser> browser,
       FileDialogMode mode,
@@ -2830,6 +2996,10 @@ class RexBrowserClient final : public CefClient,
   void EmitBlockedResource(NSString *category, const std::string &host);
   void EmitMediaAccess(bool has_video_access, bool has_audio_access);
   void EmitSecuritySnapshot(CefRefPtr<CefBrowser> browser);
+  void StartSiteCompatibilityIdentityUpdate(CefRefPtr<CefBrowser> browser);
+  void ReplayPendingSiteCompatibilityNavigation(
+      CefRefPtr<CefBrowser> browser,
+      bool bypass_identity_check);
   void CancelFileDialog();
   void CancelJSDialog();
 
@@ -2841,6 +3011,14 @@ class RexBrowserClient final : public CefClient,
   int pending_auto_resize_height_ = 0;
   bool has_video_access_ = false;
   bool has_audio_access_ = false;
+  bool site_compatibility_identity_active_ = false;
+  bool site_compatibility_update_target_ = false;
+  bool site_compatibility_pending_target_ = false;
+  int site_compatibility_update_message_id_ = 0;
+  std::string site_compatibility_pending_url_;
+  std::string site_compatibility_bypass_url_;
+  CefRefPtr<CefRegistration> site_compatibility_devtools_registration_;
+  __strong NSString *initial_site_compatibility_url_ = nil;
   __strong NSSavePanel *active_file_panel_ = nil;
   CefRefPtr<CefFileDialogCallback> pending_file_dialog_callback_;
   __strong NSAlert *active_js_alert_ = nil;
@@ -2849,6 +3027,7 @@ class RexBrowserClient final : public CefClient,
 };
 
 class RexDevToolsClient final : public CefClient,
+                                public CefContextMenuHandler,
                                 public CefLifeSpanHandler,
                                 public CefLoadHandler {
  public:
@@ -2859,8 +3038,15 @@ class RexDevToolsClient final : public CefClient,
         tab_id_([tabID copy]),
         tracks_opening_(tracks_opening) {}
 
+  CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override {
+    return this;
+  }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           CefRefPtr<CefContextMenuParams> params,
+                           CefRefPtr<CefMenuModel> model) override;
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
   void OnLoadStart(CefRefPtr<CefBrowser> browser,
@@ -2890,7 +3076,11 @@ class RexDevToolsClient final : public CefClient,
                   initialURL:(NSString *)initialURL
                    profileID:(NSString *)profileID
              privateBrowsing:(BOOL)privateBrowsing;
-- (void)registerBrowser:(CefRefPtr<CefBrowser>)browser tabID:(NSString *)tabID;
+- (void)registerBrowser:(CefRefPtr<CefBrowser>)browser
+                  tabID:(NSString *)tabID
+        deferPendingURL:(BOOL)deferPendingURL;
+- (nullable NSString *)consumePendingURLForTabID:(NSString *)tabID
+                                      fallbackURL:(NSString *)fallbackURL;
 - (void)browser:(CefRefPtr<CefBrowser>)browser
     preferredContentSizeDidChange:(NSSize)size
                             tabID:(NSString *)tabID;
@@ -2925,8 +3115,6 @@ class RexDevToolsClient final : public CefClient,
 - (void)syncEmbeddedChromeWindow:(nullable NSWindow *)chromeWindow
                        toHostView:(NSView *)hostView
                           browser:(CefRefPtr<CefBrowser>)browser;
-- (void)parkDeveloperToolsPopupWindow:(nullable NSWindow *)popupWindow
-                             hostView:(nullable NSView *)hostView;
 - (void)embeddedChromeWindowDidBecomeKey:(NSNotification *)notification;
 - (void)developerToolsPopupDidBecomeKey:(NSNotification *)notification;
 - (void)developerToolsFrontendWillLoad:(CefRefPtr<CefBrowser>)browser
@@ -3153,6 +3341,55 @@ class RexFaviconDownloadCallback final : public CefDownloadImageCallback {
   [RexChromiumRuntime.shared notifyDeveloperToolsHostDidLayoutForTabID:self.tabID];
 }
 
+- (void)undo:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandUndo
+                                      tabID:self.tabID];
+}
+
+- (void)redo:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandRedo
+                                      tabID:self.tabID];
+}
+
+- (void)cut:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandCut
+                                      tabID:self.tabID];
+}
+
+- (void)copy:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandCopy
+                                      tabID:self.tabID];
+}
+
+- (void)paste:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandPaste
+                                      tabID:self.tabID];
+}
+
+- (void)pasteAsPlainText:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:
+          RexDeveloperToolsEditingCommandPasteAndMatchStyle
+                                      tabID:self.tabID];
+}
+
+- (void)delete:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandDelete
+                                      tabID:self.tabID];
+}
+
+- (void)selectAll:(id)sender {
+  [RexChromiumRuntime.shared
+      executeDeveloperToolsEditingCommand:RexDeveloperToolsEditingCommandSelectAll
+                                      tabID:self.tabID];
+}
+
 - (void)dealloc {
 }
 
@@ -3220,7 +3457,6 @@ struct RexPendingPermission {
   NSMutableDictionary<NSNumber *, NSWindow *> *_embeddedChromeWindowsByBrowserID;
   NSMutableDictionary<NSNumber *, NSView *> *_embeddedChromeNativeViewsByBrowserID;
   NSMutableDictionary<NSNumber *, NSWindow *> *_developerToolsPopupWindowsByBrowserID;
-  NSMutableDictionary<NSNumber *, NSView *> *_developerToolsNativeViewsByBrowserID;
   NSMutableDictionary<NSString *, NSString *> *_tabProfileIDs;
   NSMutableDictionary<NSString *, NSNumber *> *_privateTabs;
   NSMutableDictionary<NSString *, NSNumber *> *_mutedTabs;
@@ -3262,7 +3498,6 @@ struct RexPendingPermission {
     _embeddedChromeWindowsByBrowserID = [[NSMutableDictionary alloc] init];
     _embeddedChromeNativeViewsByBrowserID = [[NSMutableDictionary alloc] init];
     _developerToolsPopupWindowsByBrowserID = [[NSMutableDictionary alloc] init];
-    _developerToolsNativeViewsByBrowserID = [[NSMutableDictionary alloc] init];
     _tabProfileIDs = [[NSMutableDictionary alloc] init];
     _privateTabs = [[NSMutableDictionary alloc] init];
     _mutedTabs = [[NSMutableDictionary alloc] init];
@@ -3612,8 +3847,6 @@ struct RexPendingPermission {
                                   std::max(1, (int)bounds.size.height)));
     CefBrowserSettings browserSettings;
     browserSettings.background_color = CefColorSetARGB(255, 255, 255, 255);
-    CefRefPtr<RexBrowserClient> client =
-        new RexBrowserClient(self, tabID);
     CefRefPtr<CefRequestContext> requestContext = CefRequestContext::GetGlobalContext();
     if (privateBrowsing) {
       const std::string profileKey = RexUTF8(profileID);
@@ -3634,6 +3867,11 @@ struct RexPendingPermission {
     }
     NSString *effectiveInitialURL = self->_pendingURLs[tabID] ?:
         (initialURL.length ? [initialURL copy] : @"about:blank");
+    NSString *compatibilityInitialURL =
+        rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+            RexUTF8(effectiveInitialURL))
+        ? [effectiveInitialURL copy]
+        : nil;
     const BOOL useEmbeddedChromeRuntime =
         RexShouldUseEmbeddedChromeRuntime(effectiveInitialURL,
                                           privateBrowsing);
@@ -3642,7 +3880,15 @@ struct RexPendingPermission {
       self->_pendingURLs[tabID] = effectiveInitialURL;
       self->_startupPlaceholderTabs.insert(key);
       effectiveInitialURL = @"about:blank";
+      compatibilityInitialURL = nil;
     }
+    if (compatibilityInitialURL.length) {
+      self->_pendingURLs[tabID] = compatibilityInitialURL;
+      self->_startupPlaceholderTabs.insert(key);
+      effectiveInitialURL = @"about:blank";
+    }
+    CefRefPtr<RexBrowserClient> client =
+        new RexBrowserClient(self, tabID, compatibilityInitialURL);
     const std::string url = RexUTF8(effectiveInitialURL);
     CefRefPtr<CefDictionaryValue> extraInfo;
     NSDictionary<NSString *, id> *extensionActionContext =
@@ -3722,44 +3968,6 @@ struct RexPendingPermission {
     _developerToolsViews[tabID] = view;
   }
   return view;
-}
-
-- (void)parkDeveloperToolsPopupWindow:(nullable NSWindow *)popupWindow
-                             hostView:(nullable NSView *)hostView {
-  if (!popupWindow || popupWindow == hostView.window) return;
-  const NSRect hostBounds = hostView ? hostView.bounds : NSZeroRect;
-  const CGFloat width = std::max<CGFloat>(1, NSWidth(hostBounds));
-  const CGFloat height = std::max<CGFloat>(1, NSHeight(hostBounds));
-  NSPoint parkedOrigin = NSScreen.mainScreen.visibleFrame.origin;
-  NSWindow *hostWindow = hostView.window;
-  if (hostWindow) {
-    const NSRect hostRectInWindow =
-        [hostView convertRect:hostBounds toView:nil];
-    parkedOrigin = [hostWindow convertRectToScreen:hostRectInWindow].origin;
-  }
-  const NSRect parkedFrame = NSMakeRect(
-      floor(parkedOrigin.x), floor(parkedOrigin.y), width, height);
-  popupWindow.styleMask = NSWindowStyleMaskBorderless;
-  popupWindow.alphaValue = 0.01;
-  popupWindow.ignoresMouseEvents = YES;
-  popupWindow.hasShadow = NO;
-  popupWindow.excludedFromWindowsMenu = YES;
-  popupWindow.accessibilityHidden = YES;
-  popupWindow.collectionBehavior |=
-      NSWindowCollectionBehaviorTransient |
-      NSWindowCollectionBehaviorIgnoresCycle;
-  if (!NSEqualRects(popupWindow.frame, parkedFrame)) {
-    [popupWindow setFrame:parkedFrame display:NO];
-  }
-  // The Chrome runtime uses this top-level window's visibility to decide
-  // whether WebContentsViewCocoa accepts input. Keep it technically visible
-  // directly behind Rex, where it cannot flash or introduce invalid off-screen
-  // geometry for ScreenCaptureKit and accessibility clients.
-  if (hostWindow) {
-    [popupWindow orderWindow:NSWindowBelow relativeTo:hostWindow.windowNumber];
-  } else if (!popupWindow.isVisible) {
-    [popupWindow orderFront:nil];
-  }
 }
 
 - (void)handleDefaultChromeBrowser:(CefRefPtr<CefBrowser>)browser
@@ -3994,9 +4202,8 @@ struct RexPendingPermission {
   NSWindow *popupWindow = (NSWindow *)notification.object;
   if (!popupWindow || _shuttingDown) return;
 
-  // Some frontend actions (notably completing element inspection) ask the
-  // original Chrome host to become key again. Let that activation unwind, then
-  // restore the embedded Rex window before AppKit exposes the empty placeholder.
+  // Some frontend actions (notably completing element inspection) reposition
+  // the Chrome host. Let activation unwind, then realign it with Rex's dock.
   dispatch_async(dispatch_get_main_queue(), ^{
     if (self->_shuttingDown) return;
     NSNumber *browserID = nil;
@@ -4021,8 +4228,10 @@ struct RexPendingPermission {
         ? self->_developerToolsViews[tabID]
         : nil;
     if (!browser || !browser->IsValid() || !hostView.window) return;
-    [self parkDeveloperToolsPopupWindow:popupWindow hostView:hostView];
-    [hostView.window makeKeyAndOrderFront:nil];
+    [self syncEmbeddedChromeWindow:popupWindow
+                       toHostView:hostView
+                          browser:browser];
+    [hostView.window makeMainWindow];
     browser->GetHost()->SetFocus(true);
   });
 }
@@ -4048,7 +4257,6 @@ struct RexPendingPermission {
            selector:@selector(developerToolsPopupDidBecomeKey:)
                name:NSWindowDidBecomeKeyNotification
              object:popupWindow];
-    [self parkDeveloperToolsPopupWindow:popupWindow hostView:parentView];
   }
   if (_shuttingDown || !_developerToolsDesiredTabs.contains(key) ||
       _developerToolsClosingTabs.contains(key) || !parentView ||
@@ -4062,8 +4270,8 @@ struct RexPendingPermission {
                    toHostView:parentView
                       browser:browser
                   popupWindow:popupWindow];
-  [self parkDeveloperToolsPopupWindow:popupWindow hostView:parentView];
-  [parentView.window makeKeyAndOrderFront:nil];
+  [parentView.window makeMainWindow];
+  [popupWindow makeKeyAndOrderFront:nil];
   browser->GetHost()->SetFocus(true);
   [parentView setNeedsLayout:YES];
   [parentView layoutSubtreeIfNeeded];
@@ -4095,8 +4303,8 @@ struct RexPendingPermission {
                      toHostView:host
                         browser:live
                     popupWindow:retainedPopup];
-    [self parkDeveloperToolsPopupWindow:retainedPopup hostView:host];
-    [host.window makeKeyAndOrderFront:nil];
+    [host.window makeMainWindow];
+    [retainedPopup makeKeyAndOrderFront:nil];
     live->GetHost()->SetFocus(true);
     if (!live->IsLoading()) {
       [self developerToolsFrontendDidLoad:live tabID:tabCopy];
@@ -4115,15 +4323,17 @@ struct RexPendingPermission {
     return;
   }
   _developerToolsFrontendReadyBrowserIDs[key] = browser->GetIdentifier();
-  // Chrome may reposition its temporary native DevTools window after
-  // OnAfterCreated. Park it again once the frontend is ready and keep keyboard
-  // focus on the embedded host.
+  // Chrome may reposition its DevTools window after OnAfterCreated. Align the
+  // retained native window again once the frontend is ready.
   NSWindow *popupWindow =
       _developerToolsPopupWindowsByBrowserID[@(browser->GetIdentifier())];
   RexChromiumDevToolsView *hostView = _developerToolsViews[tabID];
-  [self parkDeveloperToolsPopupWindow:popupWindow hostView:hostView];
+  [self syncEmbeddedChromeWindow:popupWindow
+                     toHostView:hostView
+                        browser:browser];
   if (hostView.window) {
-    [hostView.window makeKeyAndOrderFront:nil];
+    [hostView.window makeMainWindow];
+    [popupWindow makeKeyAndOrderFront:nil];
     browser->GetHost()->SetFocus(true);
   }
   [self applyPendingDeveloperToolsFrontendActionForTabID:tabID browser:browser];
@@ -4278,19 +4488,17 @@ struct RexPendingPermission {
     _developerToolsFrontendReadyBrowserIDs.erase(readyIterator);
   }
   NSNumber *browserID = @(browser->GetIdentifier());
-  NSView *nativeView = _developerToolsNativeViewsByBrowserID[browserID] ?:
-      (__bridge NSView *)browser->GetHost()->GetWindowHandle();
-  [nativeView removeFromSuperview];
   NSWindow *popupWindow = _developerToolsPopupWindowsByBrowserID[browserID];
   if (popupWindow) {
     [NSNotificationCenter.defaultCenter
         removeObserver:self
                   name:NSWindowDidBecomeKeyNotification
                 object:popupWindow];
+    NSWindow *parentWindow = popupWindow.parentWindow;
+    if (parentWindow) [parentWindow removeChildWindow:popupWindow];
     [popupWindow orderOut:nil];
   }
   [_developerToolsPopupWindowsByBrowserID removeObjectForKey:browserID];
-  [_developerToolsNativeViewsByBrowserID removeObjectForKey:browserID];
 
   if (ownsCurrentState) {
     if (browserIterator != _developerToolsBrowsers.end()) {
@@ -4352,7 +4560,9 @@ struct RexPendingPermission {
   }];
 }
 
-- (void)registerBrowser:(CefRefPtr<CefBrowser>)browser tabID:(NSString *)tabID {
+- (void)registerBrowser:(CefRefPtr<CefBrowser>)browser
+                  tabID:(NSString *)tabID
+        deferPendingURL:(BOOL)deferPendingURL {
   const std::string key = RexUTF8(tabID);
   _pendingTabs.erase(key);
   RexChromiumBrowserView *parentView = _views[tabID];
@@ -4444,7 +4654,7 @@ struct RexPendingPermission {
   // A restored URL can arrive before BrowserView creation finishes. Apply the
   // newest request after the CEF frame has been attached.
   NSString *pendingURL = _pendingURLs[tabID];
-  if (pendingURL && !_extensionStartupBarrierActive) {
+  if (pendingURL && !_extensionStartupBarrierActive && !deferPendingURL) {
     if (RexShouldUseEmbeddedChromeRuntime(
             pendingURL, [_privateTabs[tabID] boolValue]) &&
         browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
@@ -4460,6 +4670,13 @@ struct RexPendingPermission {
     [_pendingURLs removeObjectForKey:tabID];
   }
   if (_shuttingDown) browser->GetHost()->CloseBrowser(true);
+}
+
+- (nullable NSString *)consumePendingURLForTabID:(NSString *)tabID
+                                      fallbackURL:(NSString *)fallbackURL {
+  NSString *pendingURL = [_pendingURLs[tabID] copy] ?: [fallbackURL copy];
+  [_pendingURLs removeObjectForKey:tabID];
+  return pendingURL;
 }
 
 - (void)browser:(CefRefPtr<CefBrowser>)browser
@@ -4840,6 +5057,19 @@ struct RexPendingPermission {
   if (!nativeView || !hostView || !browser) return;
 
   NSNumber *browserID = @(browser->GetIdentifier());
+  if ([hostView isKindOfClass:RexChromiumDevToolsView.class] && popupWindow &&
+      popupWindow != hostView.window &&
+      browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
+    // Keep Chrome-style DevTools in its native AppKit window. Reparenting the
+    // WebContents view into the Rex window leaves both the original Chrome
+    // window and the Rex responder path participating in key dispatch on CEF
+    // 151, which duplicates each text-input event.
+    [self syncEmbeddedChromeWindow:popupWindow
+                       toHostView:hostView
+                          browser:browser];
+    return;
+  }
+
   NSWindow *embeddedWindow =
       _embeddedChromeWindowsByBrowserID[browserID];
   if (![hostView isKindOfClass:RexChromiumDevToolsView.class] &&
@@ -4849,25 +5079,6 @@ struct RexPendingPermission {
                          toHostView:hostView
                             browser:browser];
     return;
-  }
-
-  if ([hostView isKindOfClass:RexChromiumDevToolsView.class]) {
-    NSView *attachedView = _developerToolsNativeViewsByBrowserID[browserID];
-    if (attachedView) {
-      // Once the Chrome window content is detached, GetWindowHandle() points
-      // at our replacement contentView. Keep using the original Chromium root
-      // for this browser generation instead of reparenting its placeholder.
-      nativeView = attachedView;
-    } else {
-      _developerToolsNativeViewsByBrowserID[browserID] = nativeView;
-    }
-  }
-
-  // DevTools popups still use the legacy reparenting path. Normal Chrome
-  // runtime pages stay in their CEF Views window because macOS does not support
-  // Chrome-style browsers parented to an external native view.
-  if (popupWindow && popupWindow != hostView.window) {
-    [self parkDeveloperToolsPopupWindow:popupWindow hostView:hostView];
   }
 
   // Replace the temporary window's content view before moving Chromium's view
@@ -5000,9 +5211,6 @@ struct RexPendingPermission {
                           browser:browser
                       popupWindow:self->_developerToolsPopupWindowsByBrowserID[
                           @(browser->GetIdentifier())]];
-      if (browser) {
-        browser->GetHost()->NotifyScreenInfoChanged();
-      }
     }
     self->_layoutSyncSuspended = wasSuspended;
   }];
@@ -6413,11 +6621,12 @@ struct RexPendingPermission {
     if (existingTools) {
       self->_pendingDeveloperToolsRequests.erase(key);
       NSView *nativeView = (__bridge NSView *)existingTools->GetHost()->GetWindowHandle();
+      NSWindow *toolsWindow = self->_developerToolsPopupWindowsByBrowserID[
+          @(existingTools->GetIdentifier())];
       [self syncNativeBrowserView:nativeView
                        toHostView:view
                           browser:existingTools
-                      popupWindow:self->_developerToolsPopupWindowsByBrowserID[
-                          @(existingTools->GetIdentifier())]];
+                      popupWindow:toolsWindow];
       if (inspectX >= 0 && inspectY >= 0) {
         CefWindowInfo windowInfo;
         windowInfo.runtime_style = CEF_RUNTIME_STYLE_CHROME;
@@ -6427,7 +6636,8 @@ struct RexPendingPermission {
         b->GetHost()->ShowDevTools(
             windowInfo, nullptr, CefBrowserSettings(), point);
       }
-      [view.window makeKeyAndOrderFront:nil];
+      [view.window makeMainWindow];
+      [toolsWindow makeKeyAndOrderFront:nil];
       existingTools->GetHost()->SetFocus(true);
       return;
     }
@@ -6440,10 +6650,9 @@ struct RexPendingPermission {
     self->_pendingDeveloperToolsRequests.erase(key);
 
     CefWindowInfo windowInfo;
-    // Chrome-style DevTools must be created visible on macOS or Chromium keeps
-    // its internal WebContentsViewCocoa hidden after we reparent the window.
-    // Start with a valid one-pixel on-screen window; OnAfterCreated immediately
-    // makes it transparent, and registration parks it behind the Rex window.
+    // Chrome-style DevTools must be created visible on macOS. Start with a
+    // valid one-pixel window; registration turns it into Rex's borderless
+    // child window and aligns it with the docked DevTools host.
     windowInfo.bounds = CefRect(0, 0, 1, 1);
     windowInfo.hidden = false;
     windowInfo.runtime_style = CEF_RUNTIME_STYLE_CHROME;
@@ -6455,7 +6664,7 @@ struct RexPendingPermission {
       point = x == 0 && y == 0 ? CefPoint(1, 0) : CefPoint(x, y);
     }
     b->GetHost()->ShowDevTools(windowInfo, nullptr, settings, point);
-    [view.window makeKeyAndOrderFront:nil];
+    [view.window makeMainWindow];
   }];
 }
 - (void)closeDeveloperToolsForTabID:(NSString *)tabID {
@@ -6481,6 +6690,100 @@ struct RexPendingPermission {
     [self->_developerToolsViews removeObjectForKey:tabID];
   }];
 }
+- (BOOL)executeDeveloperToolsEditingCommand:
+            (RexDeveloperToolsEditingCommand)command
+                                      tabID:(NSString *)tabID {
+  CEF_REQUIRE_UI_THREAD();
+  if (!tabID.length || command == RexDeveloperToolsEditingCommandNone) {
+    return NO;
+  }
+  CefRefPtr<CefBrowser> browser = [self developerToolsBrowserForTabID:tabID];
+  if (!browser || !browser->IsValid()) return NO;
+  CefRefPtr<CefFrame> frame = browser->GetFocusedFrame();
+  if (!frame || !frame->IsValid()) frame = browser->GetMainFrame();
+  if (!frame || !frame->IsValid()) return NO;
+
+  switch (command) {
+    case RexDeveloperToolsEditingCommandUndo:
+      frame->Undo();
+      break;
+    case RexDeveloperToolsEditingCommandRedo:
+      frame->Redo();
+      break;
+    case RexDeveloperToolsEditingCommandCut:
+      frame->Cut();
+      break;
+    case RexDeveloperToolsEditingCommandCopy:
+      frame->Copy();
+      break;
+    case RexDeveloperToolsEditingCommandPaste:
+      frame->Paste();
+      break;
+    case RexDeveloperToolsEditingCommandPasteAndMatchStyle:
+      frame->PasteAndMatchStyle();
+      break;
+    case RexDeveloperToolsEditingCommandDelete:
+      frame->Delete();
+      break;
+    case RexDeveloperToolsEditingCommandSelectAll:
+      frame->SelectAll();
+      break;
+    case RexDeveloperToolsEditingCommandNone:
+      return NO;
+  }
+  return YES;
+}
+
+- (BOOL)handleDeveloperToolsEditingShortcutForEvent:(NSEvent *)event {
+  if (!event.window || event.type != NSEventTypeKeyDown) return NO;
+  const NSEventModifierFlags modifiers =
+      event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask &
+      ~NSEventModifierFlagFunction;
+  const RexDeveloperToolsEditingCommand command =
+      RexDeveloperToolsEditingCommandForKeyCode(event.keyCode, modifiers);
+  if (command == RexDeveloperToolsEditingCommandNone) return NO;
+
+  NSResponder *responder = event.window.firstResponder;
+  RexChromiumDevToolsView *hostView = nil;
+  while (responder) {
+    if ([responder isKindOfClass:RexChromiumDevToolsView.class]) {
+      hostView = (RexChromiumDevToolsView *)responder;
+      break;
+    }
+    if ([responder isKindOfClass:NSView.class] &&
+        ((NSView *)responder).superview) {
+      responder = ((NSView *)responder).superview;
+    } else {
+      responder = responder.nextResponder;
+    }
+  }
+  if (!hostView) {
+    NSNumber *browserID = nil;
+    for (NSNumber *candidate in _developerToolsPopupWindowsByBrowserID) {
+      if (_developerToolsPopupWindowsByBrowserID[candidate] == event.window) {
+        browserID = candidate;
+        break;
+      }
+    }
+    if (browserID) {
+      for (const auto &entry : _developerToolsBrowsers) {
+        if (entry.second &&
+            entry.second->GetIdentifier() == browserID.intValue) {
+          NSString *tabID =
+              [[NSString alloc] initWithUTF8String:entry.first.c_str()];
+          hostView = _developerToolsViews[tabID];
+          break;
+        }
+      }
+    }
+  }
+  if (!hostView || !hostView.window || hostView.hidden || !hostView.superview) {
+    return NO;
+  }
+  return [self executeDeveloperToolsEditingCommand:command
+                                              tabID:hostView.tabID];
+}
+
 - (BOOL)handleDeveloperToolsShortcutForWindow:(nullable NSWindow *)window {
   if (!window) return NO;
 
@@ -6651,10 +6954,11 @@ struct RexPendingPermission {
         removeObserver:self
                   name:NSWindowDidBecomeKeyNotification
                 object:popupWindow];
+    NSWindow *parentWindow = popupWindow.parentWindow;
+    if (parentWindow) [parentWindow removeChildWindow:popupWindow];
     [popupWindow orderOut:nil];
   }
   [_developerToolsPopupWindowsByBrowserID removeAllObjects];
-  [_developerToolsNativeViewsByBrowserID removeAllObjects];
   [_tabProfileIDs removeAllObjects];
   [_privateTabs removeAllObjects];
   [_mutedTabs removeAllObjects];
@@ -7264,6 +7568,51 @@ void RexAddEditingItems(CefRefPtr<CefContextMenuParams> params,
   model->SetEnabled(MENU_ID_SELECT_ALL, flags & CM_EDITFLAG_CAN_SELECT_ALL);
 }
 
+void RexEnsureDeveloperToolsEditingItems(
+    CefRefPtr<CefContextMenuParams> params,
+    CefRefPtr<CefMenuModel> model) {
+  if (!params || !model) return;
+  const int type = params->GetTypeFlags();
+  const bool editable = type & CM_TYPEFLAG_EDITABLE;
+  const bool selection = type & CM_TYPEFLAG_SELECTION;
+  if (!editable && !selection) return;
+
+  const int flags = params->GetEditStateFlags();
+  struct EditingItem {
+    int command_id;
+    const char16_t *label;
+    int required_flag;
+  };
+  static constexpr EditingItem editableItems[] = {
+      {MENU_ID_UNDO, u"撤销", CM_EDITFLAG_CAN_UNDO},
+      {MENU_ID_REDO, u"重做", CM_EDITFLAG_CAN_REDO},
+      {MENU_ID_CUT, u"剪切", CM_EDITFLAG_CAN_CUT},
+      {MENU_ID_COPY, u"复制", CM_EDITFLAG_CAN_COPY},
+      {MENU_ID_PASTE, u"粘贴", CM_EDITFLAG_CAN_PASTE},
+      {MENU_ID_PASTE_MATCH_STYLE, u"粘贴并匹配样式", CM_EDITFLAG_CAN_PASTE},
+      {MENU_ID_DELETE, u"删除", CM_EDITFLAG_CAN_DELETE},
+      {MENU_ID_SELECT_ALL, u"全选", CM_EDITFLAG_CAN_SELECT_ALL},
+  };
+  static constexpr EditingItem selectionItems[] = {
+      {MENU_ID_COPY, u"复制", CM_EDITFLAG_CAN_COPY},
+      {MENU_ID_SELECT_ALL, u"全选", CM_EDITFLAG_CAN_SELECT_ALL},
+  };
+  const EditingItem *items = editable ? editableItems : selectionItems;
+  const size_t itemCount = editable ? std::size(editableItems)
+                                    : std::size(selectionItems);
+  bool addedSeparator = false;
+  for (size_t index = 0; index < itemCount; ++index) {
+    const EditingItem &item = items[index];
+    if (model->GetIndexOf(item.command_id) >= 0) continue;
+    if (!addedSeparator && model->GetCount() > 0) {
+      model->AddSeparator();
+      addedSeparator = true;
+    }
+    model->AddItem(item.command_id, CefString(item.label));
+    model->SetEnabled(item.command_id, flags & item.required_flag);
+  }
+}
+
 }  // namespace
 
 void RexBrowserClient::OnBeforeContextMenu(
@@ -7664,6 +8013,17 @@ CefResourceRequestHandler::ReturnValue RexBrowserClient::OnBeforeResourceLoad(
   const rex::privacy::BlockDecision decision =
       rex::privacy::ClassifyRequest(request, policy);
   if (decision.category == rex::privacy::BlockCategory::None) {
+    // Douyin rejects CEF's Chromium-only UA at the auth edge even when the
+    // engine is current. Emulation.setUserAgentOverride only rewrites the
+    // JavaScript-visible navigator.userAgent, not the HTTP User-Agent header
+    // that the server reads first. Rewrite the header here so the request
+    // and the injected client hint agree before the first byte is sent.
+    const std::string requestURL = request->GetURL().ToString();
+    if (rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+            requestURL)) {
+      request->SetHeaderByName("User-Agent",
+                               RexChromeCompatibilityUserAgent(), true);
+    }
     return RV_CONTINUE;
   }
   EmitBlockedResource(
@@ -7679,6 +8039,24 @@ bool RexBrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
                                       bool is_redirect) {
   CEF_REQUIRE_UI_THREAD();
   if (!frame || !frame->IsMain() || !request) return false;
+  if (IsPrimaryBrowser(browser)) {
+    const std::string requestedURL = request->GetURL().ToString();
+    const bool requestedCompatibilityIdentity =
+        rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+            requestedURL);
+    if (site_compatibility_bypass_url_ == requestedURL) {
+      site_compatibility_bypass_url_.clear();
+    } else if (site_compatibility_update_message_id_ != 0 ||
+               site_compatibility_identity_active_ !=
+                   requestedCompatibilityIdentity) {
+      site_compatibility_pending_url_ = requestedURL;
+      site_compatibility_pending_target_ = requestedCompatibilityIdentity;
+      if (site_compatibility_update_message_id_ == 0) {
+        StartSiteCompatibilityIdentityUpdate(browser);
+      }
+      return true;
+    }
+  }
   if (IsPrimaryBrowser(browser)) {
     // A new main-frame navigation invalidates any Rex-owned chooser or JS
     // dialog from the previous document before Chromium starts the reset.
@@ -7706,6 +8084,83 @@ bool RexBrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
   return shouldBlock;
 }
 
+void RexBrowserClient::StartSiteCompatibilityIdentityUpdate(
+    CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser || !browser->IsValid() ||
+      site_compatibility_update_message_id_ != 0 ||
+      site_compatibility_pending_url_.empty()) {
+    return;
+  }
+  site_compatibility_update_target_ = site_compatibility_pending_target_;
+  CefRefPtr<CefBrowserHost> host = browser->GetHost();
+  if (!host) {
+    ReplayPendingSiteCompatibilityNavigation(browser, true);
+    return;
+  }
+  if (!site_compatibility_devtools_registration_) {
+    site_compatibility_devtools_registration_ =
+        host->AddDevToolsMessageObserver(this);
+    if (!site_compatibility_devtools_registration_) {
+      NSLog(@"[Rex] Unable to observe site compatibility identity for %@",
+            tab_id_);
+      ReplayPendingSiteCompatibilityNavigation(browser, true);
+      return;
+    }
+  }
+  CefRefPtr<CefDictionaryValue> params = site_compatibility_update_target_
+      ? RexChromeCompatibilityIdentityParameters()
+      : RexDefaultCompatibilityIdentityParameters();
+  site_compatibility_update_message_id_ = host->ExecuteDevToolsMethod(
+      0, "Emulation.setUserAgentOverride", params);
+  if (site_compatibility_update_message_id_ == 0) {
+    NSLog(@"[Rex] Unable to submit site compatibility identity for %@",
+          tab_id_);
+    ReplayPendingSiteCompatibilityNavigation(browser, true);
+  }
+}
+
+void RexBrowserClient::ReplayPendingSiteCompatibilityNavigation(
+    CefRefPtr<CefBrowser> browser,
+    bool bypass_identity_check) {
+  CEF_REQUIRE_UI_THREAD();
+  if (site_compatibility_pending_url_.empty()) return;
+  std::string url = std::move(site_compatibility_pending_url_);
+  site_compatibility_pending_url_.clear();
+  if (bypass_identity_check) site_compatibility_bypass_url_ = url;
+  CefRefPtr<CefFrame> frame = browser ? browser->GetMainFrame() : nullptr;
+  if (frame && frame->IsValid()) frame->LoadURL(url);
+}
+
+void RexBrowserClient::OnDevToolsMethodResult(
+    CefRefPtr<CefBrowser> browser,
+    int message_id,
+    bool success,
+    const void *result,
+    size_t result_size) {
+  CEF_REQUIRE_UI_THREAD();
+  if (message_id != site_compatibility_update_message_id_) return;
+  site_compatibility_update_message_id_ = 0;
+  if (success) {
+    site_compatibility_identity_active_ =
+        site_compatibility_update_target_;
+  } else {
+    const std::string error = result && result_size
+        ? std::string(static_cast<const char *>(result), result_size)
+        : std::string("unknown error");
+    NSLog(@"[Rex] Site compatibility identity failed for %@: %s",
+          tab_id_, error.c_str());
+    ReplayPendingSiteCompatibilityNavigation(browser, true);
+    return;
+  }
+  if (site_compatibility_identity_active_ !=
+      site_compatibility_pending_target_) {
+    StartSiteCompatibilityIdentityUpdate(browser);
+    return;
+  }
+  ReplayPendingSiteCompatibilityNavigation(browser, false);
+}
+
 bool RexBrowserClient::CanSendCookie(CefRefPtr<CefBrowser> browser,
                                      CefRefPtr<CefFrame> frame,
                                      CefRefPtr<CefRequest> request,
@@ -7731,7 +8186,7 @@ void RexBrowserClient::OnBeforeDevToolsPopup(
     CefRefPtr<CefDictionaryValue> &extra_info,
     bool *use_default_window) {
   CEF_REQUIRE_UI_THREAD();
-  // CEF 150 always creates DevTools with the Chrome runtime. macOS cannot
+  // CEF creates DevTools with the Chrome runtime. macOS cannot
   // create a Chrome-style child for an external NSView, so let Chromium create
   // a temporary top-level window and reparent its content view in OnAfterCreated.
   window_info.parent_view = kNullWindowHandle;
@@ -7752,6 +8207,30 @@ void RexBrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   }
   if (primary_browser_identifier_ == 0) {
     primary_browser_identifier_ = browser->GetIdentifier();
+    const bool deferPendingURL = initial_site_compatibility_url_.length > 0;
+    CefRefPtr<RexBrowserClient> retained(this);
+    void (^registerAndLoad)(void) = ^{
+      if (!browser->IsValid()) return;
+      [runtime registerBrowser:browser
+                         tabID:retained->tab_id_
+               deferPendingURL:deferPendingURL];
+      if (!deferPendingURL) return;
+      NSString *requestedURL =
+          [runtime consumePendingURLForTabID:retained->tab_id_
+                                  fallbackURL:retained->initial_site_compatibility_url_];
+      retained->initial_site_compatibility_url_ = nil;
+      if (!requestedURL.length) return;
+      retained->site_compatibility_pending_url_ = RexUTF8(requestedURL);
+      retained->site_compatibility_pending_target_ =
+          rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+              retained->site_compatibility_pending_url_);
+      if (retained->site_compatibility_identity_active_ !=
+          retained->site_compatibility_pending_target_) {
+        retained->StartSiteCompatibilityIdentityUpdate(browser);
+      } else {
+        retained->ReplayPendingSiteCompatibilityNavigation(browser, false);
+      }
+    };
     if (browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
       NSView *nativeView =
           CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(browser->GetHost()->GetWindowHandle());
@@ -7762,13 +8241,11 @@ void RexBrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
         nativeWindow.hasShadow = NO;
         nativeWindow.excludedFromWindowsMenu = YES;
       }
-      NSString *tabID = [tab_id_ copy];
       dispatch_async(dispatch_get_main_queue(), ^{
-        if (!browser->IsValid()) return;
-        [runtime registerBrowser:browser tabID:tabID];
+        registerAndLoad();
       });
     } else {
-      [runtime registerBrowser:browser tabID:tab_id_];
+      registerAndLoad();
     }
     if ([tab_id_ hasPrefix:@"rex-extension-surface:"]) {
       browser->GetHost()->SetAutoResizeEnabled(
@@ -7824,6 +8301,10 @@ bool RexBrowserClient::DoClose(CefRefPtr<CefBrowser> browser) {
 
 void RexBrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+  site_compatibility_devtools_registration_ = nullptr;
+  site_compatibility_update_message_id_ = 0;
+  site_compatibility_pending_url_.clear();
+  site_compatibility_bypass_url_.clear();
   RexChromiumRuntime *runtime = runtime_;
   if (IsPrimaryBrowser(browser)) {
     CancelFileDialog();
@@ -7851,6 +8332,15 @@ RexDevToolsClient::~RexDevToolsClient() {
   });
 }
 
+void RexDevToolsClient::OnBeforeContextMenu(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefContextMenuParams> params,
+    CefRefPtr<CefMenuModel> model) {
+  CEF_REQUIRE_UI_THREAD();
+  RexEnsureDeveloperToolsEditingItems(params, model);
+}
+
 void RexDevToolsClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   browser_created_ = true;
@@ -7865,8 +8355,8 @@ void RexDevToolsClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     [popupWindow setFrame:NSMakeRect(0, 0, 1, 1) display:NO];
   }
 
-  // Allow Chromium to finish constructing the Chrome-style window before its
-  // content view is detached and moved into SwiftUI's AppKit host.
+  // Allow Chromium to finish constructing the Chrome-style window before it is
+  // aligned as a borderless child of Rex's DevTools host.
   NSString *tabID = [tab_id_ copy];
   dispatch_async(dispatch_get_main_queue(), ^{
     if (!browser->IsValid()) return;

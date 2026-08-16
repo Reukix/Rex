@@ -2,13 +2,13 @@
   "platform": "macosarm64",
   "architecture": "arm64",
   "channel": "stable",
-  "cefVersion": "150.0.14+g7c1aa68+chromium-150.0.7871.129",
-  "chromiumVersion": "150.0.7871.129",
+  "cefVersion": "151.3.18+gbeff58d+chromium-151.0.7922.138",
+  "chromiumVersion": "151.0.7922.138",
   "distribution": "standard",
-  "filename": "cef_binary_150.0.14+g7c1aa68+chromium-150.0.7871.129_macosarm64.tar.bz2",
-  "source": "https://cef-builds.spotifycdn.com/cef_binary_150.0.14%2Bg7c1aa68%2Bchromium-150.0.7871.129_macosarm64.tar.bz2",
-  "officialSha1": "ae4a49d31fe61d4e0dc55050449cf967b7549ba0",
-  "sha256": "57f58530234f5b2a24f02479fdbc92b50aa5f94f7a66e32251cb71571284fad1",
-  "sandboxCompat": "6c5b35ad81055c14",
-  "publishedAt": "2026-07-20T04:16:08.736000Z"
+  "filename": "cef_binary_151.3.18+gbeff58d+chromium-151.0.7922.138_macosarm64.tar.bz2",
+  "source": "https://cef-builds.spotifycdn.com/cef_binary_151.3.18%2Bgbeff58d%2Bchromium-151.0.7922.138_macosarm64.tar.bz2",
+  "officialSha1": "b02a884311a41a2025b8fb28d14ac20deedf30c7",
+  "sha256": "b4197ca110d9c969a90f0847f23058b23812b0c7bb3f7ed3a47a623061b4f113",
+  "sandboxCompat": "1671cc913eeb4ecf",
+  "publishedAt": "2026-08-15T01:58:52.932000Z"
 }

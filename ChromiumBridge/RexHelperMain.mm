@@ -1,11 +1,17 @@
+#import <Foundation/Foundation.h>
+
 #include "include/cef_app.h"
 #include "include/cef_parser.h"
 #include "include/cef_render_process_handler.h"
 #include "include/cef_sandbox_mac.h"
+#include "include/cef_version.h"
 #include "include/wrapper/cef_library_loader.h"
 
+#include <array>
 #include <map>
 #include <string>
+
+#include "RexSiteCompatibilityPolicy.h"
 
 #if !defined(ARCH_CPU_ARM64)
 #error "Rex Helper supports Apple Silicon only."
@@ -16,6 +22,121 @@ namespace {
 struct RexExtensionActionContext {
   int tab_id = 0;
 };
+
+std::string RexChromiumVersionString() {
+  return std::to_string(CHROME_VERSION_MAJOR) + "." +
+      std::to_string(CHROME_VERSION_MINOR) + "." +
+      std::to_string(CHROME_VERSION_BUILD) + "." +
+      std::to_string(CHROME_VERSION_PATCH);
+}
+
+CefRefPtr<CefListValue> RexChromeBrandVersionList(bool full_version) {
+  const std::string version = full_version
+      ? RexChromiumVersionString()
+      : std::to_string(CHROME_VERSION_MAJOR);
+  const std::string grease_version = full_version ? "99.0.0.0" : "99";
+  struct BrandVersion {
+    const char *brand;
+    std::string version;
+  };
+  const std::array<BrandVersion, 3> values = {{
+      {"Not=A?Brand", grease_version},
+      {"Google Chrome", version},
+      {"Chromium", version},
+  }};
+  CefRefPtr<CefListValue> list = CefListValue::Create();
+  list->SetSize(values.size());
+  for (size_t index = 0; index < values.size(); ++index) {
+    CefRefPtr<CefDictionaryValue> value = CefDictionaryValue::Create();
+    value->SetString("brand", values[index].brand);
+    value->SetString("version", values[index].version);
+    list->SetDictionary(index, value);
+  }
+  return list;
+}
+
+std::string RexChromeCompatibilityUserAgentDataJSON() {
+  NSOperatingSystemVersion os_version =
+      NSProcessInfo.processInfo.operatingSystemVersion;
+  const std::string platform_version =
+      std::to_string(os_version.majorVersion) + "." +
+      std::to_string(os_version.minorVersion) + "." +
+      std::to_string(os_version.patchVersion);
+
+  CefRefPtr<CefDictionaryValue> metadata = CefDictionaryValue::Create();
+  metadata->SetList("brands", RexChromeBrandVersionList(false));
+  metadata->SetList("fullVersionList", RexChromeBrandVersionList(true));
+  metadata->SetString("uaFullVersion", RexChromiumVersionString());
+  metadata->SetString("platform", "macOS");
+  metadata->SetString("platformVersion", platform_version);
+  metadata->SetString("architecture", "arm");
+  metadata->SetString("bitness", "64");
+  metadata->SetString("model", "");
+  metadata->SetBool("mobile", false);
+  metadata->SetBool("wow64", false);
+  CefRefPtr<CefListValue> form_factors = CefListValue::Create();
+  form_factors->SetSize(1);
+  form_factors->SetString(0, "Desktop");
+  metadata->SetList("formFactors", form_factors);
+
+  CefRefPtr<CefValue> value = CefValue::Create();
+  value->SetDictionary(metadata);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
+}
+
+void RexInstallChromeCompatibilityUserAgentData(
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefV8Context> context) {
+  if (!frame || !context ||
+      !rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
+          frame->GetURL().ToString())) {
+    return;
+  }
+  const std::string metadata_json =
+      RexChromeCompatibilityUserAgentDataJSON();
+  if (metadata_json.empty()) return;
+
+  const std::string script =
+      "(() => {"
+      "if (navigator.userAgentData) return;"
+      "const metadata=" + metadata_json + ";"
+      "const freezeList=list=>Object.freeze(list.map(item=>"
+      "Object.freeze(Object.assign({},item))));"
+      "const brands=freezeList(metadata.brands);"
+      "const fullVersionList=freezeList(metadata.fullVersionList);"
+      "const formFactors=Object.freeze(metadata.formFactors.slice());"
+      "class NavigatorUAData {"
+      "constructor(token){if(token!==metadata)throw new TypeError('Illegal constructor');}"
+      "get brands(){return brands;}"
+      "get mobile(){return metadata.mobile;}"
+      "get platform(){return metadata.platform;}"
+      "getHighEntropyValues(hints=[]){"
+      "const requested=new Set(Array.from(hints));"
+      "const values={brands,mobile:metadata.mobile,platform:metadata.platform};"
+      "for(const hint of requested){"
+      "if(hint==='fullVersionList')values.fullVersionList=fullVersionList;"
+      "else if(hint==='formFactors')values.formFactors=formFactors;"
+      "else if(Object.prototype.hasOwnProperty.call(metadata,hint))"
+      "values[hint]=metadata[hint];"
+      "}"
+      "return Promise.resolve(values);"
+      "}"
+      "toJSON(){return {brands,mobile:metadata.mobile,platform:metadata.platform};}"
+      "get [Symbol.toStringTag](){return 'NavigatorUAData';}"
+      "}"
+      "const userAgentData=Object.freeze(new NavigatorUAData(metadata));"
+      "try{Object.defineProperty(globalThis,'NavigatorUAData',"
+      "{configurable:true,value:NavigatorUAData});}catch{}"
+      "try{Object.defineProperty(Navigator.prototype,'userAgentData',"
+      "{configurable:true,enumerable:true,get(){return userAgentData;}});return;}"
+      "catch{}"
+      "try{Object.defineProperty(navigator,'userAgentData',"
+      "{configurable:true,enumerable:true,value:userAgentData});}catch{}"
+      "})();";
+  CefRefPtr<CefV8Value> result;
+  CefRefPtr<CefV8Exception> exception;
+  context->Eval(script, frame->GetURL(), 0, result, exception);
+}
 
 class RexHelperApp final : public CefApp, public CefRenderProcessHandler {
  public:
@@ -48,7 +169,9 @@ class RexHelperApp final : public CefApp, public CefRenderProcessHandler {
       CefRefPtr<CefBrowser> browser,
       CefRefPtr<CefFrame> frame,
       CefRefPtr<CefV8Context> context) override {
-    if (!browser || !frame || !frame->IsMain() || !context) return;
+    if (!browser || !frame || !context) return;
+    RexInstallChromeCompatibilityUserAgentData(frame, context);
+    if (!frame->IsMain()) return;
     const auto entry =
         extension_action_contexts_.find(browser->GetIdentifier());
     if (entry == extension_action_contexts_.end()) return;

@@ -404,6 +404,83 @@ func applicationTerminationFlushesAllStandardWindowsAndSkipsPrivateWindows() asy
     privateStore.closeWindow()
 }
 
+@Test("External web URLs wait for a standard window and open as tabs")
+@MainActor
+func externalWebURLsWaitForStandardWindowAndOpenAsTabs() throws {
+    let suiteName = "RexTests.ExternalURLs.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let registry = RexActiveWindowSessionRegistry()
+    let firstURL = try #require(URL(string: "https://example.org/first"))
+    let secondURL = try #require(URL(string: "https://example.net/second"))
+
+    registry.openExternalURLs([
+        firstURL,
+        try #require(URL(string: "file:///tmp/not-a-web-url")),
+        secondURL
+    ])
+
+    let store = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: BrowserSQLitePersistence(
+            databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+        ),
+        windowID: UUID(),
+        preferences: preferences
+    )
+    registry.register(store)
+
+    #expect(store.tabs.contains { $0.url == firstURL })
+    #expect(store.tabs.contains { $0.url == secondURL })
+    #expect(!store.tabs.contains { $0.url?.isFileURL == true })
+    #expect(store.selectedTabID == store.tabs.first(where: { $0.url == secondURL })?.id)
+
+    registry.unregister(store)
+    store.closeWindow()
+}
+
+@Test("External web URLs prefer the active standard window")
+@MainActor
+func externalWebURLsPreferActiveStandardWindow() throws {
+    let suiteName = "RexTests.ActiveExternalURLWindow.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = BrowserPreferences(defaults: defaults)
+    preferences.setRestorePreviousSession(false)
+    let registry = RexActiveWindowSessionRegistry()
+    let persistence = BrowserSQLitePersistence(
+        databaseURL: temporaryDatabaseURL(), legacyPersistence: nil
+    )
+    let firstStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: UUID(),
+        preferences: preferences
+    )
+    let activeStore = BrowserStore(
+        engine: RecordingBrowserEngine(),
+        databasePersistence: persistence,
+        windowID: UUID(),
+        preferences: preferences
+    )
+    registry.register(firstStore)
+    registry.register(activeStore)
+    registry.markActive(activeStore)
+    let externalURL = try #require(URL(string: "https://example.com/active-window"))
+
+    registry.openExternalURLs([externalURL])
+
+    #expect(!firstStore.tabs.contains { $0.url == externalURL })
+    #expect(activeStore.tabs.contains { $0.url == externalURL })
+
+    registry.unregister(firstStore)
+    registry.unregister(activeStore)
+    firstStore.closeWindow()
+    activeStore.closeWindow()
+}
+
 @Test("Application termination waits for startup restoration before replacing its snapshot")
 @MainActor
 func applicationTerminationFlushWaitsForSessionRestoration() async throws {

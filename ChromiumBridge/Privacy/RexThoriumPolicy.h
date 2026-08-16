@@ -25,8 +25,9 @@ constexpr bool ContainsCSVFeature(std::string_view features,
   return false;
 }
 
-// CEF 150 crashes on Chrome_IOThread when its experimental segmented transfer
-// feature handles some redirected downloads (including GitHub release assets).
+// Segmented transfers crashed on Chrome_IOThread under CEF 150 for some
+// redirected downloads. Keep the feature disabled until later CEF branches are
+// qualified against the same redirect matrix.
 static_assert(!ContainsCSVFeature(kBrowserEnabledFeatures,
                                   "ParallelDownloading"));
 

@@ -19,6 +19,7 @@ add_library(RexChromiumBridge STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexExtensionReconcilePolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexMessagePumpPolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexNavigationPolicy.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexSiteCompatibilityPolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexPrivacyEngine.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexPrivacyEngine.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexThoriumFlags.cpp"
@@ -66,7 +67,10 @@ add_test(NAME RexExtensionReconcilePolicyTests COMMAND RexExtensionReconcilePoli
 add_executable(RexCEFHelper MACOSX_BUNDLE
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexHelperMain.mm"
 )
-target_include_directories(RexCEFHelper PRIVATE "${CEF_ROOT}")
+target_include_directories(RexCEFHelper PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge"
+  "${CEF_ROOT}"
+)
 target_compile_features(RexCEFHelper PRIVATE cxx_std_20)
 target_compile_options(RexCEFHelper PRIVATE -fobjc-arc -fno-exceptions -fno-rtti)
 target_compile_definitions(RexCEFHelper PRIVATE CEF_USE_SANDBOX)

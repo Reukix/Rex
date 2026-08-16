@@ -83,6 +83,7 @@ final class BrowserStore: ObservableObject {
     private var splitSessionsBySpace: [UUID: SplitViewSession] = [:]
     private var pendingNavigations: [UUID: PendingNavigation] = [:]
     private var deferredNavigationURLs: [UUID: URL] = [:]
+    private var pendingExternalURLs: [URL] = []
     private var httpsUpgradeAttempts: [UUID: HTTPSUpgradeAttempt] = [:]
     private var activeHTTPFallbackURLs: [UUID: URL] = [:]
     private var pageSetupTasks: [UUID: Task<Void, Never>] = [:]
@@ -1447,6 +1448,14 @@ final class BrowserStore: ObservableObject {
         }
         enqueueNavigation(to: url, for: tabID)
         scheduleSave()
+    }
+
+    func openExternalURLs(_ urls: [URL]) {
+        pendingExternalURLs.append(contentsOf: urls.filter { url in
+            guard let scheme = url.scheme?.lowercased() else { return false }
+            return scheme == "http" || scheme == "https"
+        })
+        openPendingExternalURLsIfReady()
     }
 
     private func enqueueNavigation(to url: URL, for tabID: UUID) {
@@ -3469,6 +3478,18 @@ final class BrowserStore: ObservableObject {
         guard isRestoringSession else { return }
         isRestoringSession = false
         addressText = addressBarText(for: currentTab?.url)
+        openPendingExternalURLsIfReady()
+    }
+
+    private func openPendingExternalURLsIfReady() {
+        guard !isRestoringSession, !didTearDownWindow, !pendingExternalURLs.isEmpty else {
+            return
+        }
+        let urls = pendingExternalURLs
+        pendingExternalURLs.removeAll()
+        for url in urls {
+            _ = openPopup(url: url, sourceTabID: selectedTabID, foreground: true)
+        }
     }
 
     private func finishSitePrivacyPolicyLoading() {
