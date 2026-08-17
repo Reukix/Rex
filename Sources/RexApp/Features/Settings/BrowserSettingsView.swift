@@ -183,6 +183,9 @@ struct BrowserSettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                settingsCard {
+                    DefaultBrowserRow()
+                }
             }
         case .search:
             settingsPage(
@@ -656,5 +659,49 @@ private struct SettingsRow: View {
         }
         .contentShape(Rectangle())
         .padding(.vertical, 7)
+    }
+}
+
+private struct DefaultBrowserRow: View {
+    @State private var isDefault = false
+
+    private func checkDefaultBrowser() {
+        let scheme = "https"
+        guard let rxURL = URL(string: "https://") else {
+            isDefault = false
+            return
+        }
+        let currentHandler = LSCopyDefaultHandlerForURLScheme(scheme as CFString)?.takeRetainedValue() as String?
+        let myBundleID = Bundle.main.bundleIdentifier
+        isDefault = currentHandler == myBundleID
+        _ = rxURL
+    }
+
+    private func openDefaultBrowserSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension?Extensions") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            SettingsRow(
+                icon: "globe.badge.chevron.backward",
+                title: "默认浏览器",
+                detail: isDefault
+                    ? "Rex 已设置为默认浏览器"
+                    : "将 Rex 设为系统默认浏览器，点击链接时自动在 Rex 中打开"
+            )
+            Spacer()
+            Button(isDefault ? "已设为默认" : "设为默认") {
+                openDefaultBrowserSettings()
+            }
+            .buttonStyle(.bordered)
+            .disabled(isDefault)
+        }
+        .onAppear { checkDefaultBrowser() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSWindow.didBecomeKeyNotification
+        )) { _ in checkDefaultBrowser() }
     }
 }

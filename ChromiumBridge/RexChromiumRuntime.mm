@@ -4089,13 +4089,11 @@ struct RexPendingPermission {
     if (!browser || !browser->IsValid() || !hostView.window) return;
     self->_focusedTabID = [tabID copy];
     self->_lastFocusedTabID = [tabID copy];
-    // Transfer key window status back to Rex's parent window so screenshot
-    // tools and window managers see the full Rex chrome. Chromium still
-    // receives keyboard focus via SetFocus.
-    NSWindow *parentWindow = hostView.window;
-    if (parentWindow && parentWindow != chromeWindow &&
-        ![parentWindow isKeyWindow]) {
-      [parentWindow makeKeyAndOrderFront:nil];
+    // Keep Chromium's child window key so its native responder receives
+    // keyboard events. Rex's parent remains the document/main window used by
+    // menus, sheets and toolbar-panel positioning.
+    if (hostView.window.canBecomeMainWindow) {
+      [hostView.window makeMainWindow];
     }
     browser->GetHost()->SetFocus(true);
     [self emitEvent:RexEvent(@"focused", tabID)];
@@ -6780,6 +6778,11 @@ struct RexPendingPermission {
     self->_shuttingDown = YES;
     self->_terminationCompletion = [completion copy];
     NSLog(@"[Rex] Preparing Chromium for application termination.");
+    // Hide all visible windows immediately so Rex and CEF appear to close
+    // simultaneously instead of CEF closing first then Rex's empty chrome.
+    for (NSWindow *window in NSApp.windows) {
+      if (window.isVisible) [window orderOut:nil];
+    }
     [self cancelAllDownloadsForTermination];
     // Closing Rex's DevTools pipe peer posts DevToolsPipeHandler::Shutdown to
     // Chromium's UI thread. Do this while the external message pump and AppKit

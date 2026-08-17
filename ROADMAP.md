@@ -173,10 +173,17 @@
 - ✅ 默认浏览器：注册 http/https URL scheme 与 HTML/XHTML Viewer 文档角色，外部链接通过 `application(_:open:)` 统一路由到现有窗口的新标签页；`handlesExternalEvents(matching: [])` 阻止 SwiftUI 为每个 URL 打开新窗口；外部链接打开后调用 `NSApp.activate` 激活到前台。
 - ✅ 标签页悬停提示：自定义 1 秒延迟 popover 替换系统 2 秒 tooltip，显示标题和地址。
 - ✅ CEF 辅助 Chrome 窗口成为主窗口时 macOS 断言崩溃修复：`makeMainWindow` 前检查 `canBecomeMainWindow`。
-- ✅ 截图活动窗口只截到 CEF 内嵌区域修复：CEF 子窗口成为 key window 后立即将 key 状态转回 Rex 父窗口。
 - ✅ 移除抖音 UA 兼容身份模拟代码（`RexSiteCompatibilityPolicy.h` 及相关 UA-CH 注入、HTTP 头重写和 DevTools UA 覆盖逻辑），全量编译后不再需要。
 - ✅ 移除 BrowserStore 中的 `sampleTabs` 示例标签页数据（example.com 等），初始标签页统一使用起始页。
 - ✅ Chromium 版本升级至 151.0.7922.138 / CEF 151.3.18。
+- ⚠️ 当前为个人团队 Apple Development 签名的本地 Beta。Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退全部未完成。
+
+## 当前基线 — v0.9.9（build 999，本地 Beta）
+
+- ✅ 设置 > 常规新增默认浏览器状态检测：`LSCopyDefaultHandlerForURLScheme` 检查并显示状态，非默认时提供跳转系统设置的按钮。
+- ✅ 标签页拖拽排序：展开侧边栏中未分组的标签页支持拖拽重新排序。
+- ✅ ⌘Q 退出时 Rex 窗口与 CEF 内容同时消失：在 `prepareForApplicationTermination` 关闭 CEF 浏览器前先 `orderOut` 隐藏所有窗口。
+- ✅ 回退 build 998 的 key window 转移逻辑（导致 CEF 失焦和闪烁），恢复原始 CEF 子窗口保持 key、父窗口 makeMainWindow 的行为。
 - ⚠️ 当前为个人团队 Apple Development 签名的本地 Beta。Developer ID、Hardened Runtime、公证、Gatekeeper、应用更新和回退全部未完成。
 
 ## 进行中 — v0.9.x

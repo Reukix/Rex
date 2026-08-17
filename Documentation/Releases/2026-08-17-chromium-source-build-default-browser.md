@@ -94,20 +94,6 @@ CEF 辅助 Chrome 窗口成为主窗口时 macOS 断言崩溃（`NSWindow _chang
 
 在 `makeMainWindow` 调用前检查 `canBecomeMainWindow`。
 
-## 截图不完整修复
-
-### 问题
-
-截图活动窗口时只截到 CEF 内嵌区域而非完整 Rex 窗口。
-
-### 根因
-
-CEF 子窗口成为 key window 后，macOS 截图工具捕获的是 key window（即 CEF 子窗口）而非 Rex 父窗口。
-
-### 修复
-
-在 `embeddedChromeWindowDidBecomeKey:` 中，当 CEF 子窗口成为 key window 后立即调用 `makeKeyAndOrderFront` 将 key 状态转回 Rex 父窗口，同时通过 `SetFocus(true)` 确保 Chromium 仍接收键盘输入。
-
 ## UA 兼容身份代码移除
 
 全量编译 CEF 后 UA 模拟不再需要。移除以下内容：

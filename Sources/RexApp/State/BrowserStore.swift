@@ -1796,6 +1796,18 @@ final class BrowserStore: ObservableObject {
         scheduleSave()
     }
 
+    func moveTab(_ fromID: UUID, before toID: UUID) {
+        guard fromID != toID,
+              let fromIndex = tabs.firstIndex(where: { $0.id == fromID }),
+              let toIndex = tabs.firstIndex(where: { $0.id == toID }),
+              tabs[fromIndex].spaceID == currentSpaceID,
+              tabs[toIndex].spaceID == currentSpaceID else { return }
+        let tab = tabs.remove(at: fromIndex)
+        let adjustedToIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
+        tabs.insert(tab, at: adjustedToIndex)
+        scheduleSave()
+    }
+
     private func insertTab(_ tabID: UUID, intoGroup groupID: UUID?, after predecessorID: UUID?) {
         guard let groupIndex = groups.firstIndex(where: { $0.id == groupID }) else { return }
         groups[groupIndex].tabIDs.removeAll { $0 == tabID }

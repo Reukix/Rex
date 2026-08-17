@@ -186,6 +186,8 @@ struct BrowserSidebar: View {
                     sectionHeader("标签页", symbol: "rectangle.stack")
                     ForEach(ungrouped) { tab in
                         LiquidGlassTabRow(tab: tab, isSelected: store.selectedTabID == tab.id)
+                            .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
+                            .onDrop(of: [.text], delegate: TabDropDelegate(tabID: tab.id, store: store))
                     }
                 }
 
@@ -652,5 +654,23 @@ private struct FallbackFavicon: View {
             (hash ^ UInt64(byte)) &* 1_099_511_628_211
         }
         return colors[Int(hash % UInt64(colors.count))]
+    }
+}
+
+private struct TabDropDelegate: DropDelegate {
+    let tabID: UUID
+    let store: BrowserStore
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let str = object as? String,
+                  let fromID = UUID(uuidString: str),
+                  fromID != tabID else { return }
+            DispatchQueue.main.async {
+                store.moveTab(fromID, before: tabID)
+            }
+        }
+        return true
     }
 }
