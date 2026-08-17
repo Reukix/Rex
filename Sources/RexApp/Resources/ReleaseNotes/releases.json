@@ -2,6 +2,62 @@
   "releases": [
     {
       "version": "0.9.9",
+      "build": 998,
+      "date": "2026-08-17",
+      "channel": "beta",
+      "summary": "修复 CEF 辅助窗口成为主窗口时崩溃的问题；清理 UA 兼容身份代码和示例标签页数据。",
+      "added": [],
+      "improved": [],
+      "changed": [
+        "应用版本更新为 v0.9.9 build 998 Beta",
+        "移除抖音 UA 兼容身份模拟代码（全量编译 CEF 后不再需要）",
+        "移除 BrowserStore 中的 example.com 等示例标签页数据"
+      ],
+      "fixed": [
+        "CEF 辅助 Chrome 窗口成为主窗口时 macOS 断言崩溃：在 makeMainWindow 前检查 canBecomeMainWindow",
+        "截图活动窗口时只截到 CEF 内嵌区域而非完整 Rex 窗口：CEF 子窗口成为 key window 后立即将 key 状态转回 Rex 父窗口"
+      ],
+      "removed": [
+        "RexSiteCompatibilityPolicy.h 及相关 UA 兼容身份注入代码",
+        "BrowserStore 中的 sampleTabs 示例标签页"
+      ],
+      "knownIssues": [
+        "Chrome Web Store 扩展自动更新和更广真实样本矩阵仍未完成，不宣称完整 Chrome 兼容",
+        "默认浏览器状态检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
+        "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁"
+      ],
+      "inProgress": [
+        "完成官方来源扩展自动更新的验签、generation 和 journal 回退实测",
+        "补齐文件选择、网页对话框、全屏和 Renderer 恢复的隔离实机矩阵"
+      ]
+    },
+    {
+      "version": "0.9.9",
+      "build": 997,
+      "date": "2026-08-17",
+      "channel": "beta",
+      "summary": "鼠标悬停标签页时显示标题和地址；修复从其他应用打开链接时 Rex 不自动激活到前台的问题。",
+      "added": [],
+      "improved": [],
+      "changed": [
+        "应用版本更新为 v0.9.9 build 997 Beta"
+      ],
+      "fixed": [
+        "从其他应用点击链接后 Rex 不自动切换到前台显示新标签页：在外部 URL 路由后调用 NSApp.activate 把 Rex 窗口带到前台"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "Chrome Web Store 扩展自动更新和更广真实样本矩阵仍未完成，不宣称完整 Chrome 兼容",
+        "默认浏览器状态检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
+        "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁"
+      ],
+      "inProgress": [
+        "完成官方来源扩展自动更新的验签、generation 和 journal 回退实测",
+        "补齐文件选择、网页对话框、全屏和 Renderer 恢复的隔离实机矩阵"
+      ]
+    },
+    {
+      "version": "0.9.9",
       "build": 996,
       "date": "2026-08-17",
       "channel": "beta",

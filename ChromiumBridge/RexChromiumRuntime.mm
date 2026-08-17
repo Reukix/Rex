@@ -64,7 +64,6 @@
 #include "RexExtensionReconcilePolicy.h"
 #include "RexMessagePumpPolicy.h"
 #include "RexNavigationPolicy.h"
-#include "RexSiteCompatibilityPolicy.h"
 #include "Privacy/RexThoriumFlags.h"
 // Privacy engine types kept for shield UI policy storage only; request blocking is disabled.
 #include "Privacy/RexPrivacyEngine.h"
@@ -1322,73 +1321,6 @@ std::string RexChromiumVersionString() {
       std::to_string(CHROME_VERSION_MINOR) + "." +
       std::to_string(CHROME_VERSION_BUILD) + "." +
       std::to_string(CHROME_VERSION_PATCH);
-}
-
-std::string RexChromeCompatibilityUserAgent() {
-  return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" +
-      std::to_string(CHROME_VERSION_MAJOR) + ".0.0.0 Safari/537.36";
-}
-
-CefRefPtr<CefListValue> RexChromeBrandVersionList(bool fullVersion) {
-  const std::string version = fullVersion
-      ? RexChromiumVersionString()
-      : std::to_string(CHROME_VERSION_MAJOR);
-  const std::string greaseVersion = fullVersion ? "99.0.0.0" : "99";
-  struct BrandVersion {
-    const char *brand;
-    std::string version;
-  };
-  const std::array<BrandVersion, 3> values = {{
-      {"Not=A?Brand", greaseVersion},
-      {"Google Chrome", version},
-      {"Chromium", version},
-  }};
-  CefRefPtr<CefListValue> list = CefListValue::Create();
-  list->SetSize(values.size());
-  for (size_t index = 0; index < values.size(); ++index) {
-    CefRefPtr<CefDictionaryValue> value = CefDictionaryValue::Create();
-    value->SetString("brand", values[index].brand);
-    value->SetString("version", values[index].version);
-    list->SetDictionary(index, value);
-  }
-  return list;
-}
-
-CefRefPtr<CefDictionaryValue> RexChromeCompatibilityIdentityParameters() {
-  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-  params->SetString("userAgent", RexChromeCompatibilityUserAgent());
-  params->SetString("platform", "MacIntel");
-
-  NSOperatingSystemVersion osVersion =
-      NSProcessInfo.processInfo.operatingSystemVersion;
-  const std::string platformVersion =
-      std::to_string(osVersion.majorVersion) + "." +
-      std::to_string(osVersion.minorVersion) + "." +
-      std::to_string(osVersion.patchVersion);
-  CefRefPtr<CefDictionaryValue> metadata = CefDictionaryValue::Create();
-  metadata->SetList("brands", RexChromeBrandVersionList(false));
-  metadata->SetList("fullVersionList", RexChromeBrandVersionList(true));
-  metadata->SetString("fullVersion", RexChromiumVersionString());
-  metadata->SetString("platform", "macOS");
-  metadata->SetString("platformVersion", platformVersion);
-  metadata->SetString("architecture", "arm");
-  metadata->SetString("model", "");
-  metadata->SetBool("mobile", false);
-  metadata->SetString("bitness", "64");
-  metadata->SetBool("wow64", false);
-  CefRefPtr<CefListValue> formFactors = CefListValue::Create();
-  formFactors->SetSize(1);
-  formFactors->SetString(0, "Desktop");
-  metadata->SetList("formFactors", formFactors);
-  params->SetDictionary("userAgentMetadata", metadata);
-  return params;
-}
-
-CefRefPtr<CefDictionaryValue> RexDefaultCompatibilityIdentityParameters() {
-  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-  params->SetString("userAgent", "");
-  return params;
 }
 
 std::string RexRegistrableDomain(const std::string &host) {
@@ -2776,7 +2708,6 @@ class RexBrowserClient final : public CefClient,
                                public CefCommandHandler,
                                public CefCookieAccessFilter,
                                public CefContextMenuHandler,
-                               public CefDevToolsMessageObserver,
                                public CefDialogHandler,
                                public CefDisplayHandler,
                                public CefDownloadHandler,
@@ -2788,11 +2719,9 @@ class RexBrowserClient final : public CefClient,
                                public CefResourceRequestHandler {
  public:
   RexBrowserClient(__weak RexChromiumRuntime *runtime,
-                   NSString *tabID,
-                   NSString *initialCompatibilityURL)
+                   NSString *tabID)
       : runtime_(runtime),
-        tab_id_([tabID copy]),
-        initial_site_compatibility_url_([initialCompatibilityURL copy]) {}
+        tab_id_([tabID copy]) {}
 
   CefRefPtr<CefAudioHandler> GetAudioHandler() override { return this; }
   CefRefPtr<CefCommandHandler> GetCommandHandler() override { return this; }
@@ -2905,12 +2834,6 @@ class RexBrowserClient final : public CefClient,
                             int command_id,
                             EventFlags event_flags) override;
 
-  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
-                              int message_id,
-                              bool success,
-                              const void *result,
-                              size_t result_size) override;
-
   bool OnFileDialog(
       CefRefPtr<CefBrowser> browser,
       FileDialogMode mode,
@@ -2996,10 +2919,6 @@ class RexBrowserClient final : public CefClient,
   void EmitBlockedResource(NSString *category, const std::string &host);
   void EmitMediaAccess(bool has_video_access, bool has_audio_access);
   void EmitSecuritySnapshot(CefRefPtr<CefBrowser> browser);
-  void StartSiteCompatibilityIdentityUpdate(CefRefPtr<CefBrowser> browser);
-  void ReplayPendingSiteCompatibilityNavigation(
-      CefRefPtr<CefBrowser> browser,
-      bool bypass_identity_check);
   void CancelFileDialog();
   void CancelJSDialog();
 
@@ -3011,14 +2930,6 @@ class RexBrowserClient final : public CefClient,
   int pending_auto_resize_height_ = 0;
   bool has_video_access_ = false;
   bool has_audio_access_ = false;
-  bool site_compatibility_identity_active_ = false;
-  bool site_compatibility_update_target_ = false;
-  bool site_compatibility_pending_target_ = false;
-  int site_compatibility_update_message_id_ = 0;
-  std::string site_compatibility_pending_url_;
-  std::string site_compatibility_bypass_url_;
-  CefRefPtr<CefRegistration> site_compatibility_devtools_registration_;
-  __strong NSString *initial_site_compatibility_url_ = nil;
   __strong NSSavePanel *active_file_panel_ = nil;
   CefRefPtr<CefFileDialogCallback> pending_file_dialog_callback_;
   __strong NSAlert *active_js_alert_ = nil;
@@ -3867,11 +3778,6 @@ struct RexPendingPermission {
     }
     NSString *effectiveInitialURL = self->_pendingURLs[tabID] ?:
         (initialURL.length ? [initialURL copy] : @"about:blank");
-    NSString *compatibilityInitialURL =
-        rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
-            RexUTF8(effectiveInitialURL))
-        ? [effectiveInitialURL copy]
-        : nil;
     const BOOL useEmbeddedChromeRuntime =
         RexShouldUseEmbeddedChromeRuntime(effectiveInitialURL,
                                           privateBrowsing);
@@ -3880,15 +3786,9 @@ struct RexPendingPermission {
       self->_pendingURLs[tabID] = effectiveInitialURL;
       self->_startupPlaceholderTabs.insert(key);
       effectiveInitialURL = @"about:blank";
-      compatibilityInitialURL = nil;
-    }
-    if (compatibilityInitialURL.length) {
-      self->_pendingURLs[tabID] = compatibilityInitialURL;
-      self->_startupPlaceholderTabs.insert(key);
-      effectiveInitialURL = @"about:blank";
     }
     CefRefPtr<RexBrowserClient> client =
-        new RexBrowserClient(self, tabID, compatibilityInitialURL);
+        new RexBrowserClient(self, tabID);
     const std::string url = RexUTF8(effectiveInitialURL);
     CefRefPtr<CefDictionaryValue> extraInfo;
     NSDictionary<NSString *, id> *extensionActionContext =
@@ -4189,10 +4089,14 @@ struct RexPendingPermission {
     if (!browser || !browser->IsValid() || !hostView.window) return;
     self->_focusedTabID = [tabID copy];
     self->_lastFocusedTabID = [tabID copy];
-    // Keep Chromium's child window key so its native responder receives
-    // keyboard events. Rex's parent remains the document/main window used by
-    // menus, sheets and toolbar-panel positioning.
-    [hostView.window makeMainWindow];
+    // Transfer key window status back to Rex's parent window so screenshot
+    // tools and window managers see the full Rex chrome. Chromium still
+    // receives keyboard focus via SetFocus.
+    NSWindow *parentWindow = hostView.window;
+    if (parentWindow && parentWindow != chromeWindow &&
+        ![parentWindow isKeyWindow]) {
+      [parentWindow makeKeyAndOrderFront:nil];
+    }
     browser->GetHost()->SetFocus(true);
     [self emitEvent:RexEvent(@"focused", tabID)];
   });
@@ -8013,17 +7917,6 @@ CefResourceRequestHandler::ReturnValue RexBrowserClient::OnBeforeResourceLoad(
   const rex::privacy::BlockDecision decision =
       rex::privacy::ClassifyRequest(request, policy);
   if (decision.category == rex::privacy::BlockCategory::None) {
-    // Douyin rejects CEF's Chromium-only UA at the auth edge even when the
-    // engine is current. Emulation.setUserAgentOverride only rewrites the
-    // JavaScript-visible navigator.userAgent, not the HTTP User-Agent header
-    // that the server reads first. Rewrite the header here so the request
-    // and the injected client hint agree before the first byte is sent.
-    const std::string requestURL = request->GetURL().ToString();
-    if (rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
-            requestURL)) {
-      request->SetHeaderByName("User-Agent",
-                               RexChromeCompatibilityUserAgent(), true);
-    }
     return RV_CONTINUE;
   }
   EmitBlockedResource(
@@ -8039,24 +7932,6 @@ bool RexBrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
                                       bool is_redirect) {
   CEF_REQUIRE_UI_THREAD();
   if (!frame || !frame->IsMain() || !request) return false;
-  if (IsPrimaryBrowser(browser)) {
-    const std::string requestedURL = request->GetURL().ToString();
-    const bool requestedCompatibilityIdentity =
-        rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
-            requestedURL);
-    if (site_compatibility_bypass_url_ == requestedURL) {
-      site_compatibility_bypass_url_.clear();
-    } else if (site_compatibility_update_message_id_ != 0 ||
-               site_compatibility_identity_active_ !=
-                   requestedCompatibilityIdentity) {
-      site_compatibility_pending_url_ = requestedURL;
-      site_compatibility_pending_target_ = requestedCompatibilityIdentity;
-      if (site_compatibility_update_message_id_ == 0) {
-        StartSiteCompatibilityIdentityUpdate(browser);
-      }
-      return true;
-    }
-  }
   if (IsPrimaryBrowser(browser)) {
     // A new main-frame navigation invalidates any Rex-owned chooser or JS
     // dialog from the previous document before Chromium starts the reset.
@@ -8082,83 +7957,6 @@ bool RexBrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
         gRexNavigationGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
   }
   return shouldBlock;
-}
-
-void RexBrowserClient::StartSiteCompatibilityIdentityUpdate(
-    CefRefPtr<CefBrowser> browser) {
-  CEF_REQUIRE_UI_THREAD();
-  if (!browser || !browser->IsValid() ||
-      site_compatibility_update_message_id_ != 0 ||
-      site_compatibility_pending_url_.empty()) {
-    return;
-  }
-  site_compatibility_update_target_ = site_compatibility_pending_target_;
-  CefRefPtr<CefBrowserHost> host = browser->GetHost();
-  if (!host) {
-    ReplayPendingSiteCompatibilityNavigation(browser, true);
-    return;
-  }
-  if (!site_compatibility_devtools_registration_) {
-    site_compatibility_devtools_registration_ =
-        host->AddDevToolsMessageObserver(this);
-    if (!site_compatibility_devtools_registration_) {
-      NSLog(@"[Rex] Unable to observe site compatibility identity for %@",
-            tab_id_);
-      ReplayPendingSiteCompatibilityNavigation(browser, true);
-      return;
-    }
-  }
-  CefRefPtr<CefDictionaryValue> params = site_compatibility_update_target_
-      ? RexChromeCompatibilityIdentityParameters()
-      : RexDefaultCompatibilityIdentityParameters();
-  site_compatibility_update_message_id_ = host->ExecuteDevToolsMethod(
-      0, "Emulation.setUserAgentOverride", params);
-  if (site_compatibility_update_message_id_ == 0) {
-    NSLog(@"[Rex] Unable to submit site compatibility identity for %@",
-          tab_id_);
-    ReplayPendingSiteCompatibilityNavigation(browser, true);
-  }
-}
-
-void RexBrowserClient::ReplayPendingSiteCompatibilityNavigation(
-    CefRefPtr<CefBrowser> browser,
-    bool bypass_identity_check) {
-  CEF_REQUIRE_UI_THREAD();
-  if (site_compatibility_pending_url_.empty()) return;
-  std::string url = std::move(site_compatibility_pending_url_);
-  site_compatibility_pending_url_.clear();
-  if (bypass_identity_check) site_compatibility_bypass_url_ = url;
-  CefRefPtr<CefFrame> frame = browser ? browser->GetMainFrame() : nullptr;
-  if (frame && frame->IsValid()) frame->LoadURL(url);
-}
-
-void RexBrowserClient::OnDevToolsMethodResult(
-    CefRefPtr<CefBrowser> browser,
-    int message_id,
-    bool success,
-    const void *result,
-    size_t result_size) {
-  CEF_REQUIRE_UI_THREAD();
-  if (message_id != site_compatibility_update_message_id_) return;
-  site_compatibility_update_message_id_ = 0;
-  if (success) {
-    site_compatibility_identity_active_ =
-        site_compatibility_update_target_;
-  } else {
-    const std::string error = result && result_size
-        ? std::string(static_cast<const char *>(result), result_size)
-        : std::string("unknown error");
-    NSLog(@"[Rex] Site compatibility identity failed for %@: %s",
-          tab_id_, error.c_str());
-    ReplayPendingSiteCompatibilityNavigation(browser, true);
-    return;
-  }
-  if (site_compatibility_identity_active_ !=
-      site_compatibility_pending_target_) {
-    StartSiteCompatibilityIdentityUpdate(browser);
-    return;
-  }
-  ReplayPendingSiteCompatibilityNavigation(browser, false);
 }
 
 bool RexBrowserClient::CanSendCookie(CefRefPtr<CefBrowser> browser,
@@ -8207,29 +8005,12 @@ void RexBrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   }
   if (primary_browser_identifier_ == 0) {
     primary_browser_identifier_ = browser->GetIdentifier();
-    const bool deferPendingURL = initial_site_compatibility_url_.length > 0;
     CefRefPtr<RexBrowserClient> retained(this);
     void (^registerAndLoad)(void) = ^{
       if (!browser->IsValid()) return;
       [runtime registerBrowser:browser
                          tabID:retained->tab_id_
-               deferPendingURL:deferPendingURL];
-      if (!deferPendingURL) return;
-      NSString *requestedURL =
-          [runtime consumePendingURLForTabID:retained->tab_id_
-                                  fallbackURL:retained->initial_site_compatibility_url_];
-      retained->initial_site_compatibility_url_ = nil;
-      if (!requestedURL.length) return;
-      retained->site_compatibility_pending_url_ = RexUTF8(requestedURL);
-      retained->site_compatibility_pending_target_ =
-          rex::site_compatibility::ShouldUseChromeCompatibilityIdentity(
-              retained->site_compatibility_pending_url_);
-      if (retained->site_compatibility_identity_active_ !=
-          retained->site_compatibility_pending_target_) {
-        retained->StartSiteCompatibilityIdentityUpdate(browser);
-      } else {
-        retained->ReplayPendingSiteCompatibilityNavigation(browser, false);
-      }
+               deferPendingURL:NO];
     };
     if (browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
       NSView *nativeView =
@@ -8301,10 +8082,6 @@ bool RexBrowserClient::DoClose(CefRefPtr<CefBrowser> browser) {
 
 void RexBrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-  site_compatibility_devtools_registration_ = nullptr;
-  site_compatibility_update_message_id_ = 0;
-  site_compatibility_pending_url_.clear();
-  site_compatibility_bypass_url_.clear();
   RexChromiumRuntime *runtime = runtime_;
   if (IsPrimaryBrowser(browser)) {
     CancelFileDialog();

@@ -103,6 +103,9 @@ final class RexActiveWindowSessionRegistry {
         let urls = pendingExternalURLs
         pendingExternalURLs.removeAll()
         store.openExternalURLs(urls)
+        // Bring Rex to the foreground so the user sees the new tab that was
+        // created for the external link they clicked in another application.
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func preferredStandardStore() -> BrowserStore? {
@@ -882,10 +885,12 @@ struct RexApp: App {
         .commands {
             BrowserCommands()
         }
-        // Prevent SwiftUI from opening a new window for each external URL
-        // event. External links are handled by the app delegate's
-        // application(_:open:) and routed as new tabs in an existing window.
-        .handlesExternalEvents(matching: ["browser"])
+        // Prevent SwiftUI's WindowGroup from opening a new window for each
+        // external URL event. External links arrive via the app delegate's
+        // application(_:open:) and are routed as new tabs in an existing
+        // window. An empty matching set means this scene never claims
+        // external events itself.
+        .handlesExternalEvents(matching: [])
 
         WindowGroup("Rex 隐私窗口", id: "private-browser", for: UUID.self) { value in
             if let windowID = value.wrappedValue {
@@ -900,6 +905,6 @@ struct RexApp: App {
             }
         }
         .windowStyle(.hiddenTitleBar)
-        .handlesExternalEvents(matching: ["private-browser"])
+        .handlesExternalEvents(matching: [])
     }
 }

@@ -415,6 +415,7 @@ private struct LiquidGlassTabRow: View {
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .contextMenu { TabContextActions(tab: tab) }
+        .fastTooltip(tab.url.map { "\(tab.title)\n\($0.absoluteString)" } ?? tab.title)
         .accessibilityLabel(tab.title)
         .accessibilityValue(isSelected ? "当前标签页" : "")
         .accessibilityAction(named: "关闭") { store.closeTab(tab.id) }
@@ -437,7 +438,7 @@ private struct CollapsedTabButton: View {
                     )
             }
             .buttonStyle(.plain)
-            .help(tab.title)
+            .fastTooltip(tab.url.map { "\(tab.title)\n\($0.absoluteString)" } ?? tab.title)
 
             Button {
                 store.closeTab(tab.id)
@@ -486,6 +487,7 @@ private struct ArchivedTabRow: View {
         .padding(.horizontal, 10)
         .frame(height: 34)
         .padding(.horizontal, 7)
+        .fastTooltip(tab.url.map { "\(tab.title)\n\($0.absoluteString)" } ?? tab.title)
         .contextMenu {
             Button("恢复") { store.restoreArchivedTab(tab.id) }
             Button("永久关闭", role: .destructive) { store.closeTab(tab.id) }

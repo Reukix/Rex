@@ -146,33 +146,6 @@ final class BrowserStore: ObservableObject {
             id: UUID(), name: "研究", symbolName: "books.vertical.fill",
             tintHex: "48A9A6", privacyLevel: .strict, downloadDirectoryBookmark: nil
         )
-        let sampleTabs = [
-            BrowserTab(
-                url: URL(string: "https://www.apple.com/macos/"), title: "macOS",
-                spaceID: work.id, isPinned: true, isFavorite: true, blockedCount: 12
-            ),
-            BrowserTab(
-                url: URL(string: "https://developer.apple.com/documentation/swiftui"),
-                title: "SwiftUI Documentation", spaceID: work.id, isPinned: true, blockedCount: 7
-            ),
-            BrowserTab(
-                url: URL(string: "https://www.chromium.org/developers/"),
-                title: "Chromium for Developers", spaceID: work.id, blockedCount: 18
-            ),
-            BrowserTab(
-                url: URL(string: "https://example.com"), title: "Product research notes",
-                spaceID: work.id, isPlayingAudio: true, blockedCount: 4
-            ),
-            BrowserTab(
-                url: URL(string: "https://www.apple.com"), title: "Apple",
-                spaceID: personal.id, isFavorite: true, blockedCount: 9
-            ),
-            BrowserTab(
-                url: URL(string: "https://www.rfc-editor.org"), title: "RFC Editor",
-                spaceID: research.id, isPinned: true, blockedCount: 21
-            )
-        ]
-
         let initialSpaces: [BrowserSpace]
         let initialTabs: [BrowserTab]
         if profile.isPrivate {
@@ -187,9 +160,6 @@ final class BrowserStore: ObservableObject {
             )
             initialSpaces = [privateSpace]
             initialTabs = [privateTab]
-        } else if preferences.restorePreviousSession {
-            initialSpaces = [work, personal, research]
-            initialTabs = sampleTabs
         } else {
             initialSpaces = [work, personal, research]
             initialTabs = [BrowserTab(

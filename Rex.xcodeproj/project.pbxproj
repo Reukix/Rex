@@ -36,6 +36,7 @@
 		A281DECC5A3F6852988D4C43 /* ReleaseNotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE2ABACBE076FE65A7024A0 /* ReleaseNotesView.swift */; };
 		A397DDAC631DEDCA9F01D34E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F612CB12FCF1169F05E6ADB8 /* Assets.xcassets */; };
 		A53FB520EAD4600EDB42E382 /* RexExtensionPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = E580641D8D9EB60F123950C3 /* RexExtensionPages.swift */; };
+		AA4979869E7B00E3BEA87116 /* FastTooltip.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5CE866A04A510B016E77E3 /* FastTooltip.swift */; };
 		AA5569E2630FC26A66FC857A /* BrowserExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA34AD6AB037FCBAC8A09BE /* BrowserExtensionModels.swift */; };
 		C143AB94D376C2BBE0E8E466 /* ReleaseNotesModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */; };
 		C61BA97539C7E1DEC48C4A13 /* PublicSuffixList.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CB5B9440341E1C0370DB17 /* PublicSuffixList.swift */; };
@@ -86,6 +87,7 @@
 		C4299FF5C50A93B3ED6D35ED /* releases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = releases.json; sourceTree = "<group>"; };
 		CFE91874D049A762CE9F17D3 /* BrowserLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLibraryView.swift; sourceTree = "<group>"; };
 		D254B9786E3E2D0DB5E25263 /* SearchEngineBrandIcons-ATTRIBUTION.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "SearchEngineBrandIcons-ATTRIBUTION.txt"; sourceTree = "<group>"; };
+		DA5CE866A04A510B016E77E3 /* FastTooltip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastTooltip.swift; sourceTree = "<group>"; };
 		DBCF09462E6A7F0422B8603F /* features.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = features.json; sourceTree = "<group>"; };
 		E580641D8D9EB60F123950C3 /* RexExtensionPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexExtensionPages.swift; sourceTree = "<group>"; };
 		EE030A064DB407EE162C4E5A /* ReleaseNotesModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesModels.swift; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 		BD3F620A48E2229F50C1CF5D /* DesignSystem */ = {
 			isa = PBXGroup;
 			children = (
+				DA5CE866A04A510B016E77E3 /* FastTooltip.swift */,
 				9099605FB0BCB5705F056B01 /* LiquidGlass.swift */,
 			);
 			path = DesignSystem;
@@ -464,6 +467,7 @@
 				1E56805C5440CA42A101C2C2 /* BrowserStore.swift in Sources */,
 				24F66CD3E75045DFF9EE9C4E /* ChromeWebStoreInstaller.swift in Sources */,
 				A13F9576CFBE234A99BCFD49 /* ChromiumBrowserEngine.swift in Sources */,
+				AA4979869E7B00E3BEA87116 /* FastTooltip.swift in Sources */,
 				308B91D1132FC63E2643AC68 /* LiquidGlass.swift in Sources */,
 				0AF632507BE80B446D06EE5F /* NewTabFavorites.swift in Sources */,
 				CA461C88BF372EBD08B04D25 /* PerformanceMonitorView.swift in Sources */,

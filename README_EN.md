@@ -12,7 +12,7 @@ workspaces, side-by-side browsing, and privacy protection by default. Its
 interface is implemented with SwiftUI and AppKit, while Chromium Embedded
 Framework (CEF) provides the web platform and extension runtime.
 
-The current release is **v0.9.9 build 996 Beta**. Rex is under active
+The current release is **v0.9.9 build 998 Beta**. Rex is under active
 development and is not yet intended to replace a production browser for every
 workflow.
 
@@ -21,9 +21,14 @@ workflow.
 - **Native macOS interface**: SwiftUI and AppKit own the browser chrome,
   navigation, tabs, downloads, dialogs, settings, and extension management.
 - **Chromium compatibility**: CEF 151 renders the web and provides Chromium
-  networking, DevTools, downloads, permissions, and extension APIs.
+  networking, DevTools, downloads, permissions, and extension APIs. The CEF
+  runtime is compiled from source with proprietary codecs (H.264/AAC/HEVC)
+  enabled, supporting video playback on streaming sites like Douyin.
 - **Vertical tabs and workspaces**: Organize sessions without compressing tabs
-  into a narrow horizontal strip.
+  into a narrow horizontal strip. Hover over a tab to see its title and URL.
+- **Default browser**: Rex registers as a macOS default browser. Links from
+  other apps automatically activate Rex and open as new tabs in an existing
+  window.
 - **Split view**: Browse two pages side by side in one window.
 - **Privacy shield**: Removes known tracking parameters, attempts HTTPS
   upgrades, blocks curated request domains, and restricts third-party cookies.
@@ -66,7 +71,7 @@ Create a local Release package without an Apple developer certificate:
 ```bash
 REX_PACKAGE_SIGNING_MODE=adhoc \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-Scripts/package-chromium-app.sh 0.9.9 996 Release
+Scripts/package-chromium-app.sh 0.9.9 998 Release
 ```
 
 Artifacts are written to `Dist/Rex.app` and

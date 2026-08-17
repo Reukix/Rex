@@ -9,13 +9,14 @@
 
 Rex 是一款面向 macOS 的原生桌面浏览器，围绕垂直标签页、工作空间、双页面分屏和默认隐私保护构建。界面由 SwiftUI 与 AppKit 实现，网页平台和扩展运行时由 Chromium Embedded Framework（CEF）提供。
 
-当前版本为 **v0.9.9 build 996 Beta**。项目仍在持续开发中，暂不适合作为覆盖所有使用场景的生产级主浏览器。
+当前版本为 **v0.9.9 build 998 Beta**。项目仍在持续开发中，暂不适合作为覆盖所有使用场景的生产级主浏览器。
 
 ## 主要特性
 
 - **原生 macOS 界面**：浏览器外壳、导航、标签页、下载、对话框、设置和扩展管理均由 SwiftUI 与 AppKit 呈现。
-- **Chromium 兼容能力**：CEF 151 负责网页渲染、网络、开发者工具、下载、权限和扩展 API。
-- **垂直标签页与工作空间**：按场景组织浏览会话，避免大量标签页挤在横向栏中。
+- **Chromium 兼容能力**：CEF 151 负责网页渲染、网络、开发者工具、下载、权限和扩展 API。CEF 运行时使用本地全量源码编译版本，开启专有编解码器（H.264/AAC/HEVC），支持抖音等流媒体站点视频播放。
+- **垂直标签页与工作空间**：按场景组织浏览会话，避免大量标签页挤在横向栏中。鼠标悬停标签页时显示标题和地址。
+- **默认浏览器**：Rex 可注册为 macOS 默认浏览器，从其他应用打开链接时自动激活并在现有窗口创建新标签页。
 - **双页面分屏**：在同一个窗口内并排浏览两个页面。
 - **隐私盾牌**：清理已知追踪参数、尝试升级 HTTPS、拦截精选请求域名并限制第三方 Cookie。
 - **Rex 原生下载界面**：Chromium 负责传输和文件写入，Rex 提供进度、历史记录与文件操作。
@@ -52,7 +53,7 @@ xcodegen generate --spec project.yml
 ```bash
 REX_PACKAGE_SIGNING_MODE=adhoc \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-Scripts/package-chromium-app.sh 0.9.9 996 Release
+Scripts/package-chromium-app.sh 0.9.9 998 Release
 ```
 
 产物位于 `Dist/Rex.app` 和 `Dist/Rex-v0.9.9-macos-arm64-chromium.zip`。ad-hoc 签名只用于满足 macOS 嵌套代码的结构要求，不属于 Developer ID 签名、公证或通过 Gatekeeper 的正式分发包。

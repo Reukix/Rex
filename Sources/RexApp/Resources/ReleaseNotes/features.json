@@ -44,8 +44,8 @@
           "status": "testing",
           "testStatus": "passed",
           "introducedIn": "0.2.0-alpha.1",
-          "updatedIn": "0.6.0-beta.1",
-          "description": "通过 CEF 提供多进程 Chromium 渲染，并叠加 Rex 隐私功能层与 Thorium 风格性能参数",
+          "updatedIn": "0.9.9",
+          "description": "通过 CEF 提供多进程 Chromium 渲染，并叠加 Rex 隐私功能层与 Thorium 风格性能参数；CEF 运行时使用本地全量源码编译版本，开启 proprietary_codecs 和 ffmpeg_branding=Chrome，支持 H.264/AAC/HEVC 原生解码",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -62,7 +62,7 @@
           "testStatus": "passed",
           "introducedIn": "0.5.0-beta.1",
           "updatedIn": "0.9.9",
-          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签；加载、进度、前进后退及刷新/停止直接使用 Chromium 导航代次和状态，文件选择、JavaScript 对话框、网页全屏与 Renderer 恢复由 Chromium 语义驱动并由 Rex 承载可见 UI",
+          "description": "动态页面右键菜单、中文主菜单、地址/查找/缩放/标签快捷键、打印、弹窗转标签和恢复关闭标签；加载、进度、前进后退及刷新/停止直接使用 Chromium 导航代次和状态，文件选择、JavaScript 对话框、网页全屏与 Renderer 恢复由 Chromium 语义驱动并由 Rex 承载可见 UI；外部链接打开后自动激活 Rex 到前台并创建新标签页",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
@@ -77,15 +77,13 @@
           "testStatus": "passed",
           "introducedIn": "0.5.2-beta.1",
           "updatedIn": "0.9.1",
-          "description": "Chrome 风格侧栏设置中心；搜索引擎偏好同时驱动地址栏、新标签页搜索和品牌图标；版本与功能页提供发布概览、运行环境、功能筛选、已知限制和历史版本详情",
+          "description": "Chrome 风格侧栏设置中心；搜索引擎偏好同时驱动地址栏、新标签页搜索和品牌图标；版本与功能页提供发布概览、运行环境、功能筛选、已知限制和历史版本详情；Rex 可注册为 macOS 默认浏览器，从其他应用打开链接时自动激活并在现有窗口创建新标签页",
           "supportsPrivateWindow": true,
           "supportsSplitView": true,
           "supportsKeyboard": true,
           "requiresRestart": false,
           "settingsPath": "设置 > 搜索引擎",
-          "limitations": [
-            "不会切换固定的 CEF/Chromium 渲染内核，也不会更改 macOS 系统默认浏览器"
-          ]
+          "limitations": []
         },
         {
           "id": "new-tab-start-page",

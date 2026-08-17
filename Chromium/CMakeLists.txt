@@ -19,7 +19,6 @@ add_library(RexChromiumBridge STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexExtensionReconcilePolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexMessagePumpPolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexNavigationPolicy.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/RexSiteCompatibilityPolicy.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexPrivacyEngine.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexPrivacyEngine.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../ChromiumBridge/Privacy/RexThoriumFlags.cpp"
