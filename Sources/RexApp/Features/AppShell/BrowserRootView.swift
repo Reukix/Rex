@@ -459,7 +459,7 @@ private struct BrowserToolbar: View {
 
             LiquidGlassIconButton(
                 systemName: "hammer",
-                label: "开发者工具（F12）",
+                label: "开发者工具",
                 isSelected: store.developerToolsTabID != nil
             ) { store.openDeveloperTools() }
 
@@ -703,11 +703,11 @@ private struct BrowserToolbar: View {
 
     private func presentSiteInfoPanel() {
         dismissToolbarPanels(except: siteInfoPanel)
-        let size = CGSize(width: RexMetrics.popoverWidth, height: 500)
+        let size = CGSize(width: RexMetrics.popoverWidth, height: 380)
         let content = LiquidGlassPanel(cornerRadius: 12, showsShadow: false) {
             SiteInfoPopover(certificateViewerSnapshot: $certificateViewerSnapshot)
                 .environmentObject(store)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .environment(\.colorScheme, colorScheme)
         .frame(width: size.width, height: size.height)
@@ -1395,11 +1395,9 @@ private final class RexToolbarPanelController: NSObject, ObservableObject, NSWin
             backing: .buffered,
             defer: false
         )
-        panel.isFloatingPanel = true
-        // Palette buttons remain usable without taking key status from the
-        // Chromium child window. Text inputs can still request key status.
+        panel.isFloatingPanel = false
         panel.becomesKeyOnlyIfNeeded = true
-        panel.hidesOnDeactivate = false
+        panel.hidesOnDeactivate = true
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.alphaValue = revealAfterLayout ? 0 : 1
@@ -1556,7 +1554,7 @@ private final class RexToolbarPanelController: NSObject, ObservableObject, NSWin
         let anchorOnScreen = anchorWindow.convertToScreen(anchorInWindow)
         let visibleFrame = anchorWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let preferredX = anchorOnScreen.minX
-        let preferredY = anchorOnScreen.minY - size.height - 8
+        let preferredY = anchorOnScreen.minY - size.height - 2
         let maximumX = max(visibleFrame.minX, visibleFrame.maxX - size.width)
         let maximumY = max(visibleFrame.minY, visibleFrame.maxY - size.height)
         let origin = NSPoint(
@@ -1604,6 +1602,16 @@ private final class RexToolbarPanelController: NSObject, ObservableObject, NSWin
             guard let self else { return event }
             MainActor.assumeIsolated {
                 guard let panel = self.panel, event.window !== panel else { return }
+                // Don't dismiss when clicking the anchor view (the button that
+                // toggles the panel). The button's own toggle handles it.
+                if let anchorView = self.anchorView,
+                   let anchorWindow = anchorView.window,
+                   event.window === anchorWindow {
+                    let locationInAnchor = anchorView.convert(event.locationInWindow, from: nil)
+                    if anchorView.bounds.contains(locationInAnchor) {
+                        return
+                    }
+                }
                 DispatchQueue.main.async { [weak self, weak panel] in
                     guard let self, self.panel === panel else { return }
                     self.dismiss()
@@ -2147,7 +2155,9 @@ private struct SiteInfoPopover: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
     }
 
     private var securitySymbol: String {
