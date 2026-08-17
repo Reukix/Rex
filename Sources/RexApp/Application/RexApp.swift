@@ -882,6 +882,10 @@ struct RexApp: App {
         .commands {
             BrowserCommands()
         }
+        // Prevent SwiftUI from opening a new window for each external URL
+        // event. External links are handled by the app delegate's
+        // application(_:open:) and routed as new tabs in an existing window.
+        .handlesExternalEvents(matching: ["browser"])
 
         WindowGroup("Rex 隐私窗口", id: "private-browser", for: UUID.self) { value in
             if let windowID = value.wrappedValue {
@@ -896,5 +900,6 @@ struct RexApp: App {
             }
         }
         .windowStyle(.hiddenTitleBar)
+        .handlesExternalEvents(matching: ["private-browser"])
     }
 }

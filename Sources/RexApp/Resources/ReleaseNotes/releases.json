@@ -2,6 +2,33 @@
   "releases": [
     {
       "version": "0.9.9",
+      "build": 996,
+      "date": "2026-08-17",
+      "channel": "beta",
+      "summary": "修复默认浏览器打开外部链接创建多窗口的问题，移除不再需要的抖音 UA 兼容身份模拟。",
+      "added": [],
+      "improved": [],
+      "changed": [
+        "应用版本更新为 v0.9.9 build 996 Beta"
+      ],
+      "fixed": [
+        "设置为默认浏览器后从其他应用打开链接会创建多个窗口而非在现有窗口添加标签页：为 WindowGroup 添加 handlesExternalEvents 修饰符，确保外部 URL 事件由 app delegate 统一路由到现有窗口的新标签页"
+      ],
+      "removed": [
+        "移除抖音域名的 Chrome UA 兼容身份模拟：全量编译 CEF 后已包含完整专有编解码器，不再需要 UA 伪装"
+      ],
+      "knownIssues": [
+        "Chrome Web Store 扩展自动更新和更广真实样本矩阵仍未完成，不宣称完整 Chrome 兼容",
+        "默认浏览器状态检测、脱敏诊断导出、完整 VoiceOver/低电量矩阵和正式 Developer ID 分发仍待后续门禁",
+        "当前免费个人团队证书不能通过 Developer ID、公证和 Gatekeeper 正式门禁"
+      ],
+      "inProgress": [
+        "完成官方来源扩展自动更新的验签、generation 和 journal 回退实测",
+        "补齐文件选择、网页对话框、全屏和 Renderer 恢复的隔离实机矩阵"
+      ]
+    },
+    {
+      "version": "0.9.9",
       "build": 995,
       "date": "2026-08-17",
       "channel": "beta",

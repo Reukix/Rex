@@ -51,11 +51,11 @@ constexpr bool HostMatches(std::string_view host, std::string_view domain) {
   return ASCIIEqual(host.substr(host.size() - domain.size()), domain);
 }
 
-// Some sites reject CEF's Chromium-only brand list even when the engine is
-// current. Keep the Chrome compatibility identity narrowly scoped to the
-// affected first-party domain instead of changing Rex's global identity.
-constexpr bool ShouldUseChromeCompatibilityIdentity(std::string_view url) {
-  return HostMatches(HTTPHost(url), "douyin.com");
+// Rex now ships with a full Chrome-branded CEF build (proprietary_codecs=true
+// ffmpeg_branding=Chrome), so per-site UA spoofing is no longer necessary.
+// The infrastructure remains for future use if a site requires it.
+constexpr bool ShouldUseChromeCompatibilityIdentity(std::string_view) {
+  return false;
 }
 
 }  // namespace rex::site_compatibility
