@@ -1,6 +1,44 @@
 {
   "releases": [
     {
+      "version": "1.0.0",
+      "build": 1000,
+      "date": "2026-08-18",
+      "channel": "stable",
+      "summary": "Rex v1.0.0 正式版：全量编译 CEF/Chromium 源码，开启专有编解码器，完整默认浏览器支持，标签页悬停提示，CEF 辅助窗口崩溃修复。",
+      "added": [
+        "标签页悬停提示：自定义 1 秒延迟 popover 显示标题和地址",
+        "默认浏览器外部链接自动激活 Rex 到前台并在现有窗口创建新标签页"
+      ],
+      "improved": [],
+      "changed": [
+        "应用版本更新为 v1.0.0 build 1000 正式版",
+        "CEF 运行时从 SpotifyCDN 标准发行包切换为本地全量源码编译版本",
+        "GN 参数: proprietary_codecs=true ffmpeg_branding=Chrome is_official_build=true chrome_pgo_phase=0 target_cpu=arm64",
+        "Chromium 版本升级至 151.0.7922.138 / CEF 151.3.18",
+        "移除抖音 UA 兼容身份模拟代码（全量编译后不再需要）",
+        "移除 BrowserStore 中的 example.com 等示例标签页数据",
+        "禁用 CEF 内 F12 快捷键防止弹出独立 Chrome DevTools 窗口"
+      ],
+      "fixed": [
+        "抖音等流媒体站点视频无限加载或提示浏览器版本过低：全量编译后 FFmpeg 含 Chrome 品牌专有编解码器，H.264/AAC 通过 macOS VideoToolbox/AudioToolbox 原生解码",
+        "设置为默认浏览器后从其他应用打开链接创建多窗口而非标签页：添加 handlesExternalEvents(matching: []) 阻止 SwiftUI 为每个 URL 打开新窗口",
+        "从其他应用点击链接后 Rex 不自动切换到前台：在外部 URL 路由后调用 NSApp.activate",
+        "CEF 辅助 Chrome 窗口成为主窗口时 macOS 断言崩溃",
+        "截图活动窗口时只截到 CEF 内嵌区域而非完整 Rex 窗口"
+      ],
+      "removed": [],
+      "knownIssues": [
+        "Chrome Web Store 扩展自动更新尚未完成",
+        "正式 Developer ID 签名、公证和 Gatekeeper 分发仍待完成",
+        "当前使用免费个人团队证书签名"
+      ],
+      "inProgress": [
+        "完成官方来源扩展自动更新的验签、generation 和 journal 回退实测",
+        "默认浏览器状态检测设置入口"
+      ]
+    },
+    {
       "version": "0.9.9",
       "build": 999,
       "date": "2026-08-17",

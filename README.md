@@ -2,14 +2,14 @@
 
 简体中文 | [English](README_EN.md)
 
-![版本](https://img.shields.io/badge/version-0.9.9%20Beta-202124)
+![版本](https://img.shields.io/badge/version-1.0.0-202124)
 ![系统](https://img.shields.io/badge/macOS-14%2B-007AFF)
 ![架构](https://img.shields.io/badge/architecture-Apple%20Silicon-34C759)
 ![许可证](https://img.shields.io/badge/license-AGPL--3.0-F5A623)
 
 Rex 是一款面向 macOS 的原生桌面浏览器，围绕垂直标签页、工作空间、双页面分屏和默认隐私保护构建。界面由 SwiftUI 与 AppKit 实现，网页平台和扩展运行时由 Chromium Embedded Framework（CEF）提供。
 
-当前版本为 **v0.9.9 build 999 Beta**。项目仍在持续开发中，暂不适合作为覆盖所有使用场景的生产级主浏览器。
+当前版本为 **v1.0.0 build 1000**。项目仍在持续开发中，暂不适合作为覆盖所有使用场景的生产级主浏览器。
 
 ## 主要特性
 
@@ -21,6 +21,9 @@ Rex 是一款面向 macOS 的原生桌面浏览器，围绕垂直标签页、工
 - **隐私盾牌**：清理已知追踪参数、尝试升级 HTTPS、拦截精选请求域名并限制第三方 Cookie。
 - **Rex 原生下载界面**：Chromium 负责传输和文件写入，Rex 提供进度、历史记录与文件操作。
 - **扩展管理**：通过原生 `rex://extensions` 界面安装、更新、启停、配置和移除受支持的 Chromium 扩展。
+- **会话恢复**：自动保存和恢复窗口、标签页、分屏组合和工作空间状态，重启后继续浏览。
+- **标签页管理**：固定标签页、标签分组、归档不常用标签页、自动休眠空闲标签页释放内存、恢复关闭的标签页。
+- **快捷键**：31 个键盘快捷键覆盖导航、标签、查找、缩放、分屏、开发者工具和资料库操作。
 - **不包含 AI 功能**：不提供聊天、网页总结、推荐或自动浏览能力。
 
 Rex 已支持较完整的扩展工作流，但并不等同于 Google Chrome。部分 Chrome Web Store 扩展依赖 Rex 尚未实现的 API 或 Chromium 原生界面行为。
@@ -53,20 +56,43 @@ xcodegen generate --spec project.yml
 ```bash
 REX_PACKAGE_SIGNING_MODE=adhoc \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-Scripts/package-chromium-app.sh 0.9.9 999 Release
+Scripts/package-chromium-app.sh 1.0.0 1000 Release
 ```
 
-产物位于 `Dist/Rex.app` 和 `Dist/Rex-v0.9.9-macos-arm64-chromium.zip`。ad-hoc 签名只用于满足 macOS 嵌套代码的结构要求，不属于 Developer ID 签名、公证或通过 Gatekeeper 的正式分发包。
+产物位于 `Dist/Rex.app` 和 `Dist/Rex-v1.0.0-macos-arm64-chromium.zip`。ad-hoc 签名只用于满足 macOS 嵌套代码的结构要求，不属于 Developer ID 签名、公证或通过 Gatekeeper 的正式分发包。
 
-## 测试安全
+## 技术架构
 
-自动化 QA 不得直接启动构建后的 Rex App 或可执行文件，也不得使用 `open`。请使用隔离烟测入口，它会创建临时用户目录和模拟 Keychain 环境：
+| 层级 | 技术 | 职责 |
+|------|------|------|
+| 应用外壳 | SwiftUI + AppKit | 窗口管理、标签列表、工具栏、设置面板、下载管理、文件选择和对话框 |
+| 网页运行时 | CEF 151 / Chromium 151.0.7922.138 | 网页渲染、网络栈、V8 引擎、Blink、扩展 API、开发者工具、GPU 合成 |
+| CEF 桥接层 | Objective-C++ | RexChromiumRuntime 统一管理浏览器生命周期、多进程 Helper、扩展运行时对账和 DevTools 管道 |
+| 持久化层 | SQLite + Swift | 标签会话、浏览历史、收藏夹、下载记录、网站权限和隐私策略持久化 |
+| 隐私引擎 | C++ | 域名目录拦截、请求分类、HTTPS 升级和追踪参数清理 |
 
-```bash
-Scripts/run-isolated-rex-smoke.sh
+CEF 运行时使用本地全量源码编译，GN 参数为 `proprietary_codecs=true ffmpeg_branding=Chrome is_official_build=true chrome_pgo_phase=0 target_cpu=arm64`，H.264/AAC/HEVC 通过 macOS VideoToolbox/AudioToolbox 原生解码。
+
+## 项目结构
+
 ```
-
-不得把 `CFFIXED_USER_HOME` 指向真实用户目录。现有 Rex 偏好设置、缓存、保存状态以及 `~/Library/Application Support/Rex` 均属于用户数据，测试清理不得修改或删除这些内容。
+Rex_project/
+├── Sources/RexApp/          # Swift 应用层
+│   ├── Application/         # App 入口、窗口协调、菜单和版本管理
+│   ├── State/               # BrowserStore 标签页状态机
+│   ├── Domain/              # 数据模型、隐私策略、扩展目录
+│   ├── Features/            # 标签列表、工具栏、分屏、设置、资料库
+│   ├── DesignSystem/        # 液态玻璃面板、工具提示、色彩体系
+│   ├── ChromiumIntegration/ # CEF 引擎适配和 App 委托
+│   └── Persistence/         # SQLite 持久化层
+├── ChromiumBridge/          # Objective-C++ CEF 桥接
+│   ├── RexChromiumRuntime   # 浏览器生命周期、事件分发
+│   ├── Privacy/             # Thorium 性能参数和隐私引擎
+│   └── Tests/               # 桥接层 C++ 测试
+├── Chromium/                # CEF 构建配置和版本锁定
+├── Vendor/CEF/              # 编译好的 CEF 二进制
+└── Scripts/                # 构建、打包、验证和烟测脚本
+```
 
 ## 许可证
 

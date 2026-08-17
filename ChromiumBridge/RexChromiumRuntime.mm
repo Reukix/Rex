@@ -2600,8 +2600,10 @@ void RexSendEvent(id application, SEL command, NSEvent *event) {
           handleDeveloperToolsEditingShortcutForEvent:event]) {
     return;
   }
-  if (event.type == NSEventTypeKeyDown && event.keyCode == 111 && commandModifiers == 0 &&
-      [RexChromiumRuntime.shared handleDeveloperToolsShortcutForWindow:event.window]) {
+  if (event.type == NSEventTypeKeyDown && event.keyCode == 111 && commandModifiers == 0) {
+    // Swallow F12 so Chromium's IDC_DEV_TOOLS_TOGGLE doesn't open a
+    // standalone Chrome-runtime DevTools window. Users can still open
+    // DevTools via ⌘⌥I or the menu bar.
     return;
   }
   CefScopedSendingEvent sendingEventScoper;
