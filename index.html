@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rex — macOS 原生浏览器</title>
+  <meta name="description" content="Rex 是一款面向 macOS 的原生桌面浏览器，围绕垂直标签页、工作空间、双页面分屏和默认隐私保护构建。">
+  <meta name="theme-color" content="#0B1018">
+  <meta property="og:title" content="Rex — macOS 原生浏览器">
+  <meta property="og:description" content="垂直标签页、工作空间、双页面分屏与隐私盾牌。基于 SwiftUI / AppKit 与 Chromium Embedded Framework。">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="assets/img/app-icon.png">
+  <link rel="icon" href="assets/img/app-icon.png" type="image/png">
+  <style>
+    :root {
+      --bg-0: #0B1018;
+      --bg-1: #151726;
+      --bg-2: #202036;
+      --text: #EAF2FF;
+      --text-dim: rgba(234, 242, 255, 0.62);
+      --text-faint: rgba(234, 242, 255, 0.40);
+      --accent: #8B7CF6;
+      --accent-soft: rgba(139, 124, 246, 0.18);
+      --green: #34C759;
+      --blue: #007AFF;
+      --amber: #F5A623;
+      --border: rgba(234, 242, 255, 0.08);
+      --radius: 18px;
+      --max: 1040px;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-0: #EAF2FF;
+        --bg-1: #F5F2FF;
+        --bg-2: #E7F5F3;
+        --text: #151726;
+        --text-dim: rgba(21, 23, 38, 0.66);
+        --text-faint: rgba(21, 23, 38, 0.45);
+        --border: rgba(21, 23, 38, 0.10);
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg-0);
+      color: var(--text);
+      line-height: 1.65;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Nav */
+    nav {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px clamp(20px, 5vw, 56px);
+      background: color-mix(in srgb, var(--bg-0) 78%, transparent);
+      backdrop-filter: blur(20px) saturate(160%);
+      -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 18px; }
+    .nav-brand img { width: 30px; height: 30px; border-radius: 7px; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
+    .nav-links { display: flex; align-items: center; gap: 28px; }
+    .nav-links a { color: var(--text-dim); font-size: 15px; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .lang-toggle {
+      background: var(--accent-soft); color: var(--accent);
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 6px 14px; font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: opacity .2s;
+    }
+    .lang-toggle:hover { opacity: .8; }
+    @media (max-width: 640px) { .nav-links a:not(.lang-toggle) { display: none; } }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: clamp(80px, 14vh, 160px) 24px clamp(60px, 10vh, 100px);
+      position: relative;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, var(--accent-soft), transparent 70%);
+    }
+    .hero-icon {
+      width: clamp(88px, 14vw, 128px); height: clamp(88px, 14vw, 128px);
+      margin: 0 auto 32px; display: block;
+      border-radius: 28px;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .hero h1 {
+      font-size: clamp(40px, 7vw, 68px);
+      font-weight: 700; letter-spacing: -0.03em; line-height: 1.05;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .hero .tagline { font-size: clamp(18px, 2.5vw, 22px); color: var(--text-dim); max-width: 620px; margin: 0 auto 40px; }
+    .hero-badges {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 44px;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 999px;
+      font-size: 13px; font-weight: 500;
+      border: 1px solid var(--border); background: color-mix(in srgb, var(--bg-1) 50%, transparent);
+    }
+    .badge b { color: var(--accent); }
+    .hero-cta { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 14px 28px; border-radius: 12px; font-weight: 600; font-size: 16px;
+      transition: transform .15s, box-shadow .2s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 4px 24px var(--accent-soft); }
+    .btn-primary:hover { text-decoration: none; transform: translateY(-2px); box-shadow: 0 8px 32px var(--accent-soft); }
+    .btn-ghost { background: color-mix(in srgb, var(--bg-1) 40%, transparent); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { text-decoration: none; background: color-mix(in srgb, var(--bg-1) 70%, transparent); transform: translateY(-2px); }
+
+    /* Sections */
+    section { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+    .section-head { text-align: center; margin: 80px 0 48px; }
+    .section-head h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+    .section-head p { color: var(--text-dim); font-size: 17px; max-width: 600px; margin: 0 auto; }
+
+    /* Feature grid */
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 60px; }
+    .feature-card {
+      background: linear-gradient(160deg, color-mix(in srgb, var(--bg-1) 60%, transparent), color-mix(in srgb, var(--bg-2) 40%, transparent));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: transform .2s, border-color .2s;
+    }
+    .feature-card:hover { transform: translateY(-4px); border-color: var(--accent-soft); }
+    .feature-card .icon { font-size: 28px; margin-bottom: 14px; display: block; }
+    .feature-card h3 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+    .feature-card p { color: var(--text-dim); font-size: 15px; }
+
+    /* Architecture table */
+    .arch { margin-bottom: 60px; overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; min-width: 560px; }
+    th, td { text-align: left; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+    th { background: color-mix(in srgb, var(--bg-1) 50%, transparent); font-weight: 600; font-size: 14px; color: var(--text-dim); }
+    td { font-size: 15px; }
+    td:first-child { font-weight: 600; }
+    td code { font-family: var(--mono); font-size: 13px; color: var(--accent); background: var(--accent-soft); padding: 2px 7px; border-radius: 5px; }
+
+    /* Requirements + Build */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 60px; }
+    .info-card {
+      background: color-mix(in srgb, var(--bg-1) 30%, transparent);
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 32px;
+    }
+    .info-card h3 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+    .info-card ul { list-style: none; margin-bottom: 20px; }
+    .info-card li { padding: 6px 0; color: var(--text-dim); font-size: 15px; display: flex; gap: 10px; align-items: baseline; }
+    .info-card li::before { content: "—"; color: var(--text-faint); }
+    .code-block {
+      background: var(--bg-0); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; overflow-x: auto; margin-top: 8px;
+    }
+    .code-block code { font-family: var(--mono); font-size: 13px; color: var(--text); white-space: pre; }
+    .note { font-size: 13px; color: var(--text-faint); margin-top: 14px; line-height: 1.5; }
+
+    /* Footer */
+    footer {
+      text-align: center; padding: 60px 24px 40px;
+      border-top: 1px solid var(--border); margin-top: 40px;
+    }
+    footer .footer-links { display: flex; justify-content: center; gap: 28px; margin-bottom: 20px; flex-wrap: wrap; }
+    footer .footer-links a { color: var(--text-dim); font-size: 15px; }
+    footer .footer-links a:hover { color: var(--text); text-decoration: none; }
+    footer p { color: var(--text-faint); font-size: 13px; }
+    .heart { color: var(--accent); }
+
+    /* Reveal animation */
+    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s ease, transform .6s ease; }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="nav-brand" href="#top">
+      <img src="assets/img/app-icon.png" alt="Rex">
+      <span>Rex</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features" data-zh="特性" data-en="Features">特性</a>
+      <a href="#architecture" data-zh="架构" data-en="Architecture">架构</a>
+      <a href="#build" data-zh="构建" data-en="Build">构建</a>
+      <a href="https://github.com/Reukix/Rex" data-zh="GitHub" data-en="GitHub">GitHub</a>
+      <button class="lang-toggle" onclick="toggleLang()">English</button>
+    </div>
+  </nav>
+
+  <span id="top"></span>
+
+  <header class="hero">
+    <img class="hero-icon" src="assets/img/app-icon.png" alt="Rex 应用图标">
+    <h1 data-zh="Rex" data-en="Rex">Rex</h1>
+    <p class="tagline" data-zh="面向 macOS 的原生桌面浏览器。垂直标签页、工作空间、双页面分屏，以及默认开启的隐私保护。" data-en="A native desktop browser for macOS. Vertical tabs, workspaces, split view, and privacy protection by default.">
+      面向 macOS 的原生桌面浏览器。垂直标签页、工作空间、双页面分屏，以及默认开启的隐私保护。
+    </p>
+    <div class="hero-badges">
+      <span class="badge"><b>v1.0.0</b> build 1001</span>
+      <span class="badge">macOS 14+</span>
+      <span class="badge">Apple Silicon</span>
+      <span class="badge">CEF 151 / Chromium 151</span>
+      <span class="badge">AGPL-3.0</span>
+    </div>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="https://github.com/Reukix/Rex" data-zh="在 GitHub 上查看" data-en="View on GitHub">在 GitHub 上查看</a>
+      <a class="btn btn-ghost" href="#features" data-zh="了解特性" data-en="Explore Features">了解特性</a>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="section-head">
+      <h2 data-zh="主要特性" data-en="Key Features">主要特性</h2>
+      <p data-zh="围绕真实使用场景构建，不追求功能堆砌。" data-en="Built around real usage scenarios, not feature bloat.">围绕真实使用场景构建，不追求功能堆砌。</p>
+    </div>
+    <div class="features">
+      <div class="feature-card reveal">
+        <span class="icon">🪟</span>
+        <h3 data-zh="原生 macOS 界面" data-en="Native macOS Interface">原生 macOS 界面</h3>
+        <p data-zh="浏览器外壳、导航、标签页、下载、对话框、设置与扩展管理均由 SwiftUI 与 AppKit 呈现。" data-en="The browser chrome, navigation, tabs, downloads, dialogs, settings, and extension management are all rendered by SwiftUI and AppKit.">浏览器外壳、导航、标签页、下载、对话框、设置与扩展管理均由 SwiftUI 与 AppKit 呈现。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">⚡</span>
+        <h3 data-zh="Chromium 兼容能力" data-en="Chromium Compatibility">Chromium 兼容能力</h3>
+        <p data-zh="CEF 151 负责网页渲染、网络、开发者工具与扩展 API。本地源码编译，开启 H.264/AAC/HEVC 编解码器。" data-en="CEF 151 powers rendering, networking, DevTools, and extension APIs. Compiled from source with H.264/AAC/HEVC codecs enabled.">CEF 151 负责网页渲染、网络、开发者工具与扩展 API。本地源码编译，开启 H.264/AAC/HEVC 编解码器。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">🗂️</span>
+        <h3 data-zh="垂直标签页与工作空间" data-en="Vertical Tabs & Workspaces">垂直标签页与工作空间</h3>
+        <p data-zh="按场景组织浏览会话，避免大量标签页挤在横向栏中。悬停即可查看标题和地址。" data-en="Organize sessions by context instead of compressing tabs into a horizontal strip. Hover to see the title and URL.">按场景组织浏览会话，避免大量标签页挤在横向栏中。悬停即可查看标题和地址。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">⬜</span>
+        <h3 data-zh="双页面分屏" data-en="Split View">双页面分屏</h3>
+        <p data-zh="在同一个窗口内并排浏览两个页面，比例可调，支持页面交换。" data-en="Browse two pages side by side in one window, with adjustable ratio and page swap.">在同一个窗口内并排浏览两个页面，比例可调，支持页面交换。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">🛡️</span>
+        <h3 data-zh="隐私盾牌" data-en="Privacy Shield">隐私盾牌</h3>
+        <p data-zh="清理追踪参数、尝试升级 HTTPS、拦截精选请求域名并限制第三方 Cookie。" data-en="Strips tracking parameters, upgrades HTTPS, blocks curated domains, and restricts third-party cookies.">清理追踪参数、尝试升级 HTTPS、拦截精选请求域名并限制第三方 Cookie。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon=">🧩</span>
+        <h3 data-zh="扩展管理" data-en="Extension Management">扩展管理</h3>
+        <p data-zh="通过原生 rex://extensions 界面安装、更新、启停、配置和移除 Chromium 扩展。" data-en="Install, update, enable, disable, configure, and remove supported Chromium extensions from the native rex://extensions UI.">通过原生 rex://extensions 界面安装、更新、启停、配置和移除 Chromium 扩展。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">⏸️</span>
+        <h3 data-zh="标签管理" data-en="Tab Management">标签管理</h3>
+        <p data-zh="固定、分组、归档、自动休眠空闲标签页释放内存，恢复关闭的标签页。" data-en="Pin, group, archive, auto-sleep idle tabs to free memory, and restore closed tabs.">固定、分组、归档、自动休眠空闲标签页释放内存，恢复关闭的标签页。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">💾</span>
+        <h3 data-zh="会话恢复" data-en="Session Restore">会话恢复</h3>
+        <p data-zh="自动保存和恢复窗口、标签页、分屏组合与工作空间状态，重启后继续浏览。" data-en="Automatically save and restore windows, tabs, split combinations, and workspace state across restarts.">自动保存和恢复窗口、标签页、分屏组合与工作空间状态，重启后继续浏览。</p>
+      </div>
+      <div class="feature-card reveal">
+        <span class="icon">🚫</span>
+        <h3 data-zh="不包含 AI 功能" data-en="No AI Layer">不包含 AI 功能</h3>
+        <p data-zh="不提供聊天、网页总结、推荐或自动浏览能力。把浏览交还给你。" data-en="No chat, page summarization, recommendations, or automated browsing. Browsing belongs to you.">不提供聊天、网页总结、推荐或自动浏览能力。把浏览交还给你。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="section-head">
+      <h2 data-zh="技术架构" data-en="Technical Architecture">技术架构</h2>
+      <p data-zh="四层分工：应用外壳、网页运行时、桥接层与持久化层。" data-en="Four layers: app shell, web runtime, bridge, and persistence.">四层分工：应用外壳、网页运行时、桥接层与持久化层。</p>
+    </div>
+    <div class="arch reveal">
+      <table>
+        <thead>
+          <tr>
+            <th data-zh="层级" data-en="Layer">层级</th>
+            <th data-zh="技术" data-en="Technology">技术</th>
+            <th data-zh="职责" data-en="Responsibility">职责</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-zh="应用外壳" data-en="App Shell">应用外壳</td>
+            <td>SwiftUI + AppKit</td>
+            <td data-zh="窗口管理、标签列表、工具栏、设置面板、下载管理与文件选择" data-en="Window management, tab list, toolbar, settings, download management, file dialogs">窗口管理、标签列表、工具栏、设置面板、下载管理与文件选择</td>
+          </tr>
+          <tr>
+            <td data-zh="网页运行时" data-en="Web Runtime">网页运行时</td>
+            <td><code>CEF 151</code> / Chromium 151</td>
+            <td data-zh="网页渲染、网络栈、V8 引擎、Blink、扩展 API、开发者工具、GPU 合成" data-en="Rendering, network stack, V8, Blink, extension APIs, DevTools, GPU compositing">网页渲染、网络栈、V8 引擎、Blink、扩展 API、开发者工具、GPU 合成</td>
+          </tr>
+          <tr>
+            <td data-zh="CEF 桥接层" data-en="CEF Bridge">CEF 桥接层</td>
+            <td>Objective-C++</td>
+            <td data-zh="浏览器生命周期、多进程 Helper、扩展运行时对账与 DevTools 管道" data-en="Browser lifecycle, multi-process helpers, extension reconciliation, DevTools pipeline">浏览器生命周期、多进程 Helper、扩展运行时对账与 DevTools 管道</td>
+          </tr>
+          <tr>
+            <td data-zh="持久化层" data-en="Persistence">持久化层</td>
+            <td>SQLite + Swift</td>
+            <td data-zh="标签会话、浏览历史、收藏夹、下载记录、网站权限与隐私策略" data-en="Tab sessions, browsing history, bookmarks, download records, site permissions, privacy policies">标签会话、浏览历史、收藏夹、下载记录、网站权限与隐私策略</td>
+          </tr>
+          <tr>
+            <td data-zh="隐私引擎" data-en="Privacy Engine">隐私引擎</td>
+            <td>C++</td>
+            <td data-zh="域名目录拦截、请求分类、HTTPS 升级与追踪参数清理" data-en="Domain directory blocking, request classification, HTTPS upgrade, tracking parameter cleanup">域名目录拦截、请求分类、HTTPS 升级与追踪参数清理</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="build">
+    <div class="section-head">
+      <h2 data-zh="系统要求与构建" data-en="Requirements & Build">系统要求与构建</h2>
+      <p data-zh="从源码构建 Rex，需要完整的 Xcode 工具链与 CEF 依赖。" data-en="Building Rex from source requires the full Xcode toolchain and CEF dependencies.">从源码构建 Rex，需要完整的 Xcode 工具链与 CEF 依赖。</p>
+    </div>
+    <div class="info-grid">
+      <div class="info-card reveal">
+        <h3 data-zh="系统要求" data-en="Requirements">系统要求</h3>
+        <ul>
+          <li data-zh="macOS 14 或更高版本" data-en="macOS 14 or later">macOS 14 或更高版本</li>
+          <li data-zh="仅支持 Apple Silicon（arm64），不支持 Intel Mac" data-en="Apple Silicon (arm64) only; Intel Macs not supported">仅支持 Apple Silicon（arm64），不支持 Intel Mac</li>
+          <li data-zh="安装带 macOS SDK 的 Xcode" data-en="Xcode with the macOS SDK">安装带 macOS SDK 的 Xcode</li>
+          <li data-zh="完整 Chromium 构建需要 XcodeGen、CMake 和 Ninja" data-en="XcodeGen, CMake, and Ninja for the full Chromium build">完整 Chromium 构建需要 XcodeGen、CMake 和 Ninja</li>
+        </ul>
+      </div>
+      <div class="info-card reveal">
+        <h3 data-zh="构建步骤" data-en="Build Steps">构建步骤</h3>
+        <div class="code-block"><code>Scripts/fetch-cef.sh
+Scripts/build-cef-runtime.sh
+xcodegen generate --spec project.yml</code></div>
+        <p class="note" data-zh="产物位于 Dist/Rex.app 与对应 zip 包。ad-hoc 签名仅满足 macOS 嵌套代码结构要求，不是 Developer ID 签名或公证版本。" data-en="Artifacts are written to Dist/Rex.app and a zip archive. The ad-hoc signature only satisfies macOS nested-code structure; it is not a Developer ID signature or notarized build.">产物位于 Dist/Rex.app 与对应 zip 包。ad-hoc 签名仅满足 macOS 嵌套代码结构要求，不是 Developer ID 签名或公证版本。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="footer-links">
+      <a href="https://github.com/Reukix/Rex" data-zh="源代码" data-en="Source Code">源代码</a>
+      <a href="https://github.com/Reukix/Rex/releases" data-zh="版本发布" data-en="Releases">版本发布</a>
+      <a href="https://github.com/Reukix/Rex/issues" data-zh="问题反馈" data-en="Issues">问题反馈</a>
+      <a href="https://github.com/Reukix/Rex/blob/main/LICENSE" data-zh="许可证 (AGPL-3.0)" data-en="License (AGPL-3.0)">许可证 (AGPL-3.0)</a>
+    </div>
+    <p data-zh="Rex 的原创源代码采用 AGPL-3.0 许可。CEF、Chromium 及其他第三方组件适用各自许可证。" data-en="Rex's original source code is licensed under AGPL-3.0. CEF, Chromium, and other third-party components remain under their own licenses.">Rex 的原创源代码采用 AGPL-3.0 许可。CEF、Chromium 及其他第三方组件适用各自许可证。</p>
+  </footer>
+
+  <script>
+    function setLang(lang) {
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+      document.documentElement.dataset.lang = lang;
+      document.querySelectorAll('[data-zh]').forEach(el => {
+        el.textContent = el.dataset[lang];
+      });
+      const btn = document.querySelector('.lang-toggle');
+      if (btn) btn.textContent = lang === 'zh' ? 'English' : '中文';
+      try { localStorage.setItem('rex-lang', lang); } catch (e) {}
+    }
+    function toggleLang() {
+      const cur = document.documentElement.dataset.lang || 'zh';
+      setLang(cur === 'zh' ? 'en' : 'zh');
+    }
+    (function () {
+      let saved = 'zh';
+      try { saved = localStorage.getItem('rex-lang') || 'zh'; } catch (e) {}
+      setLang(saved);
+    })();
+    // Reveal on scroll
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+  </script>
+</body>
+</html>
