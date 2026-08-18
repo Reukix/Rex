@@ -706,6 +706,15 @@ final class RexAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         installApplicationIcon()
 
+        // Clear stale SwiftUI WindowGroup state so macOS doesn't restore
+        // duplicate windows on relaunch. Rex manages its own windows via
+        // WindowGroup defaultValue + BrowserStore session restoration.
+        let defaults = UserDefaults.standard
+        let keys = defaults.dictionaryRepresentation().keys.filter {
+            $0.contains("AppWindow-2") || $0.contains("AppWindow-3")
+        }
+        for key in keys { defaults.removeObject(forKey: key) }
+
         do {
             let support = try FileManager.default.url(
                 for: .applicationSupportDirectory,

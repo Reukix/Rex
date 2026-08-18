@@ -74,10 +74,15 @@ struct ReleaseNotesView: View {
             }
             .padding(16)
         }
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("完成") { dismiss() }
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.tertiary)
             }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+            .padding(12)
         }
     }
 
@@ -95,8 +100,6 @@ struct ReleaseNotesView: View {
                     .padding(.bottom, 2)
 
                 releaseNavButton("当前版本", symbol: "sparkles", id: "current")
-                releaseNavButton("完整功能", symbol: "list.bullet.rectangle", id: "features")
-                releaseNavButton("已知问题", symbol: "exclamationmark.triangle", id: "issues")
                 releaseNavButton("历史版本", symbol: "clock.arrow.circlepath", id: "history")
 
                 Spacer(minLength: 20)
@@ -109,7 +112,7 @@ struct ReleaseNotesView: View {
                         Text("Rex v\(aboutInformation.version)")
                             .font(.subheadline.weight(.semibold))
                         Text("构建 \(aboutInformation.build) · \(aboutInformation.channelDisplayName)")
-                        Text("\(allFeatureCount) 项功能 · \(historicalReleases.count) 个历史版本")
+                        Text("\(historicalReleases.count) 个历史版本")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -130,10 +133,6 @@ struct ReleaseNotesView: View {
             )
         } else {
             switch model.selectedSection {
-            case "features":
-                featureList
-            case "issues":
-                issueList
             case "history":
                 historyList
             case "current":
@@ -819,9 +818,7 @@ struct ReleaseNotesView: View {
             ReleaseContentSection(id: "improved", title: "改进", symbol: "arrow.up.circle.fill", color: .blue, items: release.improved),
             ReleaseContentSection(id: "fixed", title: "修复", symbol: "wrench.and.screwdriver.fill", color: .teal, items: release.fixed),
             ReleaseContentSection(id: "changed", title: "变更", symbol: "arrow.triangle.2.circlepath", color: .indigo, items: release.changed),
-            ReleaseContentSection(id: "removed", title: "移除", symbol: "minus.circle.fill", color: .red, items: release.removed),
-            ReleaseContentSection(id: "issues", title: "问题", symbol: "exclamationmark.triangle.fill", color: .orange, items: release.knownIssues),
-            ReleaseContentSection(id: "progress", title: "开发中", symbol: "hammer.fill", color: .purple, items: release.inProgress)
+            ReleaseContentSection(id: "removed", title: "移除", symbol: "minus.circle.fill", color: .red, items: release.removed)
         ]
         .filter { !$0.items.isEmpty }
     }

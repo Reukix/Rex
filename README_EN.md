@@ -12,7 +12,7 @@ workspaces, side-by-side browsing, and privacy protection by default. Its
 interface is implemented with SwiftUI and AppKit, while Chromium Embedded
 Framework (CEF) provides the web platform and extension runtime.
 
-The current release is **v1.0.0 build 1000**. Rex is under active
+The current release is **v1.0.0 build 1001**. Rex is under active
 development and is not yet intended to replace a production browser for every
 workflow.
 
@@ -71,7 +71,7 @@ Create a local Release package without an Apple developer certificate:
 ```bash
 REX_PACKAGE_SIGNING_MODE=adhoc \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-Scripts/package-chromium-app.sh 1.0.0 1000 Release
+Scripts/package-chromium-app.sh 1.0.0 1001 Release
 ```
 
 Artifacts are written to `Dist/Rex.app` and

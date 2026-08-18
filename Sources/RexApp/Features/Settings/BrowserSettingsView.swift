@@ -314,7 +314,7 @@ struct BrowserSettingsView: View {
         case .about:
             settingsPage(
                 title: "关于 Rex",
-                subtitle: "版本、运行环境、关键能力与当前限制"
+                subtitle: "版本与运行环境"
             ) {
                 aboutContent
             }
@@ -354,60 +354,6 @@ struct BrowserSettingsView: View {
                     aboutMetadataRow("功能目录", value: "v\(information.featureCatalogVersion)")
                 }
 
-                aboutSectionTitle(
-                    "关键能力",
-                    detail: "来自内置功能目录，共 \(information.capabilityGroups.count) 个分组"
-                )
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 250), spacing: 12)],
-                    alignment: .leading,
-                    spacing: 12
-                ) {
-                    ForEach(information.capabilityGroups) { group in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(group.name)
-                                .font(.headline)
-                            Text(group.statusSummary)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Color.accentColor)
-                            Text(group.featureNames.joined(separator: "、"))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-                        .padding(14)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(.white.opacity(0.1), lineWidth: 0.75)
-                        }
-                    }
-                }
-
-                aboutSectionTitle(
-                    "已知限制",
-                    detail: information.knownLimitations.isEmpty ? "当前版本没有记录限制" : "来自当前版本发布数据"
-                )
-                settingsCard {
-                    if information.knownLimitations.isEmpty {
-                        Text("当前版本没有记录已知限制")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        ForEach(Array(information.knownLimitations.enumerated()), id: \.offset) { index, limitation in
-                            Label(limitation, systemImage: "exclamationmark.triangle")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 5)
-                            if index < information.knownLimitations.count - 1 {
-                                Divider()
-                            }
-                        }
-                    }
-                }
-
                 settingsCard {
                     Button {
                         store.isReleaseNotesPresented = true
@@ -416,7 +362,7 @@ struct BrowserSettingsView: View {
                         SettingsRow(
                             icon: "sparkles",
                             title: "版本与功能",
-                            detail: "查看完整发布说明、功能状态和每项能力的详细限制",
+                            detail: "查看发布说明和功能状态",
                             showsDisclosure: true
                         )
                     }

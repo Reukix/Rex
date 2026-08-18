@@ -720,7 +720,7 @@ private struct BrowserToolbar: View {
 
     private func presentPrivacyPanel() {
         dismissToolbarPanels(except: privacyPanel)
-        let size = CGSize(width: RexMetrics.popoverWidth, height: 600)
+        let size = CGSize(width: RexMetrics.popoverWidth, height: 400)
         let content = LiquidGlassPanel(cornerRadius: 12, showsShadow: false) {
             ScrollView {
                 PrivacyShieldView(report: store.privacyReport(for: store.currentTab))

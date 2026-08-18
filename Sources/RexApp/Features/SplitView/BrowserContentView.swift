@@ -7,6 +7,7 @@ struct BrowserContentView: View {
     @EnvironmentObject private var store: BrowserStore
     let windowSize: CGSize
     let webFullscreenTabID: UUID?
+    @State private var dragRatio: Double?
 
     init(windowSize: CGSize, webFullscreenTabID: UUID? = nil) {
         self.windowSize = windowSize
@@ -16,6 +17,9 @@ struct BrowserContentView: View {
     var body: some View {
         Group {
             if webFullscreenTabID != nil {
+                browserViewport
+            } else if store.splitSession != nil {
+                // Split mode: two independent cards, no outer wrapping panel.
                 browserViewport
             } else {
                 LiquidGlassPanel(cornerRadius: 18, clipsContent: false, showsShadow: false) {
@@ -37,9 +41,10 @@ struct BrowserContentView: View {
 
     private var browserViewport: some View {
         GeometryReader { proxy in
+            let effectiveRatio = dragRatio ?? store.splitSession?.ratio ?? 0.5
             let layoutGeometry = SplitLayoutGeometry(
                 size: proxy.size,
-                ratio: store.splitSession?.ratio ?? 0.5,
+                ratio: effectiveRatio,
                 dividerWidth: RexMetrics.dividerHitWidth
             )
 
@@ -62,30 +67,83 @@ struct BrowserContentView: View {
     private func browserLayout(geometry: SplitLayoutGeometry) -> some View {
         let items = splitLayoutItems(geometry: geometry)
 
-        return ZStack(alignment: .topLeading) {
-            ForEach(items) { item in
-                BrowserPane(
-                    tab: item.tab,
-                    pane: item.pane,
-                    isFocused: item.isFocused
-                )
+        if items.count == 2 {
+            let gap: CGFloat = 12
+            let halfGap = gap / 2
+            let primaryWidth = max(1, geometry.paneFrame(for: .primary).width - halfGap)
+            let secondaryWidth = max(1, geometry.paneFrame(for: .secondary).width - halfGap)
+            let primaryFrame = CGRect(
+                x: 0, y: 0,
+                width: primaryWidth, height: geometry.size.height
+            )
+            let secondaryFrame = CGRect(
+                x: primaryWidth + gap, y: 0,
+                width: secondaryWidth, height: geometry.size.height
+            )
+            return AnyView(
+                ZStack(alignment: .topLeading) {
+                    splitCard(
+                        tab: items[0].tab,
+                        pane: items[0].pane,
+                        isFocused: items[0].isFocused,
+                        frame: primaryFrame
+                    )
+                    splitCard(
+                        tab: items[1].tab,
+                        pane: items[1].pane,
+                        isFocused: items[1].isFocused,
+                        frame: secondaryFrame
+                    )
+                    LiquidGlassSplitDivider(
+                        orientation: .horizontal,
+                        availableLength: geometry.size.width,
+                        dragRatio: $dragRatio
+                    )
+                    .frame(width: gap, height: geometry.size.height)
+                    .position(x: primaryWidth + halfGap, y: geometry.size.height / 2)
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            )
+        }
+
+        return AnyView(
+            ZStack(alignment: .topLeading) {
+                ForEach(items) { item in
+                    BrowserPane(
+                        tab: item.tab,
+                        pane: item.pane,
+                        isFocused: item.isFocused
+                    )
                     .frame(width: item.frame.width, height: item.frame.height)
                     .position(x: item.frame.midX, y: item.frame.midY)
+                }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        )
+    }
 
-            if items.count == 2 {
-                LiquidGlassSplitDivider(
-                    orientation: .horizontal,
-                    availableLength: geometry.size.width
-                )
-                .frame(
-                    width: geometry.dividerFrame.width,
-                    height: geometry.dividerFrame.height
-                )
-                .position(x: geometry.dividerFrame.midX, y: geometry.dividerFrame.midY)
-            }
+    @ViewBuilder
+    private func splitCard(
+        tab: BrowserTab,
+        pane: SplitPane?,
+        isFocused: Bool,
+        frame: CGRect
+    ) -> some View {
+        LiquidGlassPanel(cornerRadius: 18, clipsContent: true, showsShadow: false) {
+            BrowserPane(tab: tab, pane: pane, isFocused: isFocused)
         }
-        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            ZStack {
+                WindowedCEFViewportCornerCover(cornerRadius: 18, windowSize: windowSize)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(isFocused ? 0.3 : 0.15), lineWidth: 0.75)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .frame(width: frame.width, height: frame.height)
+        .position(x: frame.midX, y: frame.midY)
     }
 
     private func splitLayoutItems(geometry: SplitLayoutGeometry) -> [SplitLayoutItem] {
@@ -858,7 +916,12 @@ private struct LiquidGlassSplitDivider: View {
     @EnvironmentObject private var store: BrowserStore
     let orientation: SplitOrientation
     let availableLength: CGFloat
+    @Binding var dragRatio: Double?
     @StateObject private var model = SplitDividerViewModel()
+
+    private var currentRatio: Double {
+        dragRatio ?? store.splitSession?.ratio ?? 0.5
+    }
 
     var body: some View {
         ZStack {
@@ -892,13 +955,19 @@ private struct LiquidGlassSplitDivider: View {
                     let base = model.initialRatio ?? store.splitSession?.ratio ?? 0.5
                     if model.initialRatio == nil { model.initialRatio = base }
                     let delta = orientation == .horizontal ? value.translation.width : value.translation.height
-                    store.setSplitRatio(base + delta / max(availableLength, 1))
+                    dragRatio = min(max(base + delta / max(availableLength, 1), 0.25), 0.75)
                 }
-                .onEnded { _ in model.initialRatio = nil }
+                .onEnded { _ in
+                    if let dragRatio {
+                        store.setSplitRatio(dragRatio)
+                    }
+                    model.initialRatio = nil
+                    dragRatio = nil
+                }
         )
         .help("拖动调整分屏比例")
         .accessibilityLabel("分屏分隔条")
-        .accessibilityValue("\(Int((store.splitSession?.ratio ?? 0.5) * 100))%")
+        .accessibilityValue("\(Int(currentRatio * 100))%")
     }
 }
 
